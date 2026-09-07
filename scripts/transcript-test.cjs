@@ -1,0 +1,46 @@
+const assert = require('node:assert/strict');
+const { appendDelta, projectTool, finishMessage } = require('../src/main/host/transcript');
+const { sessionUsage, latestUsage } = require('../src/main/adapters/pi-usage');
+const message = { id: 'm', role: 'assistant', streaming: true, at: 1000 }, thread = { tools: [] };
+appendDelta(message, 'thinking', 'first', 1000);
+appendDelta(message, 'thinking', ' second', 1200);
+projectTool(thread, message, { toolCallId: 'a', title: 'bash', input: 'pwd', state: 'running' }, 2000);
+projectTool(thread, message, { toolCallId: 'b', title: 'bash', state: 'running' }, 2100);
+projectTool(thread, message, { toolCallId: 'a', title: 'bash', output: 'ok', state: 'done' }, 2300);
+appendDelta(message, 'text', 'answer', 2500);
+assert.deepEqual(message.items.map(i => i.kind), ['thinking', 'tool', 'tool', 'text']);
+assert.equal(message.items[0].text, 'first second');
+assert.equal(thread.tools.length, 2);
+assert.equal(thread.tools[0].input, 'pwd');
+finishMessage(thread, message, 'cancelled', 3000);
+assert.equal(thread.tools[0].state, 'done');
+assert.equal(thread.tools[1].state, 'interrupted');
+assert.equal(message.stopReason, 'cancelled');
+assert.equal(JSON.parse(JSON.stringify(message)).items[0].endedAt, 2000);
+assert.deepEqual(sessionUsage({ tokens: { input: 10, cacheRead: 90, total: 110 }, contextUsage: { tokens: 10, contextWindow: 200 } }), { input: 10, cacheRead: 90, totalTokens: 110, tokens: 10, contextWindow: 200, contextPercent: 5 });
+assert.deepEqual(sessionUsage({ tokens: { input: NaN, output: -1 } }), {});
+assert.equal(latestUsage({ role: 'assistant', usage: { input: 10, cacheRead: 90, cacheWrite: 0 } }).usage.cacheHitPercent, 90);
+assert.equal(latestUsage({ role: 'assistant', usage: { input: 0, cacheRead: 0, cacheWrite: 0 } }).usage.cacheHitPercent, null);
+console.log('ordered deltas, concurrent tools, cancellation, persistence and native usage passed');
+// The first render and interval must use the same clock and rounding rules.
+const vm = require('node:vm');
+const context = { window: {}, Date, document: {} };
+vm.runInNewContext(require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/renderer/transcript.js'), 'utf8'), context);
+const view = context.window.Transcript;
+assert.equal(view.duration(1000, 14999), '13秒');
+assert.equal(view.duration(1000, 60999), '59秒');
+assert.equal(view.duration(1000, 61000), '1分 0秒');
+assert.equal(view.duration(1000, 1000), '0秒');
+assert.equal(view.duration(undefined, 2000), '');
+const now = Date.now;
+try {
+  Date.now = () => 14999;
+  const el = { dataset: { startedAt: '1000' }, textContent: '' };
+  view.updateClocks({ querySelectorAll: () => [el] });
+  assert.equal(el.textContent, view.liveLabel(1000));
+  assert.equal(el.textContent, '正在执行 · 13秒');
+  Date.now = () => 61000;
+  view.updateClocks({ querySelectorAll: () => [el] });
+  assert.equal(el.textContent, '正在执行 · 1分 0秒');
+} finally { Date.now = now; }
+console.log('shared render/tick clock, second/minute boundaries and missing timing passed');

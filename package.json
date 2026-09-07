@@ -1,0 +1,21 @@
+{
+  "name": "harness-mix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An independent desktop shell for native coding harnesses (Pi / Claude Code / DeepSeek Harness).",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.cjs",
+    "test:transcript": "node scripts/transcript-test.cjs",
+    "test:workspace": "node scripts/workspace-test.cjs",
+    "test:git": "node scripts/git-test.cjs",
+    "smoke:workbench": "electron scripts/workbench-smoke.cjs",
+    "smoke": "electron scripts/ui-smoke.cjs",
+    "e2e:pi": "node scripts/e2e-pi.cjs",
+    "e2e:dsh": "node scripts/e2e-dsh.cjs"
+  },
+  "devDependencies": {
+    "electron": "^43.3.0"
+  }
+}
