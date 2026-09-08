@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"460b2a05-cdab-432d-b521-24f6b9519d31","update":{"sessionUpdate":"agent_message_chunk","messageId":"74b5af1d-646f-4067-b5aa-b3f78f6eed61","content":{"type":"text","text":"收到"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"460b2a05-cdab-432d-b521-24f6b9519d31","update":{"sessionUpdate":"usage_update","used":15235,"size":1000000}}}

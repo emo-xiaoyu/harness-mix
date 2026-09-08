@@ -32,7 +32,7 @@ window.GitPanel = (() => {
           try {
             const detail = await api.gitDiff({ ...target, path: file.path, staged });
             if (!current() || !preview.isConnected) return;
-            preview.innerHTML = `<h4>${esc(file.path)} · ${staged ? '暂存区' : '工作区'}</h4><pre>${detail.text.split('\n').map(line => `<span class="${line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : ''}">${esc(line)}\n</span>`).join('') || '没有文本差异'}</pre>`;
+            preview.innerHTML = `<h4>${esc(detail.item.path)} · ${staged ? '暂存区' : '工作区'}</h4><pre>${detail.item.patch.text.split('\n').map(line => `<span class="${line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : ''}">${esc(line)}\n</span>`).join('') || '没有文本差异'}</pre>`;
           } catch (e) { if (current() && preview.isConnected) preview.textContent = e.message; }
         };
         list.append(row);

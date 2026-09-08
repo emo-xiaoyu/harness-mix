@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-09-07T14:12:12.017Z",
+  "harnessId": "dsh",
+  "label": "file-edit",
+  "nativeEvents": 6,
+  "fileVerified": true,
+  "report": {
+    "enabled": true,
+    "threads": 1,
+    "mismatches": [],
+    "errors": [],
+    "warnings": []
+  }
+}

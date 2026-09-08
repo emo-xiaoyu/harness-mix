@@ -1,0 +1,10 @@
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"请逐行输出从 1 到 100000 的所有数字，中间不要停。"}],"timestamp":1788786567824}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"请逐行输出从 1 到 100000 的所有数字，中间不要停。"}],"timestamp":1788786567824}}
+{"__control__":"cancel","at":1788786570803}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"anthropic-messages","provider":"kimi-coding","model":"k3-256k","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"aborted","timestamp":1788786569661,"errorMessage":"Request aborted"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"anthropic-messages","provider":"kimi-coding","model":"k3-256k","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"aborted","timestamp":1788786569661,"errorMessage":"Request aborted"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"anthropic-messages","provider":"kimi-coding","model":"k3-256k","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"aborted","timestamp":1788786569661,"errorMessage":"Request aborted"},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"请逐行输出从 1 到 100000 的所有数字，中间不要停。"}],"timestamp":1788786567824},{"role":"assistant","content":[],"api":"anthropic-messages","provider":"kimi-coding","model":"k3-256k","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"aborted","timestamp":1788786569661,"errorMessage":"Request aborted"}],"willRetry":false}
+{"type":"agent_settled"}

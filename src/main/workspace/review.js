@@ -13,7 +13,11 @@ class ReviewStore {
     await fs.writeFile(file + '.tmp', JSON.stringify(record));
     await fs.rename(file + '.tmp', file);
   }
-  async load(id) { return JSON.parse(await fs.readFile(this.file(id), 'utf8')); }
+  async load(id) {
+    const record = JSON.parse(await fs.readFile(this.file(id), 'utf8'));
+    for (const change of record.changes) change.path = change.path.replace(/\\/g, '/');
+    return record;
+  }
   async begin(root) {
     const baseline = await snapshot(root);
     const record = { id: randomUUID(), root: await fs.realpath(root), baseline, at: Date.now(), changes: [] };
@@ -32,7 +36,7 @@ class ReviewStore {
       if ((!before && previousNames.has(file)) || (!next && currentNames.has(file))) continue;
       if (before?.hash === next?.hash) continue;
       const delta = diff(before?.text, next?.text);
-      record.changes.push({ path: file, before: before ?? null, after: next ?? null, added: delta.added, removed: delta.removed, coarse: delta.coarse });
+      record.changes.push({ path: file.replace(/\\/g, '/'), before: before ?? null, after: next ?? null, added: delta.added, removed: delta.removed, coarse: delta.coarse });
     }
     record.skipped = record.baseline.skipped.length + after.skipped.length;
     return record;

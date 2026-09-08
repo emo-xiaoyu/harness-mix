@@ -81,7 +81,8 @@ ACP `session/request_permission` 结果，全程不伪造原生权限决策。
 | 审批 / 提问 | ✅ extension UI | ✅ 一次性 allow/reject | — |
 | 模型选择 | ✅ 完整目录 | ✅ 会话配置项 | — |
 | 会话恢复 | ✅ `--session-id` | ✅ `session/resume` | ✅ `--resume` |
-| 任务 Fork | ✅ CLI `--fork` | ❌（ACP 未支持） | ❌ |
+| 任务 / 回复 Fork | ✅ 原生 Pi | ❌（ACP 未支持） | ✅ 官方 SDK `forkSession` |
+| 快捷压缩 | ✅ 原生 RPC `compact` | ❌（ACP 未暴露） | ✅ 原生 `/compact` |
 | Usage | ✅ | ✅ | — |
 
 ## 运行与验证
@@ -128,7 +129,7 @@ Git 标签使用本机 Git for Windows，支持仓库初始化、分支名、工
 
 ### 会话时间线与用量
 
-实际 Desktop 会话区按接收顺序持久化 `message.items`（text / thinking / tool），
+实际 Desktop 会话区读取 Protocol Core 的 Turn 与 Items（agent_message / reasoning / tool_call），
 思考和工具默认折叠，展开可查看原生内容、输入和结果；流式刷新保留展开状态。
 历史聚合记录仍可阅读，但没有原始顺序的工具单列为“历史工具记录”，不推测插入位置。
 工具按回合与原生 toolCallId 区分；中断不标为成功。Pi 结果预览最多 24,000 字符。
@@ -138,8 +139,32 @@ Git 标签使用本机 Git for Windows，支持仓库初始化、分支名、工
 `cacheRead / (input + cacheRead + cacheWrite)` 计算，与 codex-host 的 Pi 统计口径一致。
 DSH 上下文仍使用 ACP `usage_update`。百分比最多一位小数，缺失字段显示 `—`。
 不虚构推理 Token、5 小时 / 7 天额度。文件审查/撤回的实现边界见上节。
-可运行 `npm run test:transcript` 验证顺序、并发工具、取消、序列化与用量口径。
+可运行 `npm run test:core-all` 验证协议、顺序、并发工具、取消、持久化、原生回放及文件变更。
+`npm run test:transcript` 保留独立旧投影对照与用量口径测试。
 
-第一版 Host Runtime，不承诺跨 Harness 完全功能等价。Pi 的 `fork(entryId)` 消息级分叉、
-DSH 的 `reasoning_effort` 档位、Claude Code 的 stream-json 控制协议（工具审批）等
-会在后续迭代按能力声明逐步接入；界面只为已声明能力渲染入口。
+### Protocol Core 迁移
+
+当前生产路径已统一为 Adapter → EventNormalizer → ProtocolCore → projected Thread / Turn / Items → Renderer。
+Turn 在调用原生 Harness 前建立，状态由 TurnManager 维护；最终回复使用 Core `phase=final` 语义。
+InteractionRouter 统一审批和问题，能力来自 Adapter Manifest；native/snapshot/git 差异使用 FileChange Item。
+Legacy 实时投影已移到测试支持目录，旧数据在加载时迁移，默认 `npm start` 使用 Core。
+完整完成清单、测试证据和能力边界见 [CORE-MIGRATION-STATUS.md](CORE-MIGRATION-STATUS.md)。
+`npm run smoke:app` 验证真实应用启动、历史迁移、刷新及退出保存；`npm run e2e:core-files` 会在临时目录调用三套真实 Harness 并验证编辑与撤回。
+
+第一版 Host Runtime，不承诺跨 Harness 完全功能等价；界面只为已声明能力渲染入口。
+
+### 项目、按需菜单与回复分支（2026-09-08）
+
+- 模型和权限目录只在点击菜单时读取；按 Harness 缓存、合并并发请求。切换对话或关闭菜单后，迟到结果不会重新打开旧菜单，加载提示留在菜单内部。
+- 项目行用关闭/打开文件夹图标表示折叠状态，悬停或键盘聚焦时显示新建对话和操作菜单。菜单支持新建对话、置顶、编辑显示名称、在资源管理器打开、移除；名称和置顶顺序保存在本机。
+- 用户气泡按内容宽度显示。上下文占用与会话累计 Token 分开展示；未知值、压缩后的待更新值会清空旧百分比。点击用量可按 Adapter 能力查询原生最新统计；DSH 使用 ACP 事件值。
+- Pi 回复下方可“分支到新聊天”，原生会话和桌面历史都截断到所选回复。新回复保存原生 checkpoint；旧回复仅在原生历史可唯一定位时允许分支，不能定位则明确报错。原任务不受影响。
+- `session.forkFromMessage` 独立声明回复级分支能力。Pi 和 Claude Code 已接入；Claude 使用官方 SDK `forkSession({ upToMessageId })`，保留回复边界并映射新会话的消息 UUID，支持再次分支。DSH ACP 尚未暴露此能力。
+
+语义参考 [Codex ThreadForkParams 的 lastTurnId](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/ThreadForkParams.ts)，上下文统计对照 [codex-host Pi Usage](https://github.com/BytePioneer-AI/codex-host/blob/main/packages/adapters/pi/src/pi-usage.ts)。实际调用本机 Pi 的原生 RPC，不修改其会话文件。
+
+验证：`smoke` 覆盖延迟菜单、请求去重、项目操作、气泡和回复分支 IPC；`smoke:app` 覆盖项目重命名/置顶后刷新恢复；`e2e:core-fork` 实际验证原生分支不含后续轮次，并逐项比对上下文 Token 与原生统计。
+
+输入框的上下文占用左侧新增指令按钮（用户提供的 `commands.svg`）。仅点击后读取当前 Harness 指令：Pi 提供原生压缩及扩展/技能指令插入；Claude 提供原生压缩。压缩要求已有会话且回复和文件结算已完成，错误直接显示原生返回原因。DSH 当前 ACP 未提供指令入口，不将其当作普通提示词执行。
+
+`npm run e2e:commands-claude` 验证指定回复分支、再次分支、排除后续消息、压缩及后续回忆；`npm run e2e:commands-pi` 验证原生压缩及回忆。测试使用临时项目，Pi 的较小压缩保留窗口仅写入测试项目设置，不修改用户全局配置。运行报告在 `output/verification/commands-{claude,pi}.json`。

@@ -5,11 +5,12 @@ const clean = obj => Object.fromEntries(Object.entries(obj).filter(([, v]) => va
 // from uncached input. Session totals and latest-request cache rate must not mix.
 function sessionUsage(data = {}) {
   const t = data.tokens ?? {}, c = data.contextUsage ?? {};
-  return clean({ input: t.input, output: t.output, cacheRead: t.cacheRead,
+  return { ...clean({ input: t.input, output: t.output, cacheRead: t.cacheRead,
     cacheWrite: t.cacheWrite, totalTokens: t.total, cost: data.cost,
-    tokens: c.tokens, contextWindow: c.contextWindow,
+  }), tokens: valid(c.tokens) ? c.tokens : null,
+    contextWindow: valid(c.contextWindow) && c.contextWindow > 0 ? c.contextWindow : null,
     contextPercent: valid(c.tokens) && valid(c.contextWindow) && c.contextWindow > 0
-      ? 100 * c.tokens / c.contextWindow : c.percent });
+      ? 100 * c.tokens / c.contextWindow : null };
 }
 
 function latestUsage(message) {

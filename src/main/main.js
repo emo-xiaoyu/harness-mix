@@ -52,7 +52,15 @@ app.whenReady().then(async () => {
     return runtime.send(threadId, text);
   });
   ipcMain.handle("thread:cancel", (_event, threadId) => runtime.cancel(threadId));
-  ipcMain.handle("thread:fork", (_event, threadId) => runtime.forkThread(threadId));
+  ipcMain.handle('thread:fork', (_event, input) => runtime.forkThread(typeof input === 'string' ? input : input.threadId, input.messageId));
+  ipcMain.handle('thread:usage', (_event, threadId) => runtime.refreshUsage(threadId));
+  ipcMain.handle('harness:commands', (_event, input) => runtime.listCommands(input));
+  ipcMain.handle('thread:command', (_event, { threadId, commandId }) => runtime.executeCommand(threadId, commandId));
+  ipcMain.handle('workspace:openFolder', async (_event, cwd) => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !(await require('node:fs/promises').stat(cwd)).isDirectory()) throw new Error('项目目录不存在');
+    const error = await require('electron').shell.openPath(cwd);
+    if (error) throw new Error(error);
+  });
   ipcMain.handle("thread:listModels", (_event, threadId) => runtime.listModels(threadId));
   ipcMain.handle("thread:setModel", (_event, { threadId, model }) => runtime.setModel(threadId, model));
   ipcMain.handle("thread:setThinking", (_event, { threadId, level }) => runtime.setThinking(threadId, level));
@@ -61,9 +69,23 @@ app.whenReady().then(async () => {
   ipcMain.handle("thread:move", (_event, { threadId, cwd }) => runtime.moveThread(threadId, cwd));
   ipcMain.handle("harness:describe", (_event, harnessId) => runtime.describe(harnessId));
   ipcMain.handle("approval:respond", (_event, { threadId, requestId, response }) => runtime.respondApproval(threadId, requestId, response));
+  // Core diagnostics. Execution UI receives projected turns/items through runtime:snapshot.
+  ipcMain.handle("core:snapshot", () => runtime.coreSnapshot());
+  ipcMain.handle("core:shadowReport", () => runtime.shadowReport());
 
   createWindow();
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => { void terminal?.close(); runtime?.close(); });
+let shutdownStarted = false, shutdownComplete = false;
+app.on('before-quit', event => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  void Promise.allSettled([terminal?.close(), runtime?.close()]).then(results => {
+    for (const result of results) if (result.status === 'rejected') console.error('Shutdown failed:', result.reason);
+    shutdownComplete = true;
+    app.quit();
+  });
+});

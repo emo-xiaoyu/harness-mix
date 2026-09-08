@@ -1,10 +1,13 @@
 const { randomUUID } = require("node:crypto");
 const { promises: fs } = require("node:fs");
 const path = require("node:path");
+const { CapabilityManager } = require('../protocol-core/capability-manager');
+const { normalizeCapabilities } = require('../harness-adapter/manifest');
 const { Store } = require("./store");
-const { appendDelta, projectTool, finishMessage } = require('./transcript');
 const { buildAdapters } = require("../adapters");
+const { ReviewController } = require('../workspace/review-controller');
 const { ReviewStore } = require('../workspace/review');
+const { CoreSession } = require('./core-session');
 
 /**
  * Host Runtime：harness-mix 的核心职责 —— 自研 Desktop 背后的
@@ -13,17 +16,24 @@ const { ReviewStore } = require('../workspace/review');
  * 仍由其原生程序维护，Adapter 只负责原生协议接入与事件转换。
  */
 class HostRuntime {
-  constructor({ dataDirectory }) {
+  constructor({ dataDirectory, observer = null }) {
     this.store = new Store(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
     this.listeners = new Set();
     this.adapters = new Map();
     this.status = {};
+    this.capabilityManager = new CapabilityManager();
     this.catalogs = new Map(); // harnessId -> describe() 缓存（模型目录/思考档位/权限模式）
     this.reviews = new ReviewStore(dataDirectory);
     this.settlements = new Set();
     this.reviewMonitors = new Map();
+    this.reviewTasks = new Set();
+    this.openings = new Map();
+    this.reviewController = new ReviewController(this, { save: () => this.#save(), broadcast: () => this.#broadcast() });
+    this.execution = new CoreSession();
+    this.core = this.execution.core;
+    this.observer = observer;
   }
 
   async initialize() {
@@ -34,14 +44,17 @@ class HostRuntime {
     this.status = Object.fromEntries(inspections);
     // 惰性恢复：启动时只把持久化的任务标记为待恢复，原生进程在下次发送/打开时按需拉起
     for (const thread of this.threads) {
+      thread.connectionStatus = 'ready';
+      if (thread.nativeSessionId && thread.messages?.length) thread.restore = true;
       if (thread.status === "working" || thread.status === "opening") thread.status = "ready";
       for (const message of thread.messages ?? []) {
-        if (message.streaming) finishMessage(thread, message, 'interrupted', thread.updatedAt ?? message.at);
+
         if (message.reviewId && !message.review) message.reviewError = '上次任务中断，文件快照未结算，不能安全撤回。';
       }
       thread.reviewPending = false;
       thread.pendingApprovals = [];
       thread.tools = (thread.tools ?? []).map((tool) => (tool.state === "running" ? { ...tool, state: "interrupted" } : tool));
+      this.execution.threadCreated(thread);
     }
     await this.#save();
   }
@@ -53,15 +66,21 @@ class HostRuntime {
     if (this.catalogs.has(harnessId)) return this.catalogs.get(harnessId);
     const adapter = this.#requireAdapter(harnessId);
     if (typeof adapter.describe !== "function") throw new Error(`${adapter.manifest.name} 未提供目录探测`);
-    const catalog = await adapter.describe();
+    const session = [...this.sessions.values()].find(s => s.adapter === adapter);
+    const catalog = session && adapter.describeFor ? await adapter.describeFor(session) : await adapter.describe();
     this.catalogs.set(harnessId, catalog);
     return catalog;
   }
 
+  getCapabilities(harnessId) {
+    this.capabilityManager.register(harnessId, normalizeCapabilities(this.adapters.get(harnessId)?.manifest.capabilities));
+    return this.capabilityManager.get(harnessId);
+  }
+
   snapshot() {
     return {
-      threads: this.threads,
-      adapters: [...this.adapters.values()].map((a) => ({ id: a.manifest.id, name: a.manifest.name, icon: a.manifest.icon, capabilities: a.manifest.capabilities, ...this.status[a.manifest.id] })),
+      threads: this.threads.map(({ coreState, ...thread }) => ({ ...thread, capabilities: this.getCapabilities(thread.harnessId), coreEnabled: true })),
+      adapters: [...this.adapters.values()].map((a) => ({ id: a.manifest.id, name: a.manifest.name, icon: a.manifest.icon, capabilities: a.manifest.capabilities, coreCapabilities: this.getCapabilities(a.manifest.id), ...this.status[a.manifest.id] })),
     };
   }
 
@@ -79,53 +98,83 @@ class HostRuntime {
       } : {},
     };
     this.threads.unshift(thread);
+    this.execution.threadCreated(thread);
     await this.#save();
     this.#broadcast();
     await this.#open(thread, adapter);
     return thread;
   }
 
-  async send(threadId, text) {
+  async listCommands({ threadId, harnessId }) {
+    const thread = threadId ? this.#requireThread(threadId) : null;
+    const adapter = this.#requireAdapter(thread?.harnessId ?? harnessId);
+    if (typeof adapter.listCommands !== 'function') return [];
+    // Opening a command menu must never resume a native session.
+    const session = thread ? this.sessions.get(thread.id) : null;
+    return adapter.listCommands(session);
+  }
+
+  async executeCommand(threadId, commandId) {
     const thread = this.#requireThread(threadId);
-    if (thread.status === "working") throw new Error("任务正在执行，请先停止或等待完成");
+    const commands = await this.listCommands({ threadId });
+    const command = commands.find(c => c.id === commandId && c.action === 'execute');
+    if (!command) throw new Error('当前 Harness 不支持此指令');
+    await this.send(threadId, '/' + command.id, command.id);
+    await this.#refreshContextUsage(thread);
+    await this.#save();
+    this.#broadcast();
+    if (thread.error) throw new Error(thread.error);
+  }
+
+  async send(threadId, text, commandId) {
+    const thread = this.#requireThread(threadId);
+    if (this.execution.isRunning(thread.id)) throw new Error("任务正在执行，请先停止或等待完成");
     if (typeof text !== "string" || !text.trim()) throw new Error("请输入消息");
     const session = await this.#ensureOpen(thread);
     if (!session) throw Error(thread.error ?? '原生会话未连接');
-    if (this.threads.some(t => t.id !== thread.id && t.cwd.toLowerCase() === thread.cwd.toLowerCase() && t.status === 'working')) throw Error('同一项目已有任务执行中，请等待完成以避免审查记录混入其他任务');
+    if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && (this.execution.isRunning(t.id) || t.reviewPending))) throw Error('同一项目已有任务执行或结算中，请等待完成以避免审查记录混入其他任务');
     thread.messages.push({ id: randomUUID(), role: "user", text, at: Date.now() });
-    thread.messages.push({ id: randomUUID(), role: "assistant", text: "", at: Date.now(), streaming: true });
-    thread.status = "working";
     thread.updatedAt = Date.now();
+    delete thread.error;
+    this.execution.turnStarted(thread, text);
     const message = thread.messages.at(-1);
+    this.observer?.turnStarted(thread, this.core);
+    this.#syncCore(thread);
     try { message.reviewId = await this.reviews.begin(thread.cwd); }
     catch (e) { message.reviewError = '本轮未建立文件快照：' + e.message; }
-    if (!message.streaming) return; // Cancel during snapshot preparation must not send a prompt.
+    if (!this.execution.isRunning(thread.id)) {
+      if (message.reviewId) await this.#settleReview(thread, message);
+      return;
+    }
     this.startReviewUpdates(thread, message);
     await this.#save();
     this.#broadcast();
     try {
-      await session.adapter.send(session, text, { emit: (event) => this.#applyEvent({ threadId, event }) });
+      const hooks = { emit: (event) => this.#applyEvent({ threadId, event }) };
+      if (commandId) await session.adapter.executeCommand(session, commandId, hooks);
+      else await session.adapter.send(session, text, hooks);
     } catch (error) {
       // 用户取消造成的 reject 已由 cancel() 结算，不再标错
-      if (thread.status === "working") this.#applyEvent({ threadId, event: { kind: "error", message: error.message } });
+      if (this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: "error", message: error.message } });
     }
   }
 
   async cancel(threadId) {
     const session = this.sessions.get(threadId);
+    const thread = this.threads.find(t => t.id === threadId);
+    // Record the user's cancellation before the native acknowledgement can settle.
+    if (thread && this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
     if (session) await session.adapter.cancel(session).catch(() => {});
-    const thread = this.threads.find((t) => t.id === threadId);
-    if (thread && thread.status === "working") this.#applyEvent({ threadId, event: { kind: "completed", stopReason: "cancelled" } });
   }
 
   /** 审批/提问应答：路由回对应 Adapter 的原生协议 */
   async respondApproval(threadId, requestId, response) {
     const thread = this.#requireThread(threadId);
-    const index = (thread.pendingApprovals ?? []).findIndex((a) => a.requestId === requestId);
-    if (index === -1) throw new Error("该请求已处理或已过期");
     const session = this.sessions.get(threadId);
-    if (session) await session.adapter.respond(session, requestId, response);
-    thread.pendingApprovals.splice(index, 1);
+    if (!session) throw new Error('原生会话未连接，无法提交回答');
+    await this.core.interactions.respond(threadId, requestId, response,
+      (item, answer) => session.adapter.respond(session, item.requestId, answer));
+    this.#syncCore(thread);
     await this.#save();
     this.#broadcast();
   }
@@ -134,7 +183,7 @@ class HostRuntime {
   async listModels(threadId) {
     const thread = this.#requireThread(threadId);
     const adapter = this.#requireAdapter(thread.harnessId);
-    if (!adapter.manifest.capabilities.models) throw new Error(`${adapter.manifest.name} 暂不支持在桌面层选择模型`);
+    if (!this.getCapabilities(thread.harnessId).model.selection) throw new Error(`${adapter.manifest.name} 暂不支持在桌面层选择模型`);
     const session = await this.#ensureOpen(thread);
     if (typeof adapter.listModelsFor === "function") {
       const models = await adapter.listModelsFor(session);
@@ -152,6 +201,8 @@ class HostRuntime {
     thread.model = applied ?? model;
     thread.options ??= {};
     thread.options.model = thread.model;
+    this.execution.apply(thread, { kind: 'usage', usage: { tokens: null, contextWindow: null, contextPercent: null }, timestamp: Date.now() });
+    await this.#refreshContextUsage(thread);
     await this.#save();
     this.#broadcast();
     return thread.model;
@@ -160,7 +211,7 @@ class HostRuntime {
   async setThinking(threadId, level) {
     const thread = this.#requireThread(threadId);
     const adapter = this.#requireAdapter(thread.harnessId);
-    if (!adapter.manifest.capabilities.thinkingLevels) throw new Error(`${adapter.manifest.name} 不支持思考档位`);
+    if (!this.getCapabilities(thread.harnessId).model.thinkingLevel) throw new Error(`${adapter.manifest.name} 不支持思考档位`);
     const session = await this.#ensureOpen(thread);
     await session.adapter.setThinkingLevel(session, level);
     thread.options ??= {};
@@ -183,28 +234,44 @@ class HostRuntime {
   }
 
   /** 任务 Fork：由 Adapter 向原生程序申请分叉出新会话，Host 建立新任务卡片 */
-  async forkThread(threadId) {
+  async forkThread(threadId, messageId) {
     const source = this.#requireThread(threadId);
     const adapter = this.#requireAdapter(source.harnessId);
-    if (!adapter.manifest.capabilities.fork || typeof adapter.fork !== "function") {
+    if (!this.getCapabilities(source.harnessId).session.fork || typeof adapter.fork !== "function") {
       throw new Error(`${adapter.manifest.name} 的原生接口暂不支持 Fork`);
     }
-    if (source.status === "working") throw new Error("任务执行中，请等待完成后再 Fork");
+    if (this.execution.isRunning(source.id)) throw new Error("任务执行中，请等待完成后再 Fork");
     if (source.status === "opening") throw new Error("任务正在连接 Harness，请稍后");
-    const emit = (event) => this.#applyEvent(event);
-    const { session, nativeSessionId } = await adapter.fork(source, {
-      emit: (event) => emit({ threadId: "__fork__", event }), // Fork 期间事件直接丢弃（尚无线程归属）
+    if (source.reviewPending) throw new Error('文件变更正在结算，请稍后分支');
+    const message = messageId ? source.messages.find(m => m.id === messageId && m.role === 'assistant' && !m.streaming) : null;
+    if (messageId && !this.getCapabilities(source.harnessId).session.forkFromMessage) throw new Error('该 Harness 暂不支持从指定回复分支');
+    if (messageId && !message) throw new Error('分支回复不存在或尚未完成');
+    const history = message ? source.messages.slice(0, source.messages.indexOf(message) + 1) : source.messages;
+    let forkThreadId = null;
+    const { session, nativeSessionId, checkpointMap } = await adapter.fork(source, {
+      emit: (event) => { if (forkThreadId) this.#applyEvent({ threadId: forkThreadId, event }); },
       diagnostic: () => {},
+      message,
     });
     const thread = {
       id: randomUUID(), harnessId: source.harnessId, title: `${source.title} · Fork`, cwd: source.cwd,
-      nativeSessionId, status: "ready",
+      nativeSessionId: nativeSessionId ?? session.nativeSessionId, status: "ready",
       // IDs are scoped to a thread; clone together to retain tool references.
-      messages: structuredClone(source.messages.filter((m) => !m.streaming)),
-      tools: structuredClone(source.tools ?? []),
+      messages: structuredClone(history.filter((m) => !m.streaming)),
+      tools: structuredClone((source.tools ?? []).filter(tool => !message || history.some(entry => entry.id === tool.messageId))),
       pendingApprovals: [], createdAt: Date.now(), forkedFrom: source.id, restore: false,
+      options: structuredClone(source.options ?? {}), model: session.model ?? source.model,
     };
+    forkThreadId = thread.id;
+    if (checkpointMap) {
+      for (const entry of thread.messages) {
+        const ref = entry.coreTurn?.nativeTurnRef;
+        if (ref?.checkpointId) ref.checkpointId = checkpointMap[ref.checkpointId];
+        if (ref?.sessionId) ref.sessionId = thread.nativeSessionId;
+      }
+    }
     this.threads.unshift(thread);
+    this.execution.threadCreated(thread);
     this.sessions.set(thread.id, { adapter, ...session, threadId: thread.id });
     await this.#save();
     this.#broadcast();
@@ -236,9 +303,12 @@ class HostRuntime {
   }
 
   async close() {
+    clearTimeout(this.saveTimer); clearTimeout(this.broadcastTimer);
     for (const monitor of this.reviewMonitors.values()) { monitor.closed = true; clearInterval(monitor.timer); }
     this.reviewMonitors.clear();
     for (const session of this.sessions.values()) await session.adapter.close(session).catch(() => {});
+    await Promise.allSettled([...this.reviewTasks]);
+    clearTimeout(this.saveTimer); clearTimeout(this.broadcastTimer);
     await this.#save();
   }
 
@@ -268,11 +338,16 @@ class HostRuntime {
     const existing = this.sessions.get(thread.id);
     if (existing) return existing;
     const adapter = this.#requireAdapter(thread.harnessId);
-    await this.#open(thread, adapter);
+    if (!this.openings.has(thread.id)) {
+      const opening = this.#open(thread, adapter).finally(() => this.openings.delete(thread.id));
+      this.openings.set(thread.id, opening);
+    }
+    await this.openings.get(thread.id);
     return this.sessions.get(thread.id);
   }
 
   async #open(thread, adapter) {
+    thread.connectionStatus = 'opening';
     thread.status = "opening";
     this.#broadcast();
     try {
@@ -284,11 +359,14 @@ class HostRuntime {
       thread.nativeSessionId = session.nativeSessionId ?? thread.nativeSessionId;
       thread.model = thread.model ?? session.model;
       if (session.models?.length) thread.models = session.models;
+      thread.connectionStatus = "ready";
       thread.status = "ready";
       delete thread.error;
       this.sessions.set(thread.id, { adapter, ...session, threadId: thread.id });
       delete thread.restore;
+      this.execution.apply(thread, { kind: 'session', nativeSessionId: thread.nativeSessionId, timestamp: Date.now() });
     } catch (error) {
+      thread.connectionStatus = "error";
       thread.status = "error";
       thread.error = thread.restore ? `原生会话恢复失败：${error.message}` : error.message;
     }
@@ -299,84 +377,26 @@ class HostRuntime {
   /** 统一事件投影：Adapter 转换后的标准事件落到线程模型上 */
   #applyEvent({ threadId, event }) {
     if (!event) return;
-    if (threadId === "__fork__") return;
     const thread = this.threads.find((t) => t.id === threadId);
     if (!thread) return;
-    const last = thread.messages.at(-1);
-    let structural = true;
-    switch (event.kind) {
-      case "text-delta": {
-        const target = last?.role === "assistant" && last.streaming ? last : this.#appendAssistant(thread);
-        target.text += event.text;
-        appendDelta(target, 'text', event.text);
-        structural = false;
-        break;
-      }
-      case "thinking-delta": {
-        const target = last?.role === "assistant" && last.streaming ? last : this.#appendAssistant(thread);
-        target.thinking = (target.thinking ?? "") + event.text;
-        appendDelta(target, 'thinking', event.text);
-        structural = false;
-        break;
-      }
-      case "tool": {
-        const target = last?.role === 'assistant' && last.streaming ? last : this.#appendAssistant(thread);
-        projectTool(thread, target, event);
-        break;
-      }
-      case "artifact": {
-        // 各 Harness 返回的图片 / 文件产物：挂到当前 assistant 消息上，Renderer 统一渲染
-        const a = event.artifact;
-        if (!a || typeof a !== "object") break;
-        const target = last?.role === "assistant" ? last : this.#appendAssistant(thread);
-        target.artifacts ??= [];
-        if (target.artifacts.some((x) => x.id === a.id)) break;
-        target.artifacts.push({
-          id: a.id ?? randomUUID(),
-          type: a.type === "image" ? "image" : "file",
-          name: String(a.name ?? a.uri ?? "产物").slice(0, 120),
-          mime: typeof a.mime === "string" ? a.mime : undefined,
-          uri: typeof a.uri === "string" ? a.uri : undefined,
-          data: typeof a.data === "string" && a.data.length <= 5_500_000 ? a.data : undefined,
-        });
-        break;
-      }
-      case "approval":
-        thread.pendingApprovals ??= [];
-        if (!thread.pendingApprovals.some((a) => a.requestId === event.requestId)) {
-          thread.pendingApprovals.push({ requestId: event.requestId, method: event.method, title: event.title, message: event.message, options: event.options, placeholder: event.placeholder, at: Date.now() });
-        }
-        break;
-      case "usage":
-        thread.usage = { ...thread.usage, ...event.usage };
-        structural = false;
-        break;
-      case "session":
-        if (event.nativeSessionId) thread.nativeSessionId = event.nativeSessionId;
-        if (event.model) thread.model = event.model;
-        break;
-      case "status":
-        this.#notify("status", event.text, threadId);
-        return;
-      case "notice":
-        this.#notify(event.level ?? "info", event.text);
-        return;
-      case "completed": {
-        finishMessage(thread, last, event.stopReason ?? 'completed');
-        thread.updatedAt = Date.now();
-        this.#refreshContextUsage(thread);
-        void this.#settleReview(thread, last, 'ready');
-        break;
-      }
-      case "error": {
-        thread.error = event.message;
-        finishMessage(thread, last, 'error');
-        void this.#settleReview(thread, last, 'error');
-        break;
-      }
-      default:
-        return;
+    const turn = this.execution.lastTurn(thread.id);
+    event = { ...event, timestamp: event.timestamp ?? Date.now() };
+    const { settled, ignored } = this.execution.apply(thread, event);
+    if (ignored) return;
+    if (event.kind === 'session') {
+      if (event.nativeSessionId) thread.nativeSessionId = event.nativeSessionId;
+      if (event.model) thread.model = event.model;
     }
+    if (event.kind === 'status' || event.kind === 'notice') this.#notify(event.kind === 'status' ? 'status' : event.level ?? 'info', event.text, thread.id);
+    this.observer?.event(thread, event, this.core);
+    if (settled) {
+      thread.updatedAt = event.timestamp;
+      this.#refreshContextUsage(thread);
+      const task = this.#settleReview(thread, thread.messages.find(m => m.coreTurnId === turn.id));
+      this.reviewTasks.add(task);
+      void task.finally(() => this.reviewTasks.delete(task));
+    }
+    const structural = !['text-delta', 'thinking-delta', 'usage'].includes(event.kind);
     if (structural) {
       void this.#save();
       this.#broadcast();
@@ -386,84 +406,43 @@ class HostRuntime {
     }
   }
 
-  #appendAssistant(thread) {
-    const message = { id: randomUUID(), role: "assistant", text: "", at: Date.now(), streaming: true };
-    thread.messages.push(message);
-    return message;
+  /** Core diagnostics; Renderer receives projected views through snapshot(). */
+  coreSnapshot() {
+    return this.execution.snapshot();
   }
 
-  async #settleReview(thread, message, status) {
-    if (this.settlements.has(thread.id)) return;
-    this.settlements.add(thread.id);
-    const monitor = this.reviewMonitors.get(thread.id);
-    if (monitor) { monitor.closed = true; clearInterval(monitor.timer); this.reviewMonitors.delete(thread.id); }
-    thread.reviewPending = true;
-    try {
-      if (message?.reviewId) message.review = await this.reviews.finish(message.reviewId);
-      if (message?.review) this.emitReviewUpdate(thread, message, message.review);
-    } catch (e) { if (message) message.reviewError = '文件审查暂不可用：' + e.message; }
-    finally {
-      thread.reviewPending = false;
-      thread.status = status;
-      this.settlements.delete(thread.id);
-      await this.#save(); this.#broadcast();
-    }
+  /** Shadow 对照报告：mismatch / error / warning 全量，供 E2E 与调试断言 */
+  shadowReport() {
+    return this.observer?.report() ?? { enabled: false, reason: 'Legacy comparison is test-only; production uses Core exclusively.' };
   }
 
-  reviewMessage(threadId, messageId) {
-    const thread = this.#requireThread(threadId);
-    const message = thread.messages.find(m => m.id === messageId);
-    if (!message?.review) throw Error('该轮没有可审查的文件快照（旧历史无法补建）');
-    return { thread, message };
-  }
+  #settleReview(...args) { return this.reviewController.settle(...args); }
+  readReview(...args) { return this.reviewController.readReview(...args); }
+  reviewMessage(...args) { return this.reviewController.reviewMessage(...args); }
+  startReviewUpdates(...args) { return this.reviewController.startReviewUpdates(...args); }
+  emitReviewUpdate(...args) { return this.reviewController.emitReviewUpdate(...args); }
+  undoFile(...args) { return this.reviewController.undoFile(...args); }
 
-  // The UI subscribes to a turn-scoped event; workspace snapshots stay in Main.
-  startReviewUpdates(thread, message) {
-    if (!message.reviewId || this.reviewMonitors.has(thread.id)) return;
-    const monitor = { busy: false, closed: false };
-    const tick = async () => {
-      if (monitor.closed || monitor.busy || !message.streaming) return;
-      monitor.busy = true;
-      try {
-        const review = this.reviews.summary(await this.reviews.preview(message.reviewId));
-        if (!monitor.closed && message.streaming) {
-          message.liveReview = review;
-          this.emitReviewUpdate(thread, message, review);
-        }
-      } catch (e) {
-        if (!monitor.closed) for (const listener of this.listeners) listener({ type: 'turn/diff/updated', threadId: thread.id, turnId: message.id, error: e.message });
-      } finally { monitor.busy = false; }
-    };
-    monitor.timer = setInterval(() => void tick(), 2000);
-    monitor.timer.unref?.();
-    this.reviewMonitors.set(thread.id, monitor);
-    void tick();
-  }
-
-  emitReviewUpdate(thread, message, review) {
-    for (const listener of this.listeners) listener({ type: 'turn/diff/updated', threadId: thread.id, turnId: message.id, review });
-  }
-
-  async undoFile(threadId, messageId, file) {
-    const { thread, message } = this.reviewMessage(threadId, messageId);
-    const record = await this.reviews.load(message.review.id);
-    if ((await fs.realpath(thread.cwd)).toLowerCase() !== record.root.toLowerCase()) throw Error('任务目录已移动，禁止从新目录撤回旧项目文件');
-    if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && t.status === 'working')) throw Error('项目任务执行中，不能撤回');
-    message.review = await this.reviews.undo(message.review.id, file);
-    await this.#save(); this.#broadcast();
-    return message.review;
-  }
-
-  /** 回合结束后向原生程序拉取权威上下文占用（Pi get_session_stats；DSH 由 usage_update 实时推送） */
-  #refreshContextUsage(thread) {
+  /** Refresh authoritative context usage when the adapter exposes it. */
+  #refreshContextUsage(thread, strict = false) {
     const session = this.sessions.get(thread.id);
     if (!session || typeof session.adapter.getContextUsage !== "function") return;
-    session.adapter.getContextUsage(session).then((usage) => {
-      if (!usage) return;
-      thread.usage = { ...thread.usage, ...usage };
+    const turnId = this.execution.lastTurn(thread.id)?.id;
+    return session.adapter.getContextUsage(session).then((usage) => {
+      if (!usage || this.execution.lastTurn(thread.id)?.id !== turnId) return;
+      this.#applyEvent({ threadId: thread.id, event: { kind: 'usage', usage } });
       this.#saveSoon();
       this.#broadcastSoon();
-    }).catch(() => {});
+    }).catch(error => { if (strict) throw error; });
+  }
+
+  async refreshUsage(threadId) {
+    const thread = this.#requireThread(threadId);
+    if (typeof this.#requireAdapter(thread.harnessId).getContextUsage !== 'function') return thread.coreUsage ?? {};
+    const session = await this.#ensureOpen(thread);
+    if (!session) throw new Error(thread.error ?? '无法连接原生会话');
+    await this.#refreshContextUsage(thread, true);
+    return thread.coreUsage ?? {};
   }
 
   #notify(level, text, threadId) {
@@ -471,7 +450,7 @@ class HostRuntime {
   }
 
   #broadcast() {
-    for (const listener of this.listeners) listener({ type: "snapshot" });
+    for (const listener of this.listeners) listener({ type: "core/thread-updated" });
   }
 
   #broadcastSoon() {
@@ -479,7 +458,12 @@ class HostRuntime {
     this.broadcastTimer = setTimeout(() => { this.broadcastTimer = null; this.#broadcast(); }, 120);
   }
 
-  #save() { return this.store.save(this.threads); }
+  #syncCore(thread) { this.execution.sync(thread); }
+
+  #save() {
+    for (const thread of this.threads) this.#syncCore(thread);
+    return this.store.save(this.threads);
+  }
 
   #saveSoon() {
     if (this.saveTimer) return;

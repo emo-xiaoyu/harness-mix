@@ -27,7 +27,7 @@ function registerWorkspace({ ipcMain, runtime, emit, roots }) {
     const message = thread?.messages.find(m => m.id === input.messageId);
     const id = message?.review?.id ?? message?.reviewId;
     if (!id) throw Error('该轮尚无文件快照');
-    return input.path ? runtime.reviews.detail(id, input.path) : runtime.reviews.summary(await runtime.reviews.preview(id));
+    return runtime.readReview(thread, message, input.path);
   });
   ipcMain.handle('workspace:undo', async (_, input) => {
     const cwd = await root(input);

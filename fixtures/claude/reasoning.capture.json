@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-09-07T14:12:21.513Z",
+  "harnessId": "claude",
+  "label": "reasoning",
+  "nativeEvents": 14,
+  "fileVerified": false,
+  "report": {
+    "enabled": true,
+    "threads": 1,
+    "mismatches": [],
+    "errors": [],
+    "warnings": []
+  }
+}

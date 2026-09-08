@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-09-07T14:12:30.637Z",
+  "harnessId": "pi",
+  "label": "file-edit",
+  "nativeEvents": 112,
+  "fileVerified": true,
+  "report": {
+    "enabled": true,
+    "threads": 1,
+    "mismatches": [],
+    "errors": [],
+    "warnings": []
+  }
+}

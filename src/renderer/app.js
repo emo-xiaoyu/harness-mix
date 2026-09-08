@@ -9,6 +9,17 @@ const HARNESS_UI = [
 let state = { threads: [], adapters: [] }, selectedId = null, draftHarness = 'pi', busy = false, refreshing = false, refreshAgain = false;
 let openTabs = []; // 顶部标签栏：打开过的对话（内存态；关闭标签不删除任务）
 let catalogs = {};                    // harnessId -> describe() 结果（模型目录/思考档位/权限模式）
+try { const saved = JSON.parse(localStorage.getItem('hm:catalogs:v1') || '{}'); if (Date.now() - saved.at < 86400000) catalogs = saved.catalogs || {}; } catch { /* ignore damaged cache */ }
+const commandCache = new Map();
+function modelIcon(model = {}) {
+  const name = typeof model === 'string' ? model : [model.id, model.name, model.provider].filter(Boolean).join(' ');
+  const families = [[/deepseek/i, 'deepseek'], [/mimo|xiaomi/i, 'xiaomimimo'], [/qwen|qwq/i, 'qwen-color'], [/minimax|abab/i, 'minimax'], [/claude|anthropic/i, 'claude'], [/kimi|moonshot/i, 'kimi'], [/gpt|openai|o[134](?:-|\b)/i, 'openai']];
+  return 'icons/model-' + (families.find(([test]) => test.test(name))?.[1] || 'astra') + '.svg';
+}
+const catalogRequests = new Map();
+let menuGeneration = 0;
+let closeProjectMenu = () => {};
+const projectMeta = JSON.parse(localStorage.getItem('hm:projectMeta') ?? '{}');
 let draftOptions = {};                // harnessId -> { model, thinking, permissionMode } 草稿期选择
 let selectedProject = localStorage.getItem('hm:project') || 'E:\\harness-mix';
 let menuItems = [], menuPick = null;  // 单列菜单（权限模式）的条目与回调
@@ -18,8 +29,15 @@ const ui = id => HARNESS_UI.find(([key]) => key === id) ?? [id, id, 'pinumber1_8
 const icon = id => 'icons/' + ui(id)[2];
 const adapter = id => state.adapters.find(a => a.id === id);
 const available = id => Boolean(adapter(id)?.available);
-const capabilities = id => adapter(id)?.capabilities ?? {};
+const capabilities = id => {
+  const caps = current()?.harnessId === id ? current().capabilities : adapter(id)?.coreCapabilities;
+  if (caps) return { models: caps.model.selection, thinkingLevels: caps.model.thinkingLevel,
+    permissionModes: caps.interaction.permissionMode, fork: caps.session.fork, forkFromMessage: caps.session.forkFromMessage };
+  return adapter(id)?.capabilities ?? {}; // old snapshot compatibility
+};
 const current = () => state.threads.find(t => t.id === selectedId);
+const coreTurnFor = t => t?.currentTurn;
+const coreStatuses = { created: '正在执行', starting: '正在执行', running: '正在执行', waiting_interaction: '等待你的回答', completed: '准备就绪', cancelled: '已停止', error: '发生错误' };
 const statuses = { opening: '正在连接', working: '正在执行', ready: '准备就绪', error: '发生错误' };
 const notice = text => { $('#notice').textContent = text; };
 const describeError = e => /No handler registered/.test(e.message) ? '主进程功能未加载：请完全退出并重启 Harness Mix。' : e.message;
@@ -38,9 +56,14 @@ const describeError = e => /No handler registered/.test(e.message) ? '主进程�
   const popover = document.createElement('section');
   popover.id = 'usagePopover'; popover.className = 'usage-popover'; popover.hidden = true;
   popover.setAttribute('aria-label', '上下文与用量'); wrap.append(popover);
-  button.onclick = () => {
+  button.onclick = async () => {
     const opening = popover.hidden; closeMenus(); popover.hidden = !opening;
     button.setAttribute('aria-expanded', String(opening));
+    const thread = current();
+    if (!opening || !thread) return;
+    const note = document.createElement('p'); note.textContent = '正在核对原生上下文…'; popover.appendChild(note);
+    try { await window.harnessMix.refreshUsage(thread.id); if (current()?.id === thread.id) await refresh(); }
+    catch (error) { if (current()?.id === thread.id) note.textContent = describeError(error); }
   };
 }
 
@@ -97,14 +120,59 @@ function showLightbox(src, caption) {
 }
 
 function drawer(open) { $('#drawer').hidden = !open; $('#trigger').setAttribute('aria-expanded', String(open)); $('#trigger').classList.toggle('open', open); }
-function closeMenus() { for (const id of ['#modelTopMenu', '#modelBarMenu', '#permMenu', '#usagePopover']) $(id).hidden = true; $('#contextMeter').setAttribute('aria-expanded', 'false'); }
+function closeMenus() { menuGeneration++; for (const id of ['#modelTopMenu', '#modelBarMenu', '#permMenu', '#usagePopover', '#commandMenu']) $(id).hidden = true; $('#contextMeter').setAttribute('aria-expanded', 'false'); $('#commandButton').setAttribute('aria-expanded', 'false'); }
+
+// Commands are discovered only when the user opens this menu.
+{
+  const wrap = document.createElement('span');
+  wrap.className = 'model-wrap command-wrap';
+  wrap.innerHTML = '<button type="button" id="commandButton" class="command-button" title="Harness 指令" aria-label="Harness 指令" aria-expanded="false" aria-controls="commandMenu"><img src="icons/commands.svg" alt=""></button><div id="commandMenu" class="menu command-menu" hidden></div>';
+  $('.bar-spacer').after(wrap);
+  const menu = $('#commandMenu'), button = $('#commandButton');
+  button.onclick = async () => {
+    const opening = menu.hidden; closeMenus();
+    if (!opening) return;
+    menu.hidden = false; button.setAttribute('aria-expanded', 'true');
+    const generation = menuGeneration, thread = current(), hid = thread?.harnessId ?? draftHarness;
+    menu.innerHTML = '<div class="command-hint">正在读取指令…</div>';
+    try {
+      const key = thread?.id || hid;
+      const commands = commandCache.get(key) ?? await window.harnessMix.listCommands({ threadId: thread?.id, harnessId: hid });
+      commandCache.set(key, commands);
+      if (generation !== menuGeneration) return;
+      menu.innerHTML = `<div class="command-hint">${esc(ui(hid)[1])} 指令</div>`;
+      if (!commands.length) menu.innerHTML += '<div class="command-hint">当前原生接口尚未提供快捷指令。</div>';
+      for (const command of commands) {
+        const item = document.createElement('button'); item.type = 'button';
+        item.className = 'command-item'; item.dataset.command = command.id;
+        item.innerHTML = `<span>${esc(command.label)}</span><small>${esc(command.description || '')}</small>`;
+        item.disabled = command.action === 'execute' && (!thread?.messages.length || thread.status === 'working' || thread.reviewPending || busy);
+        if (item.disabled) item.title = '请在会话回复完成后执行';
+        item.onclick = async () => {
+          closeMenus();
+          if (command.action === 'insert') { $('#message').value = command.text; $('#message').focus(); return; }
+          busy = true; notice('正在执行：' + command.label); render();
+          try { await window.harnessMix.executeCommand(thread.id, command.id); notice(command.label + '已完成'); }
+          catch (error) { notice(describeError(error)); }
+          finally { busy = false; await refresh(); }
+        };
+        menu.append(item);
+      }
+    } catch (error) {
+      if (generation === menuGeneration) menu.innerHTML = `<div class="command-hint">${esc(describeError(error))}</div>`;
+    }
+  };
+}
 
 /** Harness 原生目录（模型/思考档位/权限模式），渲染进程侧缓存 */
 async function catalog(hid) {
   if (catalogs[hid]) return catalogs[hid];
-  const c = await window.harnessMix.describe(hid);
-  catalogs[hid] = c;
-  return c;
+  if (!catalogRequests.has(hid)) catalogRequests.set(hid, window.harnessMix.describe(hid).then(c => {
+    catalogs[hid] = c;
+    try { localStorage.setItem('hm:catalogs:v1', JSON.stringify({ at: Date.now(), catalogs })); } catch { /* storage may be full */ }
+    return c;
+  }).finally(() => catalogRequests.delete(hid)));
+  return catalogRequests.get(hid);
 }
 
 /** 当前上下文的有效选项：任务态取 thread，草稿态取 per-harness 草稿 */
@@ -121,24 +189,18 @@ function ensureProjectGroup(path) {
   if (!path || findProject(path)) return;
   const det = document.createElement('details');
   det.dataset.path = path;
-  det.innerHTML = `<summary>${SVG.folder}<span class="project-name">${esc(path.split(/[\\/]/).filter(Boolean).pop() || path)}</span><span class="project-x" data-del-project="${esc(path)}" title="删除项目" role="button" aria-label="删除项目">×</span></summary><nav class="threads" aria-label="真实任务"></nav>`;
+  det.innerHTML = '<summary></summary><nav class="threads" aria-label="真实任务"></nav>';
   det.querySelector('nav').dataset.path = path;
   $('#projects').appendChild(det);
+  decorateProjectSummary(det);
 }
 
 /** 静态示例项目组（index.html）补删除按钮；裸文本节点包进 .project-name 便于布局与取名 */
 function decorateProjectSummary(det) {
   const sum = det.querySelector(':scope > summary');
-  if (!sum || sum.querySelector('[data-del-project]')) return;
-  for (const node of [...sum.childNodes]) {
-    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-      const span = document.createElement('span');
-      span.className = 'project-name';
-      span.textContent = node.textContent.trim();
-      sum.replaceChild(span, node);
-    }
-  }
-  sum.insertAdjacentHTML('beforeend', `<span class="project-x" data-del-project="${esc(det.dataset.path)}" title="删除项目" role="button" aria-label="删除项目">×</span>`);
+  const path = det.dataset.path, meta = projectMeta[path] ?? {};
+  sum.innerHTML = `<span class="folder-closed">${SVG.folder}</span><span class="folder-open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 18V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2M3 20h15l4-10H7L3 20Z"/></svg></span><span class="project-name">${esc(meta.name || path.split(/[\\/]/).filter(Boolean).pop() || path)}</span>${meta.pinned ? '<span class="project-pin" title="已置顶">⌖</span>' : ''}<button type="button" class="project-action" data-project-menu aria-label="项目操作" title="项目操作">···</button><button type="button" class="project-action" data-project-new aria-label="新建对话" title="在此项目新建对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 5 5-11 11-6 1 1-6L16 3Z"/><path d="m14 5 5 5"/></svg></button>`;
+  sum.title = path;
 }
 const threadButtonHtml = t => `<button class="task ${t.id === selectedId ? 'active' : ''}" data-thread="${esc(t.id)}" draggable="true" title="${esc(t.title)}"><img src="${icon(t.harnessId)}" alt="">${esc(t.title)}<span class="task-x" data-del="${esc(t.id)}" title="删除任务">×</span></button>`;
 
@@ -148,6 +210,9 @@ function renderThreads() {
     const list = state.threads.filter(t => t.cwd === nav.dataset.path);
     nav.innerHTML = list.map(threadButtonHtml).join('') || '<p class="hint">还没有任务</p>';
   }
+  const groups = [...$('#projects').querySelectorAll('details[data-path]')];
+  groups.sort((a, b) => Number(Boolean(projectMeta[b.dataset.path]?.pinned)) - Number(Boolean(projectMeta[a.dataset.path]?.pinned)));
+  for (const group of groups) $('#projects').appendChild(group);
 }
 
 /** 各 Harness 返回的图片 / 文件产物统一渲染（对齐层） */
@@ -163,8 +228,9 @@ function renderArtifacts(m) {
 
 function renderMessages(t, harnessId) {
   return t.messages.map(m => {
-    if (m.role === 'user') return `<article class="message user"><div class="message-label">你</div>${esc(m.text)}</article>`;
-    return `<article class="message assistant"><div class="message-label"><img src="${icon(harnessId)}" alt="${esc(ui(harnessId)[1])}"></div>${window.Transcript.message(m, t)}${renderArtifacts(m)}</article>`;
+    if (m.role === 'user') return `<article class="message user" aria-label="你的消息">${esc(m.text)}</article>`;
+    const canFork = capabilities(harnessId).forkFromMessage && m.coreTurn && !['created', 'starting', 'running', 'waiting_interaction'].includes(m.coreTurn.status);
+    return `<article class="message assistant"><div class="message-label"><img src="${icon(harnessId)}" alt="${esc(ui(harnessId)[1])}"></div>${window.Transcript.message(m, t)}${renderArtifacts(m)}${canFork ? `<div class="message-actions"><button type="button" data-fork-message="${esc(m.id)}" title="分支到新聊天" aria-label="分支到新聊天" ${busy || t.reviewPending || t.status === 'working' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5v5a7 7 0 0 0 7 7h7M14 12l5 5-5 5M5 10l7-7M7 3h5v5"/></svg></button></div>` : ''}</article>`;
   }).join('');
 }
 
@@ -173,8 +239,9 @@ function renderTools(t) {
 }
 
 function renderApprovals(t) {
-  if (!t.pendingApprovals?.length) return '';
-  return t.pendingApprovals.map(a => {
+  const requests = t.interactions ?? [];
+  if (!requests?.length) return '';
+  return requests.map(a => {
     let actions = '';
     if (a.method === 'confirm') {
       actions = `<button class="primary" data-approval-confirm="true">允许</button><button class="danger" data-approval-confirm="false">拒绝</button>`;
@@ -209,23 +276,24 @@ function render() {
   renderTabs();
   $('#drawer').innerHTML = HARNESS_UI.map(([key, name, file]) => `<button type="button" class="option" role="radio" aria-label="${name}${available(key) ? '' : '（尚不可用）'}" title="${name}${available(key) ? '' : ' · 尚未接入或不可用'}" aria-checked="${key === id}" data-harness="${key}" ${!available(key) || busy ? 'disabled' : ''}><img src="icons/${file}" alt=""></button>`).join('');
   $('#currentIcon').src = icon(id); $('#trigger').title = ui(id)[1]; $('#trigger').setAttribute('aria-label', '选择 Harness，当前 ' + ui(id)[1]);
-  $('#taskStatus').textContent = (t ? (statuses[t.status] || t.status) : '准备就绪') + (t?.usage?.totalTokens ? ` · ${(t.usage.totalTokens / 1000).toFixed(1)}k tokens` : '');
+  $('#taskStatus').textContent = t ? (t.connectionStatus === 'error' || t.connectionStatus === 'opening' ? statuses[t.connectionStatus] : coreStatuses[coreTurnFor(t)?.status] ?? statuses[t.status] ?? t.status) : '准备就绪';
   $('#bridgeStatus').textContent = state.adapters.filter(a => a.available).length + ' 个可用';
   // 模型胶囊（Codex 风格：模型名 + 思考强度后缀），权限胶囊
   const modelLabel = (opts.model?.name ?? '原生默认模型') + (opts.thinking ? ' ' + opts.thinking : '');
   document.querySelectorAll('.model-name').forEach(n => { n.textContent = modelLabel; });
+  document.querySelectorAll('#modelTop > img, #modelBar > img').forEach(img => { img.src = modelIcon(opts.model); });
   const permBtn = $('#permBar');
   permBtn.hidden = !caps.permissionModes;
   permBtn.querySelector('.perm-name').textContent = cat?.permissionModes?.find(m => m.id === opts.permissionMode)?.label ?? (opts.permissionMode || '权限');
   // 上下文占用环形表（事件投影：DSH 实时 / Pi 回合结算后权威值）
-  const meter = $('#contextMeter'), usage = window.UsageView.data(t?.usage);
+  const meter = $('#contextMeter'), usage = window.UsageView.data(t?.coreUsage);
   meter.hidden = !t;
   const c = 2 * Math.PI * 9;
-  $('#contextRing').setAttribute('stroke-dasharray', `${(Math.max(0, Math.min(100, usage.pct || 0)) / 100 * c).toFixed(1)} ${c.toFixed(1)}`);
+  const filled = Math.max(0, Math.min(100, usage.pct || 0)) / 100 * c;
+  $('#contextRing').style.strokeDasharray = `${filled} ${c - filled}`;
   $('#contextText').textContent = usage.label;
   meter.title = '上下文与用量';
-  $('#usagePopover').innerHTML = '<h3>用量</h3><dl>' + usage.rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('') + '</dl><p>原生 Harness 统计；— 表示未提供。缓存与 Token 为会话累计，CH 为最近请求。推理 Token 和账户额度尚未接入。</p>';
-  if (!t) closeMenus();
+  $('#usagePopover').innerHTML = '<h3>上下文与用量</h3><dl>' + usage.rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('') + '</dl><p>占用 = 当前上下文 Token ÷ 模型窗口，按原生 Harness 最近提供的数值显示。会话累计 Token 不代表上下文占用。— 表示尚未提供或压缩后待更新。</p>';
   document.querySelectorAll('#projects details').forEach(d => d.classList.toggle('active-project', d.dataset.path === selectedProject));
   const area = $('#conversation'), bottom = area.scrollHeight - area.scrollTop - area.clientHeight < 90;
   const expanded = new Set([...area.querySelectorAll('details[data-activity-id][open]')].map(d => d.dataset.activityId));
@@ -236,10 +304,11 @@ function render() {
   area.querySelectorAll('details[data-activity-id]').forEach(d => { d.open = expanded.has(d.dataset.activityId); });
   area.querySelectorAll('.turn-process').forEach(d => { d.querySelector('.turn-process-content').scrollTop = processScroll.get(d.dataset.activityId) ?? 0; });
   if (bottom) area.scrollTop = area.scrollHeight;
-  const running = t?.status === 'working';
+  const turn = coreTurnFor(t);
+  const running = Boolean(turn && ['created', 'starting', 'running', 'waiting_interaction'].includes(turn.status));
   $('#send').hidden = running; $('#stop').hidden = !running;
   $('#stop').disabled = Boolean(t?.reviewPending);
-  $('#send').disabled = busy || t?.status === 'opening' || (!t && !available(draftHarness));
+  $('#send').disabled = busy || Boolean(t?.reviewPending) || t?.status === 'opening' || (!t && !available(draftHarness));
   $('#runStatus').textContent = t?.reviewPending ? '正在整理文件变更…' : busy ? '处理中…' : '';
   $('#cwd').disabled = Boolean(t) || busy; $('#folder').disabled = Boolean(t) || busy; if (t) $('#cwd').value = t.cwd;
   $('#topHarness').innerHTML = HARNESS_UI.map(([key, name, file]) => `<button class="top-icon ${id === key ? 'active' : ''}" data-top="${key}" aria-label="${name}" title="${name}${available(key) ? '' : ' · 尚未接入'}" ${!available(key) || busy ? 'disabled' : ''}><img src="icons/${file}" alt=""></button>`).join('');
@@ -275,8 +344,13 @@ $('#permBar').onclick = async () => {
   const menu = $('#permMenu');
   if (!menu.hidden) { closeMenus(); return; }
   const t = current(), hid = t?.harnessId || draftHarness;
+  closeMenus();
+  const generation = menuGeneration;
+  menu.innerHTML = '<div class="menu-empty">正在读取权限选项…</div>'; menu.hidden = false;
   try {
     const cat = await catalog(hid);
+    if (generation !== menuGeneration || current()?.id !== t?.id || (!t && draftHarness !== hid)) return;
+    menu.hidden = true;
     const modes = cat.permissionModes ?? [];
     if (!modes.length) { notice(`${ui(hid)[1]} 无权限模式可配置；审批请求将逐次呈现。`); return; }
     const activeId = t ? t.options?.permissionMode : draftOptions[hid]?.permissionMode;
@@ -292,7 +366,7 @@ $('#permBar').onclick = async () => {
         notice(`已选择权限模式：${item.label}（创建任务时生效）`); render();
       }
     });
-  } catch (error) { notice(describeError(error)); }
+  } catch (error) { if (generation === menuGeneration) menu.innerHTML = `<div class="menu-empty">${esc(describeError(error))} · 关闭后点击重试</div>`; }
 };
 
 /* ---------- 模型 + 思考强度合并菜单（Codex 风格双列） ---------- */
@@ -300,23 +374,26 @@ async function openModelMenu(which) {
   const menu = which === 'top' ? $('#modelTopMenu') : $('#modelBarMenu');
   if (!menu.hidden) { closeMenus(); return; }
   closeMenus();
+  const generation = menuGeneration;
   const t = current(), hid = t?.harnessId || draftHarness, caps = capabilities(hid);
   if (!caps.models && !caps.thinkingLevels) { notice(`${ui(hid)[1]} 暂不支持在桌面层选择模型或思考强度。`); return; }
+  menu.innerHTML = '<div class="menu-empty">正在读取模型与思考选项…</div>'; menu.hidden = false;
   try {
     let models = null, levels = [];
     if (caps.models) {
-      if (t) models = t.models ?? await window.harnessMix.listModels(t.id);
-      else { notice(`正在读取 ${ui(hid)[1]} 的模型目录…`); models = (await catalog(hid)).models; notice(''); }
+      if (t) models = t.models ?? (await catalog(hid)).models;
+      else models = (await catalog(hid)).models;
     }
     if (caps.thinkingLevels) levels = (await catalog(hid)).thinkingLevels ?? [];
+    if (generation !== menuGeneration || current()?.id !== t?.id || (!t && draftHarness !== hid)) return;
     menuModelItems = (models ?? []).map(m => ({ id: m.id, label: m.name, sub: [m.id, m.provider].filter(Boolean).join(' · '), raw: m }));
     menuThinkItems = levels.map(l => ({ id: l.id, label: l.label ?? l.id, sub: l.hint }));
     const activeModel = t ? (t.model?.id ?? t.model) : draftOptions[hid]?.model?.id;
     const activeThink = t ? t.options?.thinking : draftOptions[hid]?.thinking;
-    const col = (head, items, kind, active) => `<div class="menu-col"><div class="menu-head">${head}</div>${items.length ? items.map((it, i) => `<button data-kind="${kind}" data-idx="${i}" class="${it.id === active ? 'active' : ''}">${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</button>`).join('') : '<div class="menu-empty">该 Harness 不支持</div>'}</div>`;
+    const col = (head, items, kind, active) => `<div class="menu-col"><div class="menu-head">${head}</div>${items.length ? items.map((it, i) => `<button data-kind="${kind}" data-idx="${i}" class="${it.id === active ? 'active' : ''}">${kind === 'model' ? `<img class="model-brand" src="${modelIcon(it.raw)}" alt="">` : ''}${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</button>`).join('') : '<div class="menu-empty">该 Harness 不支持</div>'}</div>`;
     menu.innerHTML = `<div class="menu-cols">${col('模型', menuModelItems, 'model', activeModel)}${col('思考强度', menuThinkItems, 'think', activeThink)}</div>`;
     menu.hidden = false;
-  } catch (error) { notice(describeError(error)); }
+  } catch (error) { if (generation === menuGeneration) menu.innerHTML = `<div class="menu-empty">${esc(describeError(error))} · 关闭后点击重试</div>`; }
 }
 $('#modelTop').onclick = () => void openModelMenu('top');
 $('#modelBar').onclick = () => void openModelMenu('bar');
@@ -414,7 +491,70 @@ async function deleteProject(path, det) {
   finally { busy = false; await refresh(); }
 }
 
+function projectNewChat(path) {
+  if (busy) return;
+  selectedProject = path; localStorage.setItem('hm:project', path);
+  selectedId = null; $('#cwd').value = path; $('#message').value = '';
+  closeMenus(); drawer(false); notice(''); render(); $('#message').focus();
+}
+function saveProjectMeta(det) {
+  localStorage.setItem('hm:projectMeta', JSON.stringify(projectMeta));
+  decorateProjectSummary(det); render();
+}
+function editProject(det) {
+  const path = det.dataset.path;
+  const overlay = document.createElement('div'); overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `<form class="modal project-editor" role="dialog" aria-modal="true" aria-label="编辑项目"><h3>编辑项目</h3><label>项目名称<input name="name" maxlength="80" required value="${esc(det.querySelector('.project-name').textContent)}"></label><label>项目目录<input readonly value="${esc(path)}"></label><div class="modal-actions"><button type="button">取消</button><button class="primary" type="submit">保存</button></div></form>`;
+  const dismiss = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = event => { if (event.key === 'Escape') { event.stopPropagation(); dismiss(); } };
+  document.addEventListener('keydown', onKey, true);
+  overlay.querySelector('button[type=button]').onclick = dismiss;
+  overlay.querySelector('form').onsubmit = event => {
+    event.preventDefault(); const name = overlay.querySelector('[name=name]').value.trim();
+    if (!name) return;
+    (projectMeta[path] ??= {}).name = name; saveProjectMeta(det); dismiss();
+  };
+  document.body.appendChild(overlay); overlay.querySelector('[name=name]').select();
+}
+function showProjectMenu(det, anchor) {
+  closeProjectMenu();
+  const path = det.dataset.path, menu = document.createElement('div');
+  menu.className = 'project-menu'; menu.setAttribute('role', 'menu');
+  menu.innerHTML = `<button role="menuitem" data-action="new">新建对话</button><button role="menuitem" data-action="pin">${projectMeta[path]?.pinned ? '取消置顶' : '置顶'}</button><button role="menuitem" data-action="edit">编辑项目</button><hr><button role="menuitem" data-action="open">在资源管理器中打开</button><hr><button role="menuitem" data-del-project="${esc(path)}" data-action="remove" class="danger">移除项目</button>`;
+  const box = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(box.left, innerWidth - 220) + 'px';
+  document.body.appendChild(menu);
+  menu.style.top = Math.min(box.bottom + 5, innerHeight - menu.offsetHeight - 10) + 'px';
+  const dismiss = () => { menu.remove(); document.removeEventListener('click', outside); document.removeEventListener('keydown', key); };
+  closeProjectMenu = dismiss;
+  const outside = event => { if (!menu.contains(event.target) && !anchor.contains(event.target)) dismiss(); };
+  const key = event => {
+    if (event.key === 'Escape') { dismiss(); anchor.focus(); }
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault(); const buttons = [...menu.querySelectorAll('button')], n = buttons.indexOf(document.activeElement);
+      buttons[(n + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
+    }
+  };
+  document.addEventListener('click', outside); document.addEventListener('keydown', key);
+  menu.onclick = async event => {
+    const action = event.target.closest('[data-action]')?.dataset.action; if (!action) return;
+    dismiss();
+    if (action === 'new') projectNewChat(path);
+    if (action === 'pin') { const meta = projectMeta[path] ??= {}; meta.pinned = !meta.pinned; saveProjectMeta(det); }
+    if (action === 'edit') editProject(det);
+    if (action === 'remove') await deleteProject(path, det);
+    if (action === 'open') { try { await window.harnessMix.openFolder(path); } catch (error) { notice(error.message); } }
+  };
+  menu.querySelector('button').focus();
+}
 $('#projects').addEventListener('click', e => {
+  const action = e.target.closest('[data-project-new],[data-project-menu]');
+  if (action) {
+    e.preventDefault(); e.stopPropagation(); const det = action.closest('details');
+    if (action.hasAttribute('data-project-new')) projectNewChat(det.dataset.path);
+    else showProjectMenu(det, action);
+    return;
+  }
   const delProjectBtn = e.target.closest('[data-del-project]');
   if (delProjectBtn) {
     e.preventDefault(); e.stopPropagation(); // 阻止 summary 折叠
@@ -483,7 +623,7 @@ $('#new').onclick = () => { if (busy) return; selectedId = null; $('#message').v
 $('#composer').onsubmit = async e => {
   e.preventDefault();
   const text = $('#message').value.trim();
-  if (!text || busy || current()?.status === 'working') return;
+  if (!text || busy || current()?.reviewPending || current()?.status === 'working') return;
   busy = true; notice(''); render();
   try {
     if (!current()) {
@@ -502,6 +642,8 @@ $('#stop').onclick = async () => { try { await window.harnessMix.cancel(selected
 
 /* ---------- 审批 / 提问应答 ---------- */
 $('#conversation').onclick = async e => {
+  const fork = e.target.closest('[data-fork-message]');
+  if (fork && !fork.disabled) { await branchToChat(fork.dataset.forkMessage); return; }
   const zoom = e.target.closest('[data-zoom]');
   if (zoom) { const img = zoom.querySelector('img'); if (img) showLightbox(img.src, img.alt); return; }
   const card = e.target.closest('.approval'); if (!card) return;
@@ -525,19 +667,20 @@ $('#conversation').onclick = async e => {
 };
 
 /* ---------- Fork ---------- */
-$('#forkBtn').onclick = async () => {
+async function branchToChat(messageId) {
   const t = current();
   if (!t) { notice('先选择或创建一个任务，再 Fork。'); return; }
   if (busy) return;
   if (!capabilities(t.harnessId).fork) { notice(`${ui(t.harnessId)[1]} 的原生接口暂不支持 Fork。`); return; }
   busy = true; render();
   try {
-    const forked = await window.harnessMix.fork(t.id);
+    const forked = await window.harnessMix.fork(t.id, messageId);
     selectedId = forked.id; openTab(forked.id);
-    notice(`已 Fork 为新任务「${forked.title}」。`);
+    notice(`已分支到新聊天「${forked.title}」。`);
   } catch (error) { notice(error.message); }
   finally { busy = false; await refresh(); }
-};
+}
+$('#forkBtn').onclick = () => branchToChat();
 
 /* ---------- 其余导航 ---------- */
 window.harnessMix.onEvent(event => {

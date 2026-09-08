@@ -53,12 +53,30 @@ window.Transcript = (() => {
     return activity(key, label, content, tool.state);
   }
   function message(message, thread) {
+    const fromCore = Boolean(message.coreTurn && message.coreItems);
+    if (!fromCore) return '<p class="review-note">历史记录尚未迁移。</p>';
+    if (fromCore) {
+      const turn = message.coreTurn;
+      const running = ['created', 'starting', 'running', 'waiting_interaction'].includes(turn.status);
+      const tools = message.coreItems.filter(i => i.type === 'tool_call').map(i => ({
+        ...i, messageId: message.id, at: i.createdAt,
+        endedAt: ['completed', 'cancelled', 'error'].includes(i.status) ? i.updatedAt : undefined,
+      }));
+      const items = message.coreItems.filter(i => ['agent_message', 'reasoning', 'tool_call'].includes(i.type)).map(i => ({
+        id: i.id, kind: ({ agent_message: 'text', reasoning: 'thinking', tool_call: 'tool' })[i.type],
+        text: i.content, phase: i.phase, toolId: i.id, at: i.createdAt,
+        endedAt: ['completed', 'cancelled', 'error'].includes(i.status) ? i.updatedAt : undefined,
+      }));
+      thread = { ...thread, tools };
+      const plan = message.coreItems.find(i => i.type === 'plan');
+      message = { ...message, review: message.coreReview ?? message.review, corePlan: plan };
+      message = { ...message, items, streaming: running, at: turn.startedAt, endedAt: turn.completedAt,
+        stopReason: turn.status, text: '', thinking: '', waitingInteraction: turn.status === 'waiting_interaction' };
+    }
     let body;
     let final = '';
     const settled = !message.streaming;
     const items = message.items ?? [];
-    const lastText = items.findLastIndex(i => i.kind === 'text');
-    const finalIndex = settled && (!message.stopReason || message.stopReason === 'completed') && lastText === items.length - 1 ? lastText : -1;
     if (message.items?.length) {
       const parts = [];
       let pending = [];
@@ -66,24 +84,21 @@ window.Transcript = (() => {
       message.items.forEach((item, index) => {
         if (item.kind === 'text') {
           flush();
-          if (index === finalIndex) final = `<div class="md final-answer">${window.renderMarkdown(item.text)}</div>`;
+          if (item.phase === 'final') final += `<div class="md final-answer">${window.renderMarkdown(item.text)}</div>`;
           else parts.push(`<div class="md progress-message">${window.renderMarkdown(item.text)}</div>`);
         } else if (item.kind === 'thinking' || item.kind === 'tool') pending.push(item);
       });
       flush();
       body = parts.join('');
-    } else {
-      body = (message.thinking ? thinking({ id: `${message.id}-legacy-thinking`, text: message.thinking }, message.streaming) : '')
-        + (!settled && message.text ? `<div class="md">${window.renderMarkdown(message.text)}</div>` : '');
-      if (settled && message.text) final = `<div class="md final-answer">${window.renderMarkdown(message.text)}</div>`;
-    }
+    } else { body = ''; }
+    body += message.coreItems.filter(i => i.type === 'notice').map(i => `<p class="review-note">${esc(i.content)}</p>`).join('');
+    if (fromCore && message.corePlan?.entries?.length) body += activity(message.corePlan.id, '执行计划', '<ol>' + message.corePlan.entries.map(entry => `<li>${esc(entry.content ?? entry.text)} · ${esc(entry.status)}</li>`).join('') + '</ol>');
     const elapsed = duration(message.at, message.endedAt);
     const status = message.stopReason === 'cancelled' ? '已停止' : message.stopReason === 'error' ? '执行出错' : message.stopReason === 'interrupted' ? '会话已中断' : '已处理';
     if (settled) {
-      if (thread.messages.filter(m => m.role === 'assistant').at(-1) === message) body += legacyTools(thread);
       return `<div class="turn-header">${status} ${elapsed || '计时未记录'}</div>` + body + (final || '<p class="waiting">本轮未返回最终结论，可展开查看执行过程。</p>') + changeCard(message);
     }
-    const process = `<div class="turn-header is-live"><time data-started-at="${message.at || ''}">${liveLabel(message.at)}</time></div>` + body + (!body ? '<p class="waiting">正在等待原生 Harness 回复…</p>' : '');
+    const process = `<div class="turn-header is-live">${message.waitingInteraction ? '<span>等待你的回答 · </span>' : ''}<time data-started-at="${message.at || ''}">${liveLabel(message.at)}</time></div>` + body + (!body ? '<p class="waiting">正在等待原生 Harness 回复…</p>' : '');
     return process + (message.reviewId ? `<div class="live-changes"><button data-review-message="${esc(message.id)}" data-live-review="${esc(message.id)}">查看已更改文件 <span>↗</span></button></div>` : message.reviewError ? `<p class="review-note">${esc(message.reviewError)}</p>` : '');
   }
   function changeCard(message) {
@@ -94,25 +109,23 @@ window.Transcript = (() => {
     const row = f => `<button class="change-file" data-review-message="${esc(message.id)}" data-review-path="${esc(f.path)}"><span>${esc(f.path)}</span><small>${f.undone ? '已撤回' : `<em>+${f.added}</em> <i>-${f.removed}</i>`}</small></button>`;
     return `<section class="change-card"><div class="change-heading"><div><b>本轮变更 ${review.files.length} 个文件</b><small><em>+${total('added')}</em> <i>-${total('removed')}</i></small></div><button data-review-message="${esc(message.id)}">审查与撤回</button></div>${review.files.slice(0, 4).map(row).join('')}${review.files.length > 4 ? `<details class="more-changes"><summary>再显示 ${review.files.length - 4} 个文件</summary>${review.files.slice(4).map(row).join('')}</details>` : ''}<p class="review-note">任务期间的工作区差异${review.skipped ? ' · 部分非文本/大文件已跳过' : ''}</p></section>`;
   }
-  function legacyTools(thread) {
-    const legacy = (thread.tools ?? []).filter(t => !t.messageId);
-    return legacy.length ? activity(`${thread.id}-legacy-tools`, `历史工具记录 · ${legacy.length} 项`, '<p class="legacy-note">旧记录未保存事件顺序，以下按原有工具列表展示。</p>' + legacy.map(t => tool(t)).join('')) : '';
-  }
-  return { message, legacyTools, duration, liveLabel, updateClocks };
+  return { message, duration, liveLabel, updateClocks };
 })();
 
 window.UsageView = (() => {
   const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
   const count = n => !valid(n) ? '—' : n >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n));
-  const percent = n => valid(n) ? `${+Math.min(100, n).toFixed(1)}%` : '—';
+  const percent = n => valid(n) ? `${+n.toFixed(1)}%` : '—';
   function data(usage = {}) {
-    const tokens = usage.tokens ?? usage.used, windowSize = usage.contextWindow ?? usage.size;
-    const pct = valid(tokens) && valid(windowSize) && windowSize > 0 ? 100 * tokens / windowSize : usage.contextPercent;
+    const tokens = Object.hasOwn(usage, 'tokens') ? usage.tokens : usage.used;
+    const windowSize = Object.hasOwn(usage, 'contextWindow') ? usage.contextWindow : usage.size;
+    const pct = valid(tokens) && valid(windowSize) && windowSize > 0 ? 100 * tokens / windowSize
+      : Object.hasOwn(usage, 'tokens') ? null : usage.contextPercent;
     return { pct, label: percent(pct), rows: [
       ['上下文', `${percent(pct)} / ${count(windowSize)}`], ['上下文已用', count(tokens)],
       ['最近缓存命中率', valid(usage.cacheHitPercent) ? `CH ${percent(usage.cacheHitPercent)}` : '—'],
       ['缓存读取', count(usage.cacheRead)], ['缓存写入', count(usage.cacheWrite)],
-      ['Token 总数', count(usage.totalTokens)], ['输入 / 输出', `${count(usage.input)} / ${count(usage.output)}`],
+      ['会话累计 Token', count(usage.totalTokens)], ['累计输入 / 输出', `${count(usage.input)} / ${count(usage.output)}`],
       ['费用（USD）', valid(usage.cost) ? `$${usage.cost.toFixed(4)}` : '—'],
     ] };
   }

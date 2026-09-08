@@ -2,6 +2,7 @@ const { promises: fs } = require("node:fs");
 const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const { JsonlProcess, cliSpawn } = require("../host/jsonl");
+const { recordNative } = require("../harness-adapter/fixture-recorder");
 
 const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || "E:\\dsh\\deepseek-harness";
 
@@ -10,7 +11,7 @@ const manifest = {
   name: "DeepSeek Harness",
   icon: "deepseek-color.svg",
   // DSH ACP 为自动化协议：不支持 fork / 提问，权限审批为一次性 allow/reject（无权限模式配置项）
-  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: false, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: false, usage: true, contextUsage: true },
+  capabilities: { plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: false, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: false, usage: true, contextUsage: true },
 };
 
 const TOOL_STATUS = { pending: "running", in_progress: "running", completed: "done", failed: "error" };
@@ -56,21 +57,13 @@ function create(emit) {
       const pendingPermissions = new Map();
       const { command, args } = cliSpawn("npm", ["run", "dsh", "--", "--profile", "acp"]);
       const process = new JsonlProcess(command, args, { cwd: DSH_ROOT }, {
-        onEvent: (event) => emitEvent(projectNotification(event)),
+        onEvent: (event) => { recordNative(manifest.id, event); for (const mapped of [projectNotification(event)].flat().filter(Boolean)) emitEvent(mapped); },
         onDiagnostic: (message) => diagnostic(message),
         onRequest: async (request) => {
+          recordNative(manifest.id, request);
           if (request.method === "session/request_permission") {
             const requestId = `dsh-${request.id}`;
-            const toolCall = request.params?.toolCall ?? {};
-            const options = Array.isArray(request.params?.options) ? request.params.options : [];
-            emitEvent({
-              kind: "approval",
-              requestId,
-              method: "permission",
-              title: toolCall.title || "DSH 权限请求",
-              message: toolCall.kind ? `工具类型：${toolCall.kind}` : undefined,
-              options: options.map((o) => ({ id: String(o.optionId ?? o.id), label: o.name ?? String(o.optionId), kind: o.kind })),
-            });
+            emitEvent(projectNotification(request));
             // 等待 Host 回复（runtime.respond → 下方 respond）
             return new Promise((resolve, reject) => {
               pendingPermissions.set(requestId, { rawId: request.id, resolve, reject });
@@ -86,7 +79,7 @@ function create(emit) {
         : await process.request("session/new", { cwd: thread.cwd, mcpServers: [] });
 
       const { models, current } = pickModelOptions(opened.configOptions ?? opened.config_options);
-      const session = { process, nativeSessionId: opened.sessionId, models, model: current ? { id: current.id, name: current.name } : undefined, pendingPermissions };
+      const session = { process, nativeSessionId: opened.sessionId ?? (thread.restore ? thread.nativeSessionId : undefined), models, thinkingLevels: pickThinkingLevels(opened.configOptions ?? opened.config_options), model: current ? { id: current.id, name: current.name } : undefined, pendingPermissions };
       // 应用草稿期选择的模型与思考档位（DSH 原生配置项）
       if (thread.options?.model?.id && thread.options.model.id !== current?.id) {
         await process.request("session/set_config_option", { sessionId: session.nativeSessionId, configId: "model", value: thread.options.model.id }).catch(() => {});
@@ -101,7 +94,7 @@ function create(emit) {
     async send(session, text, { emit } = {}) {
       // ACP：prompt 在整个回合（含工具执行）结束后才 resolve，结算即为 completed
       await session.process.request("session/prompt", { sessionId: session.nativeSessionId, prompt: [{ type: "text", text }] });
-      emit?.({ kind: "completed" });
+      emit?.({ kind: "completed", finalAnswer: true });
     },
 
     async cancel(session) {
@@ -110,6 +103,10 @@ function create(emit) {
 
     async listModelsFor(session) {
       return session.models ?? null;
+    },
+
+    async describeFor(session) {
+      return { models: session.models, thinkingLevels: session.thinkingLevels, permissionModes: [] };
     },
 
     async setModel(session, model) {
@@ -154,6 +151,30 @@ function create(emit) {
 
 /** ACP session/update 通知 → 统一事件投影 */
 function projectNotification(event) {
+  const mapped = projectUpdate(event);
+  if (!mapped) return null;
+  const update = event.params?.update;
+  const enrich = value => ({ ...value, nativeRef: {
+    sessionId: event.params?.sessionId,
+    itemId: update?.messageId,
+    toolCallId: update?.toolCallId,
+    ...(event.method === 'session/request_permission' ? { interactionId: String(event.id) } : {}),
+  } });
+  const changes = (update?.content ?? []).filter?.(block => block.type === 'diff' && typeof block.path === 'string' && typeof block.newText === 'string')
+    .map(block => ({ path: block.path, before: block.oldText ?? '', after: block.newText, complete: true, changeType: block.oldText == null ? 'added' : 'modified' })) ?? [];
+  return changes.length ? [enrich(mapped), enrich({ kind: 'file-change', source: 'native', changes })] : enrich(mapped);
+}
+
+function projectUpdate(event) {
+  if (event.method === 'session/request_permission') {
+    const toolCall = event.params?.toolCall ?? {};
+    return {
+      kind: 'approval', requestId: `dsh-${event.id}`, method: 'permission',
+      title: toolCall.title || 'DSH 权限请求',
+      message: toolCall.kind ? `工具类型：${toolCall.kind}` : undefined,
+      options: (event.params?.options ?? []).map(o => ({ id: String(o.optionId ?? o.id), label: o.name ?? String(o.optionId), kind: o.kind })),
+    };
+  }
   if (event.method !== "session/update") return null;
   const update = event.params?.update;
   if (!update) return null;
@@ -181,12 +202,13 @@ function projectNotification(event) {
       return state ? { kind: "tool", toolCallId: update.toolCallId, title: update.title || "DSH 工具", state, detail: undefined } : null;
     }
     case "usage_update":
-      return { kind: "usage", usage: { used: update.used, size: update.size, contextPercent: update.size ? Math.round((100 * update.used) / update.size) : undefined } };
+      return { kind: 'usage', usage: { tokens: update.used ?? null, contextWindow: update.size ?? null,
+        contextPercent: Number.isFinite(update.used) && update.size > 0 ? 100 * update.used / update.size : null } };
     case "plan":
-      return { kind: "status", text: "已更新执行计划" };
+      return { kind: 'plan', entries: update.entries ?? [] };
     default:
       return null;
   }
 }
 
-module.exports = { manifest, create };
+module.exports = { manifest, create, projectNotification };

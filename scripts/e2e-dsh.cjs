@@ -1,10 +1,11 @@
+const { ParityObserver } = require('./support/parity-observer.cjs');
 // 真实 DSH(ACP) 链路自检（会发起一次最小模型请求；DSH 启动较慢，耐心等）
 const { HostRuntime } = require("../src/main/host/runtime");
 const os = require("node:os");
 const path = require("node:path");
 
 (async () => {
-  const rt = new HostRuntime({ dataDirectory: path.join(os.tmpdir(), "hm-e2e-dsh") });
+  const rt = new HostRuntime({ observer: new ParityObserver(), dataDirectory: path.join(os.tmpdir(), "hm-e2e-dsh") });
   rt.subscribe((e) => { if (e.type === "toast") console.log("  [toast]", e.text.slice(0, 200)); });
   await rt.initialize();
   const t0 = Date.now();

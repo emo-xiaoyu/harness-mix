@@ -1,10 +1,11 @@
+const { ParityObserver } = require('./support/parity-observer.cjs');
 // 真实 Pi 链路自检（会发起一次最小模型请求）
 const { HostRuntime } = require("../src/main/host/runtime");
 const os = require("node:os");
 const path = require("node:path");
 
 (async () => {
-  const rt = new HostRuntime({ dataDirectory: path.join(os.tmpdir(), "hm-e2e-pi") });
+  const rt = new HostRuntime({ observer: new ParityObserver(), dataDirectory: path.join(os.tmpdir(), "hm-e2e-pi") });
   rt.subscribe((e) => { if (e.type === "toast") console.log("  [toast]", e.text); });
   await rt.initialize();
   const thread = await rt.createThread({ harnessId: "pi", cwd: "E:\\harness-mix", title: "E2E 自检" });

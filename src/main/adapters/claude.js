@@ -1,6 +1,7 @@
 const { execFile, spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
 const { cliSpawn } = require("../host/jsonl");
+const { recordNative } = require("../harness-adapter/fixture-recorder");
 
 const manifest = {
   id: "claude",
@@ -8,7 +9,7 @@ const manifest = {
   icon: "claude-color.svg",
   // 初步接入（脚手架）：每次提问独立 spawn `claude -p --output-format stream-json`，
   // 通过 --resume 让 Claude 原生恢复会话。审批/模型目录走原生 CLI，暂不投影。
-  capabilities: { streaming: true, thinking: false, tools: true, approvals: false, questions: false, models: false, thinkingLevels: false, permissionModes: true, resume: true, fork: false, usage: false, contextUsage: false },
+  capabilities: { streaming: true, thinking: true, tools: true, approvals: false, questions: false, models: false, thinkingLevels: false, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: false, contextUsage: false },
 };
 
 /** Claude Code 原生权限模式（--permission-mode），与其 TUI/Desktop 一致 */
@@ -25,6 +26,50 @@ function summarizeInput(input) {
   if (!input || typeof input !== "object") return "";
   const value = input.command ?? input.file_path ?? input.pattern ?? input.description ?? Object.values(input)[0];
   return typeof value === "string" ? value.split("\n")[0].slice(0, 120) : "";
+}
+
+/** Claude stream-json 单行事件 → 统一事件（纯映射，运行时与 fixture 回放共用） */
+function projectEvent(event) {
+  const out = [];
+  if (event.type === "system" && event.subtype === "init" && event.session_id) {
+    out.push({ kind: "session", nativeSessionId: event.session_id });
+  } else if (event.type === "system" && event.subtype === "api_retry") {
+    out.push({ kind: "status", text: `Claude 模型限流（${event.error_status ?? ""}），重试 ${event.attempt}/${event.max_retries}…` });
+  } else if (event.type === 'system' && event.subtype === 'compact_boundary') {
+    out.push({ kind: 'text-delta', text: '上下文已由 Claude Code 压缩。' });
+  } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+    for (const block of event.message.content) {
+      if (block.type === "thinking" && block.thinking) out.push({ kind: "thinking-delta", text: block.thinking, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
+      if (block.type === "text" && block.text) out.push({ kind: "text-delta", text: block.text, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
+      if (block.type === "tool_use") out.push({ kind: "tool", toolCallId: block.id, title: block.name || "工具", state: "done", detail: summarizeInput(block.input) });
+    }
+  } else if (event.type === "user" && Array.isArray(event.message?.content)) {
+    const result = event.tool_use_result;
+    if (result?.filePath && typeof result.content === 'string' && (result.type === 'create' || typeof result.originalFile === 'string')) {
+      out.push({ kind: 'file-change', source: 'native', changes: [{ path: result.filePath,
+        before: result.originalFile ?? '', after: result.content, complete: true,
+        changeType: result.type === 'create' ? 'added' : 'modified',
+        nativeRef: { sessionId: event.session_id, toolCallId: event.message.content.find(b => b.tool_use_id)?.tool_use_id },
+      }] });
+    }
+    // 工具结果中的图片 → 统一 artifact 投影（与其他 Harness 对齐）
+    for (const block of event.message.content) {
+      if (block?.type !== "tool_result") continue;
+      const parts = Array.isArray(block.content) ? block.content : [];
+      parts.forEach((part, i) => {
+        if (part?.type === "image" && part.source?.type === "base64" && typeof part.source.data === "string") {
+          out.push({ kind: "artifact", artifact: { id: `${block.tool_use_id ?? "claude"}-img-${i}`, type: "image", name: "图片", mime: part.source.media_type || "image/png", data: part.source.data.length <= 5_000_000 ? part.source.data : undefined } });
+        }
+      });
+    }
+  } else if (event.type === "result") {
+    if (event.is_error || event.subtype === "error_during_execution") out.push({ kind: "error", message: event.result || "Claude 执行失败" });
+    out.push({ kind: "completed", finalAnswer: true });
+  }
+  return out.map(mapped => ({ ...mapped, nativeRef: {
+    sessionId: event.session_id, itemId: event.message?.id,
+    ...(mapped.toolCallId ? { toolCallId: mapped.toolCallId } : {}), ...mapped.nativeRef,
+  } }));
 }
 
 /** Claude Code Adapter（脚手架）：stream-json 输出逐行投影为统一事件 */
@@ -66,30 +111,12 @@ function create() {
             if (!line.trim()) continue;
             let event;
             try { event = JSON.parse(line); } catch { continue; }
-            if (event.type === "system" && event.subtype === "init" && event.session_id) {
-              session.nativeSessionId = event.session_id;
-              emit({ kind: "session", nativeSessionId: event.session_id });
-            } else if (event.type === "system" && event.subtype === "api_retry") {
-              emit({ kind: "status", text: `Claude 模型限流（${event.error_status ?? ""}），重试 ${event.attempt}/${event.max_retries}…` });
-            } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-              for (const block of event.message.content) {
-                if (block.type === "text" && block.text) emit({ kind: "text-delta", text: block.text });
-                if (block.type === "tool_use") emit({ kind: "tool", toolCallId: block.id, title: block.name || "工具", state: "done", detail: summarizeInput(block.input) });
-              }
-            } else if (event.type === "user" && Array.isArray(event.message?.content)) {
-              // 工具结果中的图片 → 统一 artifact 投影（与其他 Harness 对齐）
-              for (const block of event.message.content) {
-                if (block?.type !== "tool_result") continue;
-                const parts = Array.isArray(block.content) ? block.content : [];
-                parts.forEach((part, i) => {
-                  if (part?.type === "image" && part.source?.type === "base64" && typeof part.source.data === "string") {
-                    emit({ kind: "artifact", artifact: { id: `${block.tool_use_id ?? "claude"}-img-${i}`, type: "image", name: "图片", mime: part.source.media_type || "image/png", data: part.source.data.length <= 5_000_000 ? part.source.data : undefined } });
-                  }
-                });
-              }
-            } else if (event.type === "result") {
-              if (event.is_error || event.subtype === "error_during_execution") emit({ kind: "error", message: event.result || "Claude 执行失败" });
-              emit({ kind: "completed" });
+            recordNative(manifest.id, event);
+            if (event.type === 'assistant' && event.uuid) session.checkpointId = event.uuid;
+            for (const mapped of projectEvent(event)) {
+              if (mapped.kind === "session") session.nativeSessionId = mapped.nativeSessionId;
+              if (mapped.kind === 'completed') mapped.nativeRef = { ...mapped.nativeRef, checkpointId: session.checkpointId };
+              emit(mapped);
             }
           }
         });
@@ -109,6 +136,30 @@ function create() {
       session.current?.kill();
     },
 
+    async listCommands() {
+      return [{ id: 'compact', label: '压缩上下文', description: '由 Claude Code 原生压缩当前会话', action: 'execute' }];
+    },
+    async executeCommand(session, id, hooks) {
+      if (id !== 'compact') throw new Error('未知 Claude 指令');
+      await this.send(session, '/compact', hooks);
+    },
+    async fork(source, { message }) {
+      const { forkSession, getSessionMessages } = await import('@anthropic-ai/claude-agent-sdk');
+      const history = await getSessionMessages(source.nativeSessionId, { dir: source.cwd });
+      let boundary = message?.coreTurn?.nativeTurnRef?.checkpointId;
+      if (message && !boundary) {
+        const final = message.coreItems?.filter(item => item.phase === 'final').map(item => item.content).join('') || message.text;
+        const matches = history.filter(entry => entry.type === 'assistant' && entry.message?.content?.filter(b => b.type === 'text').map(b => b.text).join('') === final);
+        if (matches.length !== 1) throw new Error('旧回复无法唯一定位原生记录，不能安全分支');
+        boundary = matches[0].uuid;
+      }
+      if (message && !history.some(entry => entry.uuid === boundary)) throw new Error('未找到该回复的 Claude 原生记录');
+      const result = await forkSession(source.nativeSessionId, { dir: source.cwd, upToMessageId: boundary, title: `${source.title} · Fork` });
+      const copied = await getSessionMessages(result.sessionId, { dir: source.cwd });
+      const checkpointMap = Object.fromEntries(copied.map((entry, index) => [history[index].uuid, entry.uuid]));
+      return { checkpointMap, session: { nativeSessionId: result.sessionId, cwd: source.cwd, current: null, permissionMode: source.options?.permissionMode } };
+    },
+
     async listModelsFor() { return null; },
     async setModel() { throw new Error("Claude Code 模型请在原生 CLI 中配置"); },
     async setPermissionMode(session, mode) { session.permissionMode = mode; },
@@ -118,4 +169,4 @@ function create() {
   };
 }
 
-module.exports = { manifest, create };
+module.exports = { manifest, create, projectEvent };

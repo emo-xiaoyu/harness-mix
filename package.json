@@ -7,15 +7,46 @@
   "scripts": {
     "start": "electron .",
     "check": "node scripts/check.cjs",
+    "test:contracts": "node scripts/contracts-test.cjs",
+    "test:projector": "node scripts/projector-test.cjs",
+    "test:turn": "node scripts/turn-manager-test.cjs",
+    "test:sequence": "node scripts/sequence-test.cjs",
+    "test:shadow": "node scripts/shadow-test.cjs",
+    "test:arch": "node scripts/architecture-test.cjs",
+    "test:core-replay": "node scripts/core-replay-test.cjs",
+    "test:adapters": "node scripts/adapters-test.cjs",
+    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
     "test:git": "node scripts/git-test.cjs",
     "smoke:workbench": "electron scripts/workbench-smoke.cjs",
     "smoke": "electron scripts/ui-smoke.cjs",
     "e2e:pi": "node scripts/e2e-pi.cjs",
-    "e2e:dsh": "node scripts/e2e-dsh.cjs"
+    "e2e:shadow-pi": "node scripts/e2e-shadow.cjs pi",
+    "e2e:shadow-claude": "node scripts/e2e-shadow.cjs claude",
+    "e2e:shadow-dsh": "node scripts/e2e-shadow.cjs dsh",
+    "e2e:dsh": "node scripts/e2e-dsh.cjs",
+    "test:determinism": "node scripts/determinism-test.cjs",
+    "test:core-runtime": "node scripts/core-runtime-test.cjs",
+    "smoke:core": "electron scripts/core-renderer-smoke.cjs",
+    "e2e:core-pi": "node scripts/e2e-core-resume.cjs pi",
+    "e2e:core-claude": "node scripts/e2e-core-resume.cjs claude",
+    "e2e:core-dsh": "node scripts/e2e-core-resume.cjs dsh",
+    "test:services": "node scripts/core-services-test.cjs",
+    "e2e:core-fork": "node scripts/e2e-core-fork.cjs",
+    "e2e:commands-pi": "node scripts/e2e-native-commands.cjs pi",
+    "e2e:commands-claude": "node scripts/e2e-native-commands.cjs claude",
+    "test:core": "npm run test:core-all",
+    "test:interactions": "node scripts/core-services-test.cjs",
+    "test:native-files": "node scripts/native-file-change-test.cjs",
+    "e2e:core-files": "node scripts/e2e-core-files.cjs",
+    "e2e:claude": "node scripts/e2e-core-resume.cjs claude",
+    "smoke:app": "electron scripts/app-lifecycle-smoke.cjs"
   },
   "devDependencies": {
     "electron": "^43.3.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.263"
   }
 }

@@ -2,6 +2,7 @@ const { execFile } = require("node:child_process");
 const os = require("node:os");
 const { JsonlProcess, cliSpawn } = require("../host/jsonl");
 const { sessionUsage, latestUsage } = require('./pi-usage');
+const { recordNative } = require('../harness-adapter/fixture-recorder');
 
 function toolText(content) {
   const text = Array.isArray(content) ? content.filter(b => b.type === 'text').map(b => b.text).join('\n') : String(content ?? '');
@@ -12,7 +13,7 @@ const manifest = {
   id: "pi",
   name: "Pi",
   icon: "pinumber1_80899.svg",
-  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, usage: true, contextUsage: true },
+  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true },
 };
 
 /** Pi 的权限模型 = 项目信任（project trust）：启动时用 --approve / --no-approve 覆盖一次 */
@@ -55,6 +56,15 @@ function emitAll(emitEvent, mapped) {
   for (const item of Array.isArray(mapped) ? mapped : [mapped]) if (item) emitEvent(item);
 }
 
+function forwardEvent(process, event, emit) {
+  recordNative(manifest.id, event);
+  if (event.type !== 'agent_settled') { emitAll(emit, project(event)); return; }
+  // Capture the native leaf before exposing completion; later forks use this boundary.
+  void process.command({ type: 'get_entries' }).then(data => {
+    emit({ ...project(event), nativeRef: { sessionId: event.sessionId, checkpointId: data.leafId } });
+  }, () => emitAll(emit, project(event)));
+}
+
 function spawnPi(args, cwd, hooks) {
   const { command, args: cliArgs } = cliSpawn("pi", ["--mode", "rpc", ...args]);
   return new JsonlProcess(command, cliArgs, { cwd }, hooks);
@@ -80,7 +90,7 @@ function create(emit) {
       if (thread.options?.permissionMode === "approve") args.push("--approve");
       if (thread.options?.permissionMode === "no-approve") args.push("--no-approve");
       const process = spawnPi(args, thread.cwd, {
-        onEvent: (event) => emitAll(emitEvent, project(event)),
+        onEvent: event => forwardEvent(process, event, emitEvent),
         onDiagnostic: (message) => diagnostic(message),
       });
       const state = await process.command({ type: "get_state" });
@@ -106,6 +116,18 @@ function create(emit) {
 
     async cancel(session) {
       await session.process.command({ type: "abort" });
+    },
+
+    async listCommands(session) {
+      const data = session ? await session.process.command({ type: 'get_commands' }) : null;
+      return [{ id: 'compact', label: '压缩上下文', description: '由 Pi 原生总结并压缩当前会话', action: 'execute' },
+        ...(data?.commands ?? []).filter(c => c.name !== 'compact').map(c => ({ id: c.name, label: '/' + c.name, description: c.description, action: 'insert', text: '/' + c.name + ' ' }))];
+    },
+    async executeCommand(session, id, { emit }) {
+      if (id !== 'compact') throw new Error('未知 Pi 指令');
+      await session.process.command({ type: 'compact' });
+      emit({ kind: 'text-delta', text: '上下文已由 Pi 压缩。' });
+      emit({ kind: 'completed', finalAnswer: true });
     },
 
     async listModels() {
@@ -159,15 +181,46 @@ function create(emit) {
       }
     },
 
+    async describeFor(session) {
+      const [models, levels] = await Promise.all([
+        this.listModelsFor(session),
+        session.process.command({ type: 'get_available_thinking_levels' }),
+      ]);
+      return { models, thinkingLevels: (levels?.levels ?? []).map(id => ({ id, label: id })), permissionModes: PI_PERMISSION_MODES };
+    },
+
     /** 任务级 Fork：另起 pi 进程，用 CLI --fork 从源会话分叉出全新原生会话 */
-    async fork(sourceThread, { emit: emitEvent, diagnostic }) {
+    async fork(sourceThread, { emit: emitEvent, diagnostic, message }) {
       const process = spawnPi(["--fork", sourceThread.nativeSessionId, "--name", `${sanitizeName(sourceThread.title)} · Fork`], sourceThread.cwd, {
-        onEvent: (event) => emitAll(emitEvent, project(event)),
+          onEvent: event => forwardEvent(process, event, emitEvent),
         onDiagnostic: (message) => diagnostic(message),
       });
-      const state = await process.command({ type: "get_state" });
-      if (!state?.sessionId || state.sessionId === sourceThread.nativeSessionId) throw new Error("Pi 未返回新的 Fork 会话");
-      return { session: { process, nativeSessionId: state.sessionId, nativeSessionFile: state.sessionFile } };
+      try {
+        if (message) {
+          const data = await process.command({ type: 'get_entries' });
+          const entries = new Map(data.entries.map(entry => [entry.id, entry]));
+          const branch = [];
+          for (let entry = entries.get(data.leafId); entry; entry = entries.get(entry.parentId)) branch.unshift(entry);
+          let checkpoint = message.coreTurn?.nativeTurnRef?.checkpointId;
+          if (!checkpoint) {
+            const final = message.coreItems?.filter(item => item.phase === 'final').map(item => item.content).join('') || message.text;
+            const matches = branch.filter(entry => entry.type === 'message' && entry.message.role === 'assistant'
+              && entry.message.content?.filter(block => block.type === 'text').map(block => block.text).join('') === final);
+            if (matches.length !== 1) throw new Error('这条旧回复缺少可唯一定位的原生记录，请从最新回复分支。');
+            checkpoint = matches[0].id;
+          }
+          const index = branch.findIndex(entry => entry.id === checkpoint);
+          if (index < 0) throw new Error('该回复不在当前原生会话分支中');
+          const nextUser = branch.slice(index + 1).find(entry => entry.type === 'message' && entry.message.role === 'user');
+          if (nextUser) {
+            const result = await process.command({ type: 'fork', entryId: nextUser.id });
+            if (result?.cancelled) throw new Error('原生 Harness 取消了分支操作');
+          }
+        }
+        const state = await process.command({ type: 'get_state' });
+        if (!state?.sessionId || state.sessionId === sourceThread.nativeSessionId) throw new Error('Pi 未返回新的 Fork 会话');
+        return { session: { process, nativeSessionId: state.sessionId, nativeSessionFile: state.sessionFile, model: state.model } };
+      } catch (error) { process.stop(); throw error; }
     },
 
     async close(session) {
@@ -178,6 +231,18 @@ function create(emit) {
 
 /** Pi 原生事件 → 统一事件投影（事件转换层） */
 function project(event) {
+  const mapped = projectEvent(event);
+  const nativeRef = {
+    sessionId: event.sessionId,
+    itemId: event.message?.id,
+    toolCallId: event.toolCallId,
+    ...(event.type === 'extension_ui_request' ? { interactionId: String(event.id) } : {}),
+  };
+  const enrich = value => value ? { ...value, nativeRef } : value;
+  return Array.isArray(mapped) ? mapped.map(enrich) : enrich(mapped);
+}
+
+function projectEvent(event) {
   switch (event.type) {
     case 'message_end':
       return latestUsage(event.message);
@@ -213,7 +278,7 @@ function project(event) {
       return null;
     }
     case "agent_settled":
-      return { kind: "completed" };
+      return { kind: "completed", finalAnswer: true };
     case "agent_end":
       return event.willRetry ? { kind: "status", text: "请求失败，自动重试中…" } : null;
     case "auto_retry_start":
@@ -231,4 +296,4 @@ function project(event) {
   }
 }
 
-module.exports = { manifest, create };
+module.exports = { manifest, create, project };

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { appendDelta, projectTool, finishMessage } = require('../src/main/host/transcript');
+const { appendDelta, projectTool, finishMessage } = require('./support/legacy-transcript.cjs');
 const { sessionUsage, latestUsage } = require('../src/main/adapters/pi-usage');
 const message = { id: 'm', role: 'assistant', streaming: true, at: 1000 }, thread = { tools: [] };
 appendDelta(message, 'thinking', 'first', 1000);
@@ -18,7 +18,7 @@ assert.equal(thread.tools[1].state, 'interrupted');
 assert.equal(message.stopReason, 'cancelled');
 assert.equal(JSON.parse(JSON.stringify(message)).items[0].endedAt, 2000);
 assert.deepEqual(sessionUsage({ tokens: { input: 10, cacheRead: 90, total: 110 }, contextUsage: { tokens: 10, contextWindow: 200 } }), { input: 10, cacheRead: 90, totalTokens: 110, tokens: 10, contextWindow: 200, contextPercent: 5 });
-assert.deepEqual(sessionUsage({ tokens: { input: NaN, output: -1 } }), {});
+assert.deepEqual(sessionUsage({ tokens: { input: NaN, output: -1 } }), { tokens: null, contextWindow: null, contextPercent: null });
 assert.equal(latestUsage({ role: 'assistant', usage: { input: 10, cacheRead: 90, cacheWrite: 0 } }).usage.cacheHitPercent, 90);
 assert.equal(latestUsage({ role: 'assistant', usage: { input: 0, cacheRead: 0, cacheWrite: 0 } }).usage.cacheHitPercent, null);
 console.log('ordered deltas, concurrent tools, cancellation, persistence and native usage passed');

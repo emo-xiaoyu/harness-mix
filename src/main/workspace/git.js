@@ -1,6 +1,7 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const path = require('node:path');
+const { createItem } = require('../shared-contracts');
 const run = promisify(execFile);
 
 async function git(cwd, args) {
@@ -43,8 +44,14 @@ async function fileEntry(cwd, file) {
 }
 async function diff(cwd, file, staged) {
   const entry = await fileEntry(cwd, file);
-  if (entry.untracked) return { text: '新文件尚未暂存。可在文件面板查看内容，暂存后查看 Git 差异。' };
-  return { text: await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', ...(staged ? ['--cached'] : []), '--', file]) };
+  const text = entry.untracked ? '新文件尚未暂存。可在文件面板查看内容，暂存后查看 Git 差异。'
+    : await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', ...(staged ? ['--cached'] : []), '--', ...(entry.from ? [entry.from, file] : [file])]);
+  const item = createItem({ id: `git_${cwd}_${staged ? 'index' : 'worktree'}_${file}`, threadId: `workspace_${cwd}`,
+    type: 'file_change', status: 'completed', source: 'git', path: file, previousPath: entry.from,
+    changeType: entry.untracked || (staged ? entry.index : entry.worktree) === 'A' ? 'added' : (staged ? entry.index : entry.worktree) === 'D' ? 'deleted' : entry.from ? 'renamed' : 'modified',
+    scope: staged ? 'index' : 'worktree', patch: { format: 'unified', text }, complete: !entry.untracked,
+  });
+  return { item };
 }
 async function mutate(cwd, action, input) {
   if (action === 'init') { await git(cwd, ['init']); return status(cwd); }

@@ -10,12 +10,15 @@ class Store {
   }
 
   async load() {
+    await this.queue;
     await fs.mkdir(this.directory, { recursive: true });
     try {
       const threads = JSON.parse(await fs.readFile(this.file, "utf8"));
-      return Array.isArray(threads) ? threads : [];
-    } catch {
-      return [];
+      if (!Array.isArray(threads)) throw new Error('Invalid thread store; original file preserved');
+      return threads;
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
     }
   }
 
@@ -24,13 +27,12 @@ class Store {
     const contents = JSON.stringify(threads, null, 2);
     this.queue = this.queue.catch(() => {}).then(async () => {
       await fs.writeFile(`${this.file}.tmp`, contents);
-      try {
-        await fs.rename(`${this.file}.tmp`, this.file);
-      } catch (error) {
-        // Windows 上 rename 无法覆盖已存在的目标文件（EPERM），退化为先删后改名
-        if (error.code !== "EPERM") throw error;
-        await fs.rm(this.file, { force: true });
-        await fs.rename(`${this.file}.tmp`, this.file);
+      for (let attempt = 0; ; attempt++) {
+        try { await fs.rename(`${this.file}.tmp`, this.file); break; }
+        catch (error) {
+          if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt === 9) throw error;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
       }
     });
     return this.queue;

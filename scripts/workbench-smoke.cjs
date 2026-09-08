@@ -1,3 +1,5 @@
+const { coreFixture } = require('./support/core-fixture.cjs');
+const { ParityObserver } = require('./support/parity-observer.cjs');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('node:fs/promises');
 const { mkdtempSync } = require('node:fs');
@@ -13,7 +15,7 @@ app.whenReady().then(async () => {
   try {
     const root = path.join(data, 'project'); await fs.mkdir(root);
     await fs.writeFile(path.join(root, 'app.js'), '// User existing work\nconst message = "before";\n');
-    const rt = new HostRuntime({ dataDirectory: data });
+    const rt = new HostRuntime({ observer: new ParityObserver(), dataDirectory: data });
     const reviewId = await rt.reviews.begin(root);
     await fs.writeFile(path.join(root, 'app.js'), '// User existing work\nconst message = "after";\nconsole.log(message);\n');
     const review = undefined;
@@ -33,8 +35,12 @@ app.whenReady().then(async () => {
     const errors = [];
     win.webContents.on('console-message', (_event, level, message) => { if (level === 3) errors.push(message); });
     rt.threads[0].messages.at(-1).streaming = true; rt.threads[0].status = 'working';
+    rt.threads = rt.threads.map(coreFixture);
+    rt.core.restore(rt.threads[0].coreState);
+    rt.execution.lastTurns.set('ui-thread', rt.threads[0].messages.at(-1).coreTurnId);
+    rt.execution.sync(rt.threads[0]);
     await win.loadFile(path.resolve('src/renderer/index.html'));
-    const run = code => win.webContents.executeJavaScript(`(async()=>{const $=s=>document.querySelector(s);const check=(v,m)=>{if(!v)throw Error(m)};const wait=()=>new Promise(r=>setTimeout(r,200));${code}})()`);
+    const run = code => win.webContents.executeJavaScript(`(async()=>{const $=s=>document.querySelector(s);const check=(v,m)=>{if(!v)throw Error(m)};const wait=()=>new Promise(r=>setTimeout(r,200));${code}})()`).catch(error => { throw new Error(error.message + '\nCHECK: ' + code); });
     const reply = rt.threads[0].messages.at(-1);
     reply.streaming = true; rt.threads[0].status = 'working';
     rt.startReviewUpdates(rt.threads[0], reply);
@@ -50,7 +56,10 @@ app.whenReady().then(async () => {
     await fs.writeFile('output/playwright/live-review-1040.png', (await win.webContents.capturePage()).toPNG());
     win.setSize(1440, 960);
     await run(`$('.turn-process summary').click();`);
-    reply.streaming = false; reply.review = await rt.reviews.finish(reviewId); rt.threads[0].status = 'ready';
+    rt.core.dispatch({ threadId: 'ui-thread', turnId: reply.coreTurnId, itemId: reply.coreItems.findLast(i => i.type === 'agent_message').id, type: 'item.updated', payload: { phase: 'final' } });
+    rt.core.dispatch({ threadId: 'ui-thread', turnId: reply.coreTurnId, type: 'turn.completed', timestamp: reply.at + 153000 });
+    rt.execution.sync(rt.threads[0]);
+    reply.review = await rt.reviews.finish(reviewId);
     win.webContents.send('runtime:event', { type: 'snapshot' });
     await run(`await wait();await wait();$('.wb-close').click();`);
     await run(`for(let i=0;i<30&&!$('[data-thread="ui-thread"]');i++)await wait();$('[data-thread="ui-thread"]').click();await wait();check(!$('.turn-process').open,'process collapsed');check($('.turn-header').textContent.includes('2分 33秒'),'total duration above final');check($('.final-answer').textContent.includes('已完成'),'final visible');check($('.change-card'),'change card');$('.turn-process summary').click();check($('.turn-process').open,'process expands');$('.turn-process summary').click();$('.change-heading button').click();await wait();check($('.workbench').hidden===false,'review panel opens');check($('.wb-code .add'),'added lines');check($('.wb-code .remove'),'removed lines');check(document.documentElement.scrollWidth<=innerWidth,'no overflow');`);

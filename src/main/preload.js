@@ -16,7 +16,11 @@ contextBridge.exposeInMainWorld("harnessMix", {
   createThread: (input) => ipcRenderer.invoke("thread:create", input),
   send: (threadId, text) => ipcRenderer.invoke("thread:send", { threadId, text }),
   cancel: (threadId) => ipcRenderer.invoke("thread:cancel", threadId),
-  fork: (threadId) => ipcRenderer.invoke("thread:fork", threadId),
+  fork: (threadId, messageId) => ipcRenderer.invoke('thread:fork', messageId ? { threadId, messageId } : threadId),
+  refreshUsage: threadId => ipcRenderer.invoke('thread:usage', threadId),
+  listCommands: input => ipcRenderer.invoke('harness:commands', input),
+  executeCommand: (threadId, commandId) => ipcRenderer.invoke('thread:command', { threadId, commandId }),
+  openFolder: cwd => ipcRenderer.invoke('workspace:openFolder', cwd),
   listModels: (threadId) => ipcRenderer.invoke("thread:listModels", threadId),
   setModel: (threadId, model) => ipcRenderer.invoke("thread:setModel", { threadId, model }),
   setThinking: (threadId, level) => ipcRenderer.invoke("thread:setThinking", { threadId, level }),
@@ -25,6 +29,8 @@ contextBridge.exposeInMainWorld("harnessMix", {
   moveThread: (threadId, cwd) => ipcRenderer.invoke("thread:move", { threadId, cwd }),
   describe: (harnessId) => ipcRenderer.invoke("harness:describe", harnessId),
   respondApproval: (threadId, requestId, response) => ipcRenderer.invoke("approval:respond", { threadId, requestId, response }),
+  coreSnapshot: () => ipcRenderer.invoke("core:snapshot"),
+  coreShadowReport: () => ipcRenderer.invoke("core:shadowReport"),
   onEvent: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("runtime:event", handler);
