@@ -11,6 +11,7 @@ ipcMain.handle('thread:command', (_, input) => { commandRuns.push(input); });
 // 1x1 PNG，用于产物渲染检查（跨 Harness 统一 artifact 投影）
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const CAPS = {
+  codex: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, usage: true, contextUsage: true },
   pi: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, usage: true, contextUsage: true },
   dsh: { streaming: true, thinking: true, tools: true, approvals: true, questions: false, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: false, usage: true, contextUsage: true },
 };
@@ -19,7 +20,7 @@ const CATALOG = {
   thinkingLevels: [{ id: 'off', label: 'off' }, { id: 'medium', label: 'medium' }, { id: 'high', label: 'high' }],
   permissionModes: [{ id: 'default', label: '默认' }, { id: 'approve', label: '信任项目' }, { id: 'no-approve', label: '忽略项目资源' }],
 };
-ipcMain.handle('runtime:snapshot', () => ({ threads: threads.map(coreFixture), adapters: [{ id: 'pi', name: 'Pi', available: true, capabilities: CAPS.pi }, { id: 'dsh', name: 'DeepSeek Harness', available: true, capabilities: CAPS.dsh }] }));
+ipcMain.handle('runtime:snapshot', () => ({ threads: threads.map(coreFixture), adapters: [{ id: 'codex', name: 'Codex', available: true, capabilities: CAPS.codex }, { id: 'pi', name: 'Pi', available: true, capabilities: CAPS.pi }, { id: 'dsh', name: 'DeepSeek Harness', available: true, capabilities: CAPS.dsh }] }));
 ipcMain.handle('workspace:pick', () => 'E:\\harness-mix');
 ipcMain.handle('thread:create', (_, input) => {
   created.push(input);
@@ -50,7 +51,7 @@ ipcMain.handle('thread:send', (_, input) => {
   t.usage = { contextPercent: 3.7209510803222656, tokens: 9754, contextWindow: 262144, input: 2400, output: 1600, cacheRead: 98000, cacheWrite: 0, totalTokens: 102000, cacheHitPercent: 97.6, cost: 0.021 };
   t.pendingApprovals = [{ requestId: 'req-1', method: 'permission', title: '允许执行 bash？', options: [{ id: 'allow', label: '允许一次', kind: 'allow_once' }, { id: 'deny', label: '拒绝', kind: 'reject_once' }] }];
 });
-ipcMain.handle('thread:cancel', (_, id) => { const t = threads.find(t => t.id === id); t.status = 'ready'; t.pendingApprovals = []; delete t.messages.at(-1).streaming; t.messages.at(-1).endedAt = Date.now(); });
+ipcMain.handle('thread:cancel', (_, id) => { const t = threads.find(t => t.id === id); t.status = 'ready'; t.pendingApprovals = []; delete t.messages.at(-1).streaming; t.messages.at(-1).stopReason = 'cancelled'; t.messages.at(-1).endedAt = Date.now(); });
 ipcMain.handle('approval:respond', (_, { threadId, requestId, response }) => {
   approvals.push({ threadId, requestId, response });
   threads.find(t => t.id === threadId).pendingApprovals = [];
@@ -67,7 +68,7 @@ ipcMain.handle('thread:usage', (_, id) => threads.find(t => t.id === id)?.usage)
 ipcMain.handle('thread:fork', (_, input) => {
   forks.push(input);
   const source = threads.find(t => t.id === input.threadId);
-  const fork = { ...structuredClone(source), id: 'branch', title: '分支对话' }; threads.unshift(fork); return fork;
+  const fork = { ...structuredClone(source), id: 'branch', title: '分支对话', forkedFrom: source.id }; threads.unshift(fork); return fork;
 });
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 960, show: true, webPreferences: { preload: path.resolve('src/main/preload.js'), contextIsolation: true, sandbox: true } });
@@ -81,10 +82,16 @@ app.whenReady().then(async () => {
  const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],wait=()=>new Promise(r=>setTimeout(r,100));
  const check=(value,message)=>{if(!value)throw Error(message)};
  check($('#drawer').hidden,'drawer starts closed');
+ check($('.brand>div').scrollWidth<=$('.brand>div').clientWidth,'brand name stays on one line');
  $('#trigger').click();check(!$('#drawer').hidden,'drawer opens');
- check($('[data-harness=codex]').disabled&&$('[data-harness=claude]').disabled,'unimplemented harnesses disabled');
+ check(!$('[data-harness=codex]').disabled&&$('[data-harness=claude]').disabled,'registered Codex enabled and unavailable harness disabled');
+ $('[data-harness=codex]').click();await wait();
+ check($('#currentIcon').getAttribute('src').includes('codex-harness'),'Codex uses the supplied Harness icon');
+ window.__homeCaptureReady=true;
+ while(!window.__homeCaptureDone) await wait();
  $('#modelBar').click();check($('#modelBarMenu').textContent.includes('正在读取'),'loading stays inside clicked menu');
  $('#modelTop').click();
+ $('#trigger').click();
  $('[data-harness=dsh]').click();check($('#drawer').hidden,'selection closes drawer');
  await wait();
  check($('#modelBarMenu').hidden&&$('#modelTopMenu').hidden,'late catalog cannot reopen a menu after harness switch');
@@ -92,6 +99,13 @@ app.whenReady().then(async () => {
  check($('#currentIcon').getAttribute('src').includes('deepseek'),'DSH icon selected');
  $('#message').value='UI integration fixture';$('#composer').requestSubmit();await wait();
  check($('#tabs .tab.active')?.textContent.includes('UI integration fixture'),'created active tab');
+ check(getComputedStyle($('#tabs .tab.active')).flexShrink==='0','tabs keep their readable width');
+ check(getComputedStyle($('.command-palette')).whiteSpace==='nowrap','header actions never wrap vertically');
+ const overflowTabs=Array.from({length:6},(_,i)=>{const clone=$('#tabs .tab.active').cloneNode(true);clone.dataset.tab='overflow-'+i;clone.querySelector('.tab-title').textContent='额外任务 '+(i+1);$('#tabs').append(clone);return clone});
+ check($('#tabs').scrollWidth>$('#tabs').clientWidth,'many tabs scroll inside the tab strip');
+ const paletteRect=$('.command-palette').getBoundingClientRect(),headerRect=$('header').getBoundingClientRect();
+ check(paletteRect.height<40&&paletteRect.right<=headerRect.right,'header actions retain their shape and stay visible');
+ overflowTabs.forEach(tab=>tab.remove());
  check($('#conversation').textContent.includes('验证回复'),'response renders');
  check($('#conversation .message strong')?.textContent.includes('加粗'),'markdown bold renders');
  check($('#conversation .message code')?.textContent.includes('行内代码'),'markdown inline code renders');
@@ -100,16 +114,16 @@ app.whenReady().then(async () => {
  check($('#conversation').textContent.includes('验证思考'),'thinking renders');
  check($('#conversation').textContent.includes('bash'),'tool status renders');
  check(!$('.activity').open,'thinking collapsed by default');
- check(!$('.turn-process').open,'live process collapsed by default');
  check($('.progress-message').checkVisibility(),'live commentary visible');
  check(!$('.reasoning-text').checkVisibility(),'reasoning content hidden');
- $('.turn-process summary').click();
+ $('.turn-process summary')?.click();
  const toolActivity=$$('.activity').find(d=>d.textContent.includes('正在执行 bash'));
+ check(toolActivity,'tool activity row renders');
  toolActivity.querySelector('summary').click();
  check(toolActivity.open&&toolActivity.textContent.includes('pwd'),'tool input expands');
  toolActivity.querySelector('summary').click();
  const items=[...$('.message.assistant').children];
- check(items.findIndex(n=>n.textContent.includes('先检查当前项目'))<items.findIndex(n=>n.classList.contains('activity-group')&&n.textContent.includes('bash')),'commentary precedes tool summary');
+ check(items.findIndex(n=>n.textContent.includes('先检查当前项目'))<items.findIndex(n=>n.classList.contains('activity')&&n.textContent.includes('bash')),'commentary precedes tool activity');
  $('.activity summary').click();check($('.activity').open,'thinking expands');
  check($('#contextText').textContent==='3.7%','context percentage rounded');
  $('#contextMeter').click();check(!$('#usagePopover').hidden,'usage opens');
@@ -128,9 +142,23 @@ app.whenReady().then(async () => {
  $('#contextMeter').click();
  check(!$('#usagePopover').hidden,'usage reopens');
  check(getComputedStyle($('.activity summary')).color==='rgb(133, 135, 140)','activity uses neutral gray');
+ const codexProbe=document.createElement('div');
+ codexProbe.innerHTML=window.Transcript.message({id:'codex-probe',coreTurn:{status:'completed',startedAt:1,completedAt:2},coreItems:[
+  {id:'codex-commentary',type:'agent_message',content:'先检查项目',phase:'commentary',status:'completed',createdAt:1,updatedAt:1},
+  {id:'codex-command',type:'tool_call',title:'exec_command',input:'pwsh.exe -NoLogo -Command "git status"',output:'clean',state:'done',status:'completed',createdAt:2,updatedAt:3},
+  {id:'codex-compact',type:'notice',content:'上下文已压缩',status:'completed',createdAt:4,updatedAt:4},
+  {id:'codex-final',type:'agent_message',content:'完成',phase:'final',status:'completed',createdAt:5,updatedAt:5},
+ ]},{});
+ check(codexProbe.textContent.includes('已运行 pwsh.exe -NoLogo -Command "git status"'),'Codex command renders as compact native activity');
+ check(codexProbe.textContent.indexOf('先检查项目')<codexProbe.textContent.indexOf('已运行 pwsh.exe')&&codexProbe.textContent.indexOf('已运行 pwsh.exe')<codexProbe.textContent.indexOf('上下文已压缩'),'Codex activities retain native timeline order');
  window.__captureReady=true;
  while(!window.__captureDone) await wait();
  $('#stop').click();await wait();check($('#stop').hidden,'cancel settles');
+ check($('.turn-history')&&!$('.turn-history').open&&$('.turn-history').textContent.includes('已停止'),'settled execution collapses behind duration row');
+ check(!$('.message-label'),'assistant Harness avatar removed from message body');
+ check($('[data-copy-message]')&&$('.message-actions time'),'settled footer has copy action and completion time');
+ window.__settledCaptureReady=true;
+ while(!window.__settledCaptureDone) await wait();
  $('#commandButton').click();await wait();check(!$('#commandMenu').hidden,'command menu opens');
  check($('#commandButton img').getAttribute('src')==='icons/commands.svg','provided command icon');
  $('#commandMenu [data-command="compact"]').click();await wait();check($('#commandMenu').hidden,'command executes and closes');
@@ -166,6 +194,7 @@ app.whenReady().then(async () => {
  $('#stop').click();await wait();
  const forkButton=$('[data-fork-message]');check(forkButton,'reply branch action available');
  forkButton.click();await wait();check($('#tabs').textContent.includes('分支对话'),'reply fork opens a new chat');
+ check($('#tabs .tab.active .tab-kind').getAttribute('src').includes('thread-fork'),'fork tab uses the branch symbol');
  $('[data-thread="fixture-2"]').click();await wait();
  const navOf=cwd=>$$(('#projects nav.threads')).find(n=>n.dataset.path===cwd);
  check(navOf('E:\\\\study')?.textContent.includes('fixture with options'),'thread grouped under its project');
@@ -198,11 +227,23 @@ app.whenReady().then(async () => {
  const images=[...document.images];await Promise.all(images.map(i=>i.decode()));
  check(images.every(i=>i.naturalWidth>0),'SVG images loaded');
  check(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow');
- return 'drawer, icons, disabled adapters, DSH routing, streaming, thinking, tools, approval respond, combined model+thinking menu, fork guard, project select/grouping, draft catalogs, options routing, markdown+artifact rendering, thread move+delete modal, project cascade delete, cancel, task preservation passed';
+ return 'drawer, icons, Codex registration, DSH routing, streaming, thinking, tools, approval respond, combined model+thinking menu, fork guard, project select/grouping, draft catalogs, options routing, markdown+artifact rendering, thread move+delete modal, project cascade delete, cancel, task preservation passed';
  }catch(e){return 'FAIL: '+(e.stack||e.message||e)}
  })()`);
     let testFinished = false;
     testRun.finally(() => { testFinished = true; });
+    for (let i = 0; i < 100 && !testFinished; i++) {
+      if (await win.webContents.executeJavaScript('Boolean(window.__homeCaptureReady)')) {
+        await new Promise(r => setTimeout(r, 250));
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+        await fs.mkdir('output/playwright', { recursive: true });
+        await fs.writeFile('output/playwright/home-reference.png', (await win.webContents.capturePage()).toPNG());
+        await win.webContents.executeJavaScript('window.__homeCaptureDone=true');
+        break;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    await win.webContents.executeJavaScript('window.__homeCaptureDone=true');
     for (let i = 0; i < 100 && !testFinished; i++) {
       if (await win.webContents.executeJavaScript('Boolean(window.__captureReady)')) {
         await new Promise(r => setTimeout(r, 200));
@@ -214,6 +255,16 @@ app.whenReady().then(async () => {
       await new Promise(r => setTimeout(r, 100));
     }
     await win.webContents.executeJavaScript('window.__captureDone=true');
+    for (let i = 0; i < 100 && !testFinished; i++) {
+      if (await win.webContents.executeJavaScript('Boolean(window.__settledCaptureReady)')) {
+        await new Promise(r => setTimeout(r, 200));
+        await fs.writeFile('output/playwright/transcript-settled.png', (await win.webContents.capturePage()).toPNG());
+        await win.webContents.executeJavaScript('window.__settledCaptureDone=true');
+        break;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    await win.webContents.executeJavaScript('window.__settledCaptureDone=true');
     const result = await testRun;
     if (typeof result === 'string' && result.startsWith('FAIL:')) throw Error(result);
     if (created[0].harnessId !== 'dsh' || sent.length !== 2) throw Error('Incorrect IPC route');
@@ -222,7 +273,7 @@ app.whenReady().then(async () => {
     if (models[0]?.id !== 'deepseek-v4-pro') throw Error('Model switch not routed');
     if (forks.length !== 1 || !forks[0].messageId) throw Error('Reply fork boundary not routed');
     if (commandReads.length !== 1 || commandRuns.length !== 1 || commandRuns[0].commandId !== 'compact') throw Error('Native command routing failed');
-    if (descriptions.length !== 2) throw Error('Catalog requests not lazy/cached per Harness');
+    if (descriptions.length !== 3) throw Error('Catalog requests not lazy/cached per Harness');
     await win.webContents.executeJavaScript(`document.querySelector('#trigger').click();new Promise(r=>setTimeout(r,250))`);
     await fs.mkdir('output/playwright', { recursive: true });
     await fs.writeFile('output/playwright/desktop.png', (await win.webContents.capturePage()).toPNG());

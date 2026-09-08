@@ -7,13 +7,13 @@ const { ParityObserver } = require('./support/parity-observer.cjs');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 (async () => {
-  for (const harnessId of process.argv[2] ? [process.argv[2]] : ['pi', 'claude', 'dsh']) {
+  for (const harnessId of process.argv[2] ? [process.argv[2]] : ['codex', 'pi', 'claude', 'dsh']) {
     const data = await fs.mkdtemp(path.join(os.tmpdir(), `hm-core-files-${harnessId}-`));
     const root = path.join(data, 'workspace'); await fs.mkdir(root);
     const rt = new HostRuntime({ observer: new ParityObserver(), dataDirectory: data });
     try {
       await rt.initialize();
-      const thread = await rt.createThread({ harnessId, cwd: root, options: { permissionMode: 'acceptEdits' } });
+      const thread = await rt.createThread({ harnessId, cwd: root, options: { permissionMode: harnessId === 'codex' ? ':danger-full-access' : 'acceptEdits' } });
       assert.notEqual(thread.status, 'error', thread.error);
       let ended = false, sendError;
       const sending = rt.send(thread.id, 'Only in this temporary working directory: use your native file editing tool to create acceptance.txt containing exactly HARNESS-CORE-OK. Do not access other folders. Then reply done.')
@@ -46,6 +46,13 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       await fs.mkdir('output/verification', { recursive: true });
       await fs.writeFile(`output/verification/core-files-${harnessId}.json`, JSON.stringify({ harnessId, at: new Date().toISOString(), source: file.source, nativeRef: file.nativeRef, fileVerified: true, undoVerified: true, report }, null, 2));
       console.log(`${harnessId}: real file edit -> ${file.source} FileChange -> diff -> undo; zero parity mismatch PASSED`);
-    } finally { await rt.close(); }
+    } finally {
+      if (harnessId === 'codex') {
+        for (const session of rt.sessions.values()) {
+          await session.host?.request('thread/delete', { threadId: session.nativeSessionId }).catch(() => {});
+        }
+      }
+      await rt.close();
+    }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

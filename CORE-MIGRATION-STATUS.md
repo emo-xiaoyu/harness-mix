@@ -11,7 +11,7 @@
 | P0-01 / 02 | shared-contracts、CoreEvent、NativeRef | contracts |
 | P0-03 / 04 / 06 | TurnManager、确定性 Projector、Sequence/Event ID 去重 | turn、projector、sequence、determinism |
 | P0-05 | 已完成 Shadow 阶段；独立旧投影保留为测试 oracle | shadow、真实 E2E ParityObserver |
-| P0-07 / 08 | 三套 Harness 五种必需场景，17 份原始 JSONL | core-replay 32 项检查 |
+| P0-07 / 08 | Pi、Claude、DSH 三套迁移基线五种必需场景，17 份原始 JSONL；Codex 另以官方 app-server 单测与真实 E2E 覆盖 | core-replay 32 项检查、codex-adapter、e2e:codex |
 | P0-09 / 10 | 能力驱动 Adapter 契约和架构守卫 | adapters、architecture |
 | P1-01 | Renderer 读取 Core Items；顶部状态读取独立 currentTurn | smoke、smoke:core |
 | P1-02 / 03 | 统一 InteractionRouter，等待、回答、失败和并发提交保护 | runtime、services、smoke:core |
@@ -29,6 +29,7 @@
 - 终态后的原生文件/计划/消息事件在执行边界忽略；文件结算仍可更新 Core。
 - 应用退出等待 Runtime 保存及原生会话关闭。真实 main.js 启动测试覆盖旧历史迁移、刷新和关闭。
 - 架构守卫禁止生产代码引用 legacy 测试 oracle，并禁止 Runtime/执行视图按 Harness 名称分支。
+- 新增 Codex 原生 Adapter：直接连接官方 `codex app-server --stdio`，覆盖 Thread/Turn/Item、流式回复、Reasoning、工具、审批、多问题、模型与推理档位、Usage、压缩、取消、冷恢复及指定回复 Fork；原生 thread/turn/item ID 保存在 NativeRef。
 
 ### 验收记录
 
@@ -36,6 +37,8 @@
 - `output/verification/core-resume-{pi,claude,dsh}.json`：真实请求、退出重开、原生历史口令回忆；新旧对照无 mismatch。
 - `output/verification/core-files-{pi,claude,dsh}.json`：实际创建临时文件、FileChange、Diff、撤回、验证文件已移除；无 mismatch。
 - `output/verification/core-fork-pi.json`：原生模型目录、Fork 身份、继承历史、后续事件路由与源任务隔离。
+- `output/verification/codex-native.json`：Codex 原生流式回复、模型目录、Usage、压缩、冷恢复及 `lastTurnId` 回复分支，验证分支不包含后续消息。
+- `output/verification/core-files-codex.json`：Codex 实际编辑临时文件、FileChange、Diff、撤回及零 Parity mismatch。
 - `output/playwright/core-{pi,claude,dsh}.png`、`core-services.png`：真实 Electron 渲染；1440/1040 宽度及折叠、取消、刷新验证。
 
 ### 保留边界
@@ -43,7 +46,7 @@
 - Legacy 只在 `scripts/support/` 做独立验收对照，不参与生产。`host/history-import.js` 是旧数据迁移器，保留无顺序历史和缺失 final 语义的事实，不伪造历史最终答案。
 - 原 `PROTOCOL_CORE_SHADOW` / `PROTOCOL_CORE_RENDERER` 回退环境变量已移除；默认 `npm start` 即 Core 单一路径。
 - Adapter 保留现有命名：`open()` 对应创建/恢复，`respond()` 对应回答交互，由统一契约检查；未为改名重写 Adapter。
-- Claude 当前原生接入不声明桌面审批/问题能力。DSH Plan 及 ACP native diff 映射经过原始事件/构造协议事件与 Electron 测试；本轮真实 DSH 文件运行使用 snapshot，不声称模型必定生成 Plan 或 native diff。Claude 本轮实际验证 native 来源。
+- Claude 已升级为 Agent SDK 持久会话，声明审批/提问/思考/模型/恢复能力。DSH 已升级为 Web Remote（见 `adapters/dsh-web-host.js`），声明审批/提问/模型/恢复/fork/压缩/用量；DSH 的 native diff 不再投影（Web 协议 meta.diffs 为 hunk 级，非完整文件），文件变更由 snapshot 审查路径承担。
 - Git 面板的工作区/暂存区 Diff 返回共享 FileChange Item，保留 workspace scope，不伪造其属于某个模型 Turn。
 - 既有快照大小/文件类型边界及撤回冲突校验保留；模型/权限配置未做所有组合穷举。
 - 所有改动保留在当前工作区，包含接手时已有未提交重构；未自动提交、推送或发布。`output/` 测试产物不提交。
@@ -54,6 +57,9 @@
 
 ## 最新一轮增量与验收
 
+- Codex 已通过官方 `codex app-server --stdio` 注册为第四个 Adapter。共享 app-server 负责 JSON-RPC 初始化和按原生 threadId 路由；模型、推理等级、权限 Profile、审批、多问题、工具、原生 Diff、Usage、取消、压缩、恢复和 `thread/fork(lastTurnId)` 均走官方协议。
+- Codex 原生 Diff 用于执行中预览；由于 `FileUpdateChange` 只携带 unified diff，不伪装成完整 before/after，回合结算后由工作区快照补齐可撤回版本。
+- `test:codex-adapter` 覆盖通知、Usage、多问题和审批响应；`e2e:codex` 真实验证流式回复、回复级 Fork 排除后续 Turn、进程重启后的冷 Resume 和原生 Compact；`e2e:core-files codex` 真实验证工具写文件、Core FileChange、差异和撤回。
 - InteractionRouter 从 Core Item 查询当前 Turn 待办，统一转交原生 respond；防并发重复提交、跨线程回答、失败误清理以及提交途中 Turn 已结束的竞争条件。Renderer 优先读取 Core interactions，原生权限决定保持不变。
 - CapabilityManager 接收 Manifest 归一化能力，任务及 Adapter snapshot 提供分组能力；模型、思考、权限模式、Fork UI 使用统一能力。旧 snapshot 保留兼容。
 - FileChange Projector 接受 native/snapshot/git 来源，按路径合并，完整 native 优先于 snapshot；不完整 native 不覆盖已有完整快照。删除/撤回变更同步到 Core。

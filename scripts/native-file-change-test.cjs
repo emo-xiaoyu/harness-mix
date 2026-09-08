@@ -4,7 +4,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { HostRuntime } = require('../src/main/host/runtime');
 const { projectEvent } = require('../src/main/adapters/claude');
-const { projectNotification } = require('../src/main/adapters/dsh');
 const { canonicalChanges } = require('../src/main/workspace/file-changes');
 
 (async () => {
@@ -22,12 +21,13 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
     await fs.writeFile(path.join(root, 'a.txt'), 'original\n');
     await rt.send(thread.id, 'edit');
     const message = thread.messages.at(-1);
+    // DSH Web Remote 的 tool/result meta.diffs 为 hunk 级（非完整文件），原生 diff 路径
+    // 由 Claude（tool_use_result 全量 before/after）与直接 emit 腿覆盖。
     const edit = async (before, after, id) => {
       await fs.writeFile(path.join(root, 'a.txt'), after);
-      apply(projectNotification({ method: 'session/update', params: { sessionId: 'native-session', update: {
-        sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed',
-        content: [{ type: 'diff', path: path.join(root, 'a.txt'), oldText: before, newText: after }],
-      } } }));
+      apply(projectEvent({ type: 'user', session_id: 'native-session',
+        tool_use_result: { filePath: path.join(root, 'a.txt'), type: 'update', content: after, originalFile: before },
+        message: { content: [{ type: 'tool_result', tool_use_id: id }] } }));
     };
     await edit('original\n', 'middle\n', 'edit-1');
     const preview = rt.reviews.preview.bind(rt.reviews);

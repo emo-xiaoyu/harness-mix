@@ -33,7 +33,11 @@ window.Transcript = (() => {
     return `<details class="turn-process activity-group" data-activity-id="${esc(items[0].id)}-group"><summary><span class="activity-indicator" aria-hidden="true"></span><b>${esc(label)}</b><span class="activity-chevron">›</span></summary><div class="turn-process-content">${body}</div></details>`;
   }
   function activity(id, label, content, state = '') {
-    return `<details class="activity ${esc(state)}" data-activity-id="${esc(id)}"><summary><span class="activity-indicator" aria-hidden="true"></span><span>${esc(label)}</span><span class="activity-chevron" aria-hidden="true">›</span></summary><div class="activity-content">${content}</div></details>`;
+    return `<details class="activity ${esc(state)}" data-activity-id="${esc(id)}"><summary><span class="activity-indicator" aria-hidden="true"></span><span class="activity-label">${esc(label)}</span><span class="activity-chevron" aria-hidden="true">›</span></summary><div class="activity-content">${content}</div></details>`;
+  }
+  const compactText = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+  function notice(item) {
+    return `<div class="activity-notice"><span class="activity-indicator" aria-hidden="true"></span><span>${esc(item.text)}</span></div>`;
   }
   function thinking(item, streaming) {
     const running = streaming && !item.endedAt;
@@ -43,14 +47,22 @@ window.Transcript = (() => {
   }
   function tool(tool, key = tool.id) {
     const labels = { bash: '运行了命令', exec_command: '运行了命令', edit: '编辑了文件', write: '写入了文件', read: '读取了文件', view_image: '查看了图像' };
-    const label = tool.state === 'running' ? `正在执行 ${tool.title}`
+    const command = tool.title === 'exec_command' ? compactText(tool.input) : '';
+    const editedFiles = tool.title === 'edit' ? String(tool.input ?? '').split(/\r?\n/).filter(Boolean) : [];
+    const commandVerb = ({ running: '正在运行', error: '运行失败', interrupted: '已中断' })[tool.state] ?? '已运行';
+    const editVerb = ({ running: '正在编辑', error: '编辑失败', interrupted: '已中断编辑' })[tool.state] ?? '已编辑';
+    const nativeLabel = command ? `${commandVerb} ${command}`
+      : editedFiles.length ? `${editVerb} ${editedFiles.length} 个文件`
+      : null;
+    const label = nativeLabel ?? (tool.state === 'running' ? `正在执行 ${tool.title}`
       : tool.state === 'error' ? `${tool.title} 执行失败`
       : tool.state === 'interrupted' ? `${tool.title} 已中断`
-      : labels[tool.title] ?? `调用了 ${tool.title}`;
+      : labels[tool.title] ?? `调用了 ${tool.title}`);
     const input = tool.input ? `<h4>输入</h4><pre>${esc(tool.input)}</pre>` : '';
     const output = tool.output ?? tool.detail;
     const content = `<div class="activity-meta">${esc(tool.title)} · ${esc(({ done: '已完成', running: '执行中', error: '失败', interrupted: '已中断' })[tool.state] ?? tool.state)} ${duration(tool.at, tool.endedAt)}</div>${input}${output ? `<h4>输出</h4><pre>${esc(output)}</pre>` : '<p>原生 Harness 未提供更多详情。</p>'}`;
-    return activity(key, label, content, tool.state);
+    const activityType = tool.title === 'edit' ? 'type-edit' : tool.title === 'exec_command' || tool.title === 'bash' ? 'type-command' : 'type-tool';
+    return activity(key, label, content, `${tool.state} ${activityType}`);
   }
   function message(message, thread) {
     const fromCore = Boolean(message.coreTurn && message.coreItems);
@@ -62,8 +74,8 @@ window.Transcript = (() => {
         ...i, messageId: message.id, at: i.createdAt,
         endedAt: ['completed', 'cancelled', 'error'].includes(i.status) ? i.updatedAt : undefined,
       }));
-      const items = message.coreItems.filter(i => ['agent_message', 'reasoning', 'tool_call'].includes(i.type)).map(i => ({
-        id: i.id, kind: ({ agent_message: 'text', reasoning: 'thinking', tool_call: 'tool' })[i.type],
+      const items = message.coreItems.filter(i => ['agent_message', 'reasoning', 'tool_call', 'notice'].includes(i.type)).map(i => ({
+        id: i.id, kind: ({ agent_message: 'text', reasoning: 'thinking', tool_call: 'tool', notice: 'notice' })[i.type],
         text: i.content, phase: i.phase, toolId: i.id, at: i.createdAt,
         endedAt: ['completed', 'cancelled', 'error'].includes(i.status) ? i.updatedAt : undefined,
       }));
@@ -80,23 +92,37 @@ window.Transcript = (() => {
     if (message.items?.length) {
       const parts = [];
       let pending = [];
-      const flush = () => { if (pending.length) parts.push(group(pending, message, thread)); pending = []; };
+      const flush = () => {
+        if (pending.length === 1 && pending[0].kind === 'tool') {
+          const nativeTool = (thread.tools ?? []).find(t => t.id === pending[0].toolId && t.messageId === message.id);
+          if (nativeTool) parts.push(tool(nativeTool, pending[0].id));
+        } else if (pending.length === 1 && pending[0].kind === 'thinking') {
+          parts.push(thinking(pending[0], message.streaming));
+        } else if (pending.length) parts.push(group(pending, message, thread));
+        pending = [];
+      };
       message.items.forEach((item, index) => {
         if (item.kind === 'text') {
           flush();
           if (item.phase === 'final') final += `<div class="md final-answer">${window.renderMarkdown(item.text)}</div>`;
           else parts.push(`<div class="md progress-message">${window.renderMarkdown(item.text)}</div>`);
         } else if (item.kind === 'thinking' || item.kind === 'tool') pending.push(item);
+        else if (item.kind === 'notice') { flush(); parts.push(notice(item)); }
       });
       flush();
       body = parts.join('');
     } else { body = ''; }
-    body += message.coreItems.filter(i => i.type === 'notice').map(i => `<p class="review-note">${esc(i.content)}</p>`).join('');
     if (fromCore && message.corePlan?.entries?.length) body += activity(message.corePlan.id, '执行计划', '<ol>' + message.corePlan.entries.map(entry => `<li>${esc(entry.content ?? entry.text)} · ${esc(entry.status)}</li>`).join('') + '</ol>');
     const elapsed = duration(message.at, message.endedAt);
-    const status = message.stopReason === 'cancelled' ? '已停止' : message.stopReason === 'error' ? '执行出错' : message.stopReason === 'interrupted' ? '会话已中断' : '已处理';
     if (settled) {
-      return `<div class="turn-header">${status} ${elapsed || '计时未记录'}</div>` + body + (final || '<p class="waiting">本轮未返回最终结论，可展开查看执行过程。</p>') + changeCard(message);
+      const state = message.stopReason === 'cancelled' ? '已停止 · '
+        : message.stopReason === 'error' ? '执行出错 · '
+        : message.stopReason === 'interrupted' ? '会话已中断 · ' : '耗时 ';
+      const label = `${state}${elapsed || '计时未记录'}`;
+      const history = body
+        ? `<details class="turn-history" data-activity-id="turn-${esc(message.id)}"><summary><span>${esc(label)}</span><span class="activity-chevron" aria-hidden="true">›</span></summary><div class="turn-history-content">${body}</div></details>`
+        : `<div class="turn-history is-empty"><span>${esc(label)}</span></div>`;
+      return history + (final || '<p class="waiting">本轮未返回最终结论，可展开查看执行过程。</p>') + changeCard(message);
     }
     const process = `<div class="turn-header is-live">${message.waitingInteraction ? '<span>等待你的回答 · </span>' : ''}<time data-started-at="${message.at || ''}">${liveLabel(message.at)}</time></div>` + body + (!body ? '<p class="waiting">正在等待原生 Harness 回复…</p>' : '');
     return process + (message.reviewId ? `<div class="live-changes"><button data-review-message="${esc(message.id)}" data-live-review="${esc(message.id)}">查看已更改文件 <span>↗</span></button></div>` : message.reviewError ? `<p class="review-note">${esc(message.reviewError)}</p>` : '');

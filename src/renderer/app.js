@@ -1,10 +1,10 @@
 const $ = s => document.querySelector(s);
 // 静态 UI 目录（图标/名称/排序）；可用性与能力由 snapshot 中 Adapter manifest 提供
 const HARNESS_UI = [
-  ['codex', 'Codex', 'codex-color.svg'],
-  ['pi', 'Pi', 'pinumber1_80899.svg'],
-  ['dsh', 'DeepSeek Harness', 'deepseek-color.svg'],
   ['claude', 'Claude Code', 'claude-color.svg'],
+  ['codex', 'Codex', 'codex-harness.svg'],
+  ['dsh', 'DeepSeek Harness', 'deepseek-color.svg'],
+  ['pi', 'Pi', 'pi.svg'],
 ];
 let state = { threads: [], adapters: [] }, selectedId = null, draftHarness = 'pi', busy = false, refreshing = false, refreshAgain = false;
 let openTabs = []; // 顶部标签栏：打开过的对话（内存态；关闭标签不删除任务）
@@ -13,7 +13,7 @@ try { const saved = JSON.parse(localStorage.getItem('hm:catalogs:v1') || '{}'); 
 const commandCache = new Map();
 function modelIcon(model = {}) {
   const name = typeof model === 'string' ? model : [model.id, model.name, model.provider].filter(Boolean).join(' ');
-  const families = [[/deepseek/i, 'deepseek'], [/mimo|xiaomi/i, 'xiaomimimo'], [/qwen|qwq/i, 'qwen-color'], [/minimax|abab/i, 'minimax'], [/claude|anthropic/i, 'claude'], [/kimi|moonshot/i, 'kimi'], [/gpt|openai|o[134](?:-|\b)/i, 'openai']];
+  const families = [[/deepseek/i, 'deepseek'], [/mimo|xiaomi/i, 'xiaomimimo'], [/qwen|qwq/i, 'qwen-color'], [/minimax|abab/i, 'minimax'], [/claude|anthropic/i, 'claude'], [/kimi|moonshot/i, 'kimi'], [/glm|zhipu|智谱|z[.-]?ai\b/i, 'zai'], [/gpt|openai|o[134](?:-|\b)/i, 'openai']];
   return 'icons/model-' + (families.find(([test]) => test.test(name))?.[1] || 'astra') + '.svg';
 }
 const catalogRequests = new Map();
@@ -25,7 +25,7 @@ let selectedProject = localStorage.getItem('hm:project') || 'E:\\harness-mix';
 let menuItems = [], menuPick = null;  // 单列菜单（权限模式）的条目与回调
 let menuModelItems = [], menuThinkItems = []; // 合并菜单（模型 + 思考强度）的条目
 const esc = v => { const n = document.createElement('span'); n.textContent = String(v ?? ''); return n.innerHTML; };
-const ui = id => HARNESS_UI.find(([key]) => key === id) ?? [id, id, 'pinumber1_80899.svg'];
+const ui = id => HARNESS_UI.find(([key]) => key === id) ?? [id, id, 'pi.svg'];
 const icon = id => 'icons/' + ui(id)[2];
 const adapter = id => state.adapters.find(a => a.id === id);
 const available = id => Boolean(adapter(id)?.available);
@@ -230,7 +230,11 @@ function renderMessages(t, harnessId) {
   return t.messages.map(m => {
     if (m.role === 'user') return `<article class="message user" aria-label="你的消息">${esc(m.text)}</article>`;
     const canFork = capabilities(harnessId).forkFromMessage && m.coreTurn && !['created', 'starting', 'running', 'waiting_interaction'].includes(m.coreTurn.status);
-    return `<article class="message assistant"><div class="message-label"><img src="${icon(harnessId)}" alt="${esc(ui(harnessId)[1])}"></div>${window.Transcript.message(m, t)}${renderArtifacts(m)}${canFork ? `<div class="message-actions"><button type="button" data-fork-message="${esc(m.id)}" title="分支到新聊天" aria-label="分支到新聊天" ${busy || t.reviewPending || t.status === 'working' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5v5a7 7 0 0 0 7 7h7M14 12l5 5-5 5M5 10l7-7M7 3h5v5"/></svg></button></div>` : ''}</article>`;
+    const settled = m.coreTurn && !['created', 'starting', 'running', 'waiting_interaction'].includes(m.coreTurn.status);
+    const completedAt = m.coreTurn?.completedAt ?? m.endedAt;
+    const time = Number.isFinite(completedAt) ? new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+    const actions = settled ? `<div class="message-actions"><button type="button" data-copy-message="${esc(m.id)}" title="复制回复" aria-label="复制回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>${canFork ? `<button type="button" data-fork-message="${esc(m.id)}" title="分支到新聊天" aria-label="分支到新聊天" ${busy || t.reviewPending || t.status === 'working' ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5v5a7 7 0 0 0 7 7h7M14 12l5 5-5 5M5 10l7-7M7 3h5v5"/></svg></button>` : ''}${time ? `<time datetime="${new Date(completedAt).toISOString()}" title="${esc(new Date(completedAt).toLocaleString('zh-CN'))}">${esc(time)}</time>` : ''}</div>` : '';
+    return `<article class="message assistant">${window.Transcript.message(m, t)}${renderArtifacts(m)}${actions}</article>`;
   }).join('');
 }
 
@@ -265,8 +269,9 @@ function renderTabs() {
   const tabs = openTabs.map(id => state.threads.find(t => t.id === id)).filter(Boolean);
   openTabs = tabs.map(t => t.id); // 清理已删除任务
   el.innerHTML = tabs.map(t =>
-    `<div class="tab ${t.id === selectedId ? 'active' : ''}" data-tab="${esc(t.id)}" role="tab" aria-selected="${t.id === selectedId}" title="${esc(t.title)}"><img src="${icon(t.harnessId)}" alt=""><span class="tab-title">${esc(t.title)}</span><button class="tab-x" data-tab-close="${esc(t.id)}" title="关闭标签" aria-label="关闭标签">×</button></div>`
+    `<div class="tab ${t.id === selectedId ? 'active' : ''}" data-tab="${esc(t.id)}" role="tab" aria-selected="${t.id === selectedId}" title="${esc(t.title)}"><img class="tab-kind" src="icons/${t.forkedFrom ? 'thread-fork.svg' : 'home-chat.svg'}" alt=""><span class="tab-title">${esc(t.title)}</span><button class="tab-x" data-tab-close="${esc(t.id)}" title="关闭标签" aria-label="关闭标签">×</button></div>`
   ).join('');
+  requestAnimationFrame(() => el.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
 }
 
 function render() {
@@ -300,7 +305,12 @@ function render() {
   const processScroll = new Map([...area.querySelectorAll('.turn-process')].map(d => [d.dataset.activityId, d.querySelector('.turn-process-content')?.scrollTop ?? 0]));
   area.innerHTML = t
     ? renderMessages(t, id) + renderTools(t) + renderApprovals(t) + (t.error ? `<div class="error">${esc(t.error)}</div>` : '')
-    : '<div class="answer"><h2>一个工作台，多种原生能力</h2><p>选择项目、Harness 与模型，开始新的任务。</p><div class="cards"><div class="card"><b>▱ 项目与任务</b><p>围绕工作目录组织会话，随时回来继续。</p></div><div class="card"><b>↗ 流式对话</b><p>查看回复、工具执行与审批请求。</p></div></div></div>';
+    : `<section class="home-hero"><div class="home-copy"><span>欢迎使用 Harness Mix</span><h1>一个工作台，<em>多种原生能力</em></h1><p>选择项目、Harness 与模型，开始新的任务。</p></div><div class="home-aside">MORE AGENTS<br>A BRIGHTER<br>TOMORROW<i></i></div><div class="home-cards">${[
+      ['home-folder.svg', 'project', '项目与任务', '围绕工作目录组织会话，随时回溯和继续。'],
+      ['home-chat.svg', 'chat', '流式对话', '查看回复、工具执行与审批请求。'],
+      ['activity-terminal.svg', 'terminal', '原生命令', '在对话中直接运行命令，连接你的开发环境。'],
+      ['activity-edit.svg', 'files', '文件变更', '创建、编辑和审查文件，让想法快速落地。'],
+    ].map(([asset, tone, title, copy]) => `<button class="home-card ${tone}" type="button" data-home-action="new"><span class="home-card-icon"><img src="icons/${asset}" alt=""></span><b>${title}</b><p>${copy}</p><span class="home-card-arrow">→</span></button>`).join('')}</div><div class="home-tagline"><i></i><span>更强的 AI 协作，从这里开始</span><i></i></div></section>`;
   area.querySelectorAll('details[data-activity-id]').forEach(d => { d.open = expanded.has(d.dataset.activityId); });
   area.querySelectorAll('.turn-process').forEach(d => { d.querySelector('.turn-process-content').scrollTop = processScroll.get(d.dataset.activityId) ?? 0; });
   if (bottom) area.scrollTop = area.scrollHeight;
@@ -311,7 +321,7 @@ function render() {
   $('#send').disabled = busy || Boolean(t?.reviewPending) || t?.status === 'opening' || (!t && !available(draftHarness));
   $('#runStatus').textContent = t?.reviewPending ? '正在整理文件变更…' : busy ? '处理中…' : '';
   $('#cwd').disabled = Boolean(t) || busy; $('#folder').disabled = Boolean(t) || busy; if (t) $('#cwd').value = t.cwd;
-  $('#topHarness').innerHTML = HARNESS_UI.map(([key, name, file]) => `<button class="top-icon ${id === key ? 'active' : ''}" data-top="${key}" aria-label="${name}" title="${name}${available(key) ? '' : ' · 尚未接入'}" ${!available(key) || busy ? 'disabled' : ''}><img src="icons/${file}" alt=""></button>`).join('');
+  $('#topHarness').innerHTML = HARNESS_UI.map(([key, name, file]) => `<button class="top-icon ${id === key ? 'active' : ''}" data-top="${key}" aria-label="${name}" title="${name}${available(key) ? '' : ' · 尚未接入'}" ${!available(key) || busy ? 'disabled' : ''}><img src="icons/${file}" alt=""><span>${name.replace(' Code', '')}</span></button>`).join('');
   window.Workbench?.setContext({ threadId: t?.id, cwd: t?.cwd ?? selectedProject, messages: t?.messages ?? [], status: t?.status });
 }
 
@@ -384,11 +394,14 @@ async function openModelMenu(which) {
       if (t) models = t.models ?? (await catalog(hid)).models;
       else models = (await catalog(hid)).models;
     }
-    if (caps.thinkingLevels) levels = (await catalog(hid)).thinkingLevels ?? [];
+    const catalogValue = await catalog(hid);
+    if (caps.thinkingLevels) levels = catalogValue.thinkingLevels ?? [];
     if (generation !== menuGeneration || current()?.id !== t?.id || (!t && draftHarness !== hid)) return;
+    const activeModel = t ? (t.model?.id ?? t.model) : draftOptions[hid]?.model?.id;
+    const selectedModel = (models ?? []).find(model => model.id === activeModel);
+    if (selectedModel?.efforts?.length) levels = selectedModel.efforts;
     menuModelItems = (models ?? []).map(m => ({ id: m.id, label: m.name, sub: [m.id, m.provider].filter(Boolean).join(' · '), raw: m }));
     menuThinkItems = levels.map(l => ({ id: l.id, label: l.label ?? l.id, sub: l.hint }));
-    const activeModel = t ? (t.model?.id ?? t.model) : draftOptions[hid]?.model?.id;
     const activeThink = t ? t.options?.thinking : draftOptions[hid]?.thinking;
     const col = (head, items, kind, active) => `<div class="menu-col"><div class="menu-head">${head}</div>${items.length ? items.map((it, i) => `<button data-kind="${kind}" data-idx="${i}" class="${it.id === active ? 'active' : ''}">${kind === 'model' ? `<img class="model-brand" src="${modelIcon(it.raw)}" alt="">` : ''}${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</button>`).join('') : '<div class="menu-empty">该 Harness 不支持</div>'}</div>`;
     menu.innerHTML = `<div class="menu-cols">${col('模型', menuModelItems, 'model', activeModel)}${col('思考强度', menuThinkItems, 'think', activeThink)}</div>`;
@@ -642,6 +655,23 @@ $('#stop').onclick = async () => { try { await window.harnessMix.cancel(selected
 
 /* ---------- 审批 / 提问应答 ---------- */
 $('#conversation').onclick = async e => {
+  const homeAction = e.target.closest('[data-home-action]');
+  if (homeAction) { $('#message').focus(); return; }
+  const copy = e.target.closest('[data-copy-message]');
+  if (copy) {
+    const message = current()?.messages.find(item => item.id === copy.dataset.copyMessage);
+    const value = message?.coreItems?.filter(item => item.type === 'agent_message' && item.phase === 'final').map(item => item.content).join('\n') || message?.text || '';
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const field = Object.assign(document.createElement('textarea'), { value });
+        field.style.position = 'fixed'; field.style.opacity = '0'; document.body.append(field); field.select();
+        document.execCommand('copy'); field.remove();
+      }
+      notice('回复已复制');
+    } catch (error) { notice(`复制失败：${error.message}`); }
+    return;
+  }
   const fork = e.target.closest('[data-fork-message]');
   if (fork && !fork.disabled) { await branchToChat(fork.dataset.forkMessage); return; }
   const zoom = e.target.closest('[data-zoom]');

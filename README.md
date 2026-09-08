@@ -1,7 +1,7 @@
 # Harness Mix
 
 独立的多 Harness 桌面壳（Electron）。借鉴 [codex-host](https://github.com/BytePioneer-AI/codex-host)
-的插件化思路，但桌面层完全自研：Pi、Claude Code、DeepSeek Harness 等的**会话、模型调用、
+的插件化思路，但桌面层完全自研：Codex、Pi、Claude Code、DeepSeek Harness 等的**会话、模型调用、
 工具和权限仍由各自原生程序维护**；Harness Mix 只负责三件事——
 
 1. **自研 Desktop**：统一呈现对话（Markdown 排版与各 Harness 返回的图片 / 文件产物）、流式输出、工具状态、审批、模型选择、任务恢复 / Fork、应用内确认对话框；
@@ -16,9 +16,10 @@ Renderer（桌面 UI）            src/renderer/
   └─ IPC（preload 白名单）      src/main/preload.js
 Host Runtime（编排/恢复/投影）   src/main/host/runtime.js · store.js · jsonl.js
   └─ Adapter 注册表             src/main/adapters/index.js
+       ├─ Codex Adapter         adapters/codex.js  → codex app-server --stdio（官方 JSON-RPC）
        ├─ Pi Adapter            adapters/pi.js     → pi --mode rpc（官方 RPC）
-       ├─ DSH Adapter           adapters/dsh.js    → pnpm dsh --profile acp（标准 ACP v1）
-       └─ Claude Code Adapter   adapters/claude.js → claude -p --output-format stream-json（脚手架）
+       ├─ DSH Adapter           adapters/dsh.js    → npm run dsh -- web（官方 Web Remote，Typert RPC + WS mux）
+       └─ Claude Code Adapter   adapters/claude.js → @anthropic-ai/claude-agent-sdk query()（官方持久会话）
 ```
 
 **Adapter 插件结构**（借鉴 codex-host 的 Manifest / 工厂 / Adapter / Session 划分）：
@@ -43,47 +44,47 @@ Renderer 与 IPC 协议无需改动。
 
 ### 与 codex-host 核心设计的对应关系
 
-这里借鉴的是“原生 Harness → Adapter → Host 事件投影 → UI”的分层；没有直接引入 codex-host 的 `protocol-core` 包，也不输出完整 Codex app-server 协议。自研 UI 消费 Harness Mix 自己的投影结构。
+这里借鉴的是“原生 Harness → Adapter → Host 事件投影 → UI”的分层；没有直接引入 codex-host 的 `protocol-core` 包。Codex Adapter 直接消费官方 app-server JSON-RPC，自研 UI 消费 Harness Mix 自己的投影结构。
 
 | 参考职责 | 当前实现 | 边界 |
 |---|---|---|
-| Thread / Turn 路由 | `host/runtime.js` 的线程、原生 session 映射与 send/cancel/resume/fork | 一轮暂由 assistant 消息承载，未建立独立 Turn 状态机和 native turn ID 映射 |
-| Harness Event → Item | `host/transcript.js` 持久化有序 text/thinking/tool items，保留工具 ID 与输入输出 | 尚无完整的强类型 Item 契约、事件序列校验和 commentary/final phase；最终段仍使用末尾文本判断 |
-| Tool / Approval / Question | Adapter 事件进入 Runtime；应答经 `respond()` 回原生程序 | Pi 支持 extension UI 提问，DSH 当前只支持权限审批，Claude 为基础脚手架 |
-| Diff | Runtime 管理轮次监测，通过 `turn/diff/updated` 主动推送；主进程 `workspace/review.js` 根据轮前基线计算差异 | 自研事件携带 threadId、turnId（当前消息 ID）及结构化 review，非完整 Codex wire 协议；不具备原生补丁归因 |
-| Harness adapter abstraction | `adapters/index.js` 注册 manifest/create/session；Pi RPC、DSH ACP、Claude stream-json | UI 中品牌选择列表仍需登记，不能称为完整动态插件系统 |
+| Thread / Turn 路由 | `host/runtime.js` 的线程、原生 session 映射与 send/cancel/resume/fork | Core 有独立 Turn 状态；Codex 保留官方 native thread/turn ID |
+| Harness Event → Item | `EventNormalizer` → `ProtocolCore` 持久化 text/reasoning/tool/plan/file-change Items | 原生事件先在所属 Adapter 内转换，未知扩展事件不会假装成通用能力 |
+| Tool / Approval / Question | Adapter 事件进入 Runtime；应答经 `respond()` 回原生程序 | Codex Server Request、Pi extension UI、DSH waterfall、Claude canUseTool 均原路应答 |
+| Diff | Codex 投影原生 fileChange/patch；Runtime 同时用轮前快照形成可撤回审查 | Pi/Claude/DSH 仍以各自原生事件加快照审查为准 |
+| Harness adapter abstraction | `adapters/index.js` 注册 manifest/create/session；Codex app-server、Pi RPC、DSH Web Remote、Claude Agent SDK | UI 品牌排序仍是静态目录，不是可安装插件市场 |
 
-Runtime Diff 推送已接入。后续待补独立 Turn 生命周期、完整 threadId/turnId/itemId 事件契约、原生 phase 与 Plan/Compaction 等结构化 Item；这些待实现项不能通过改目录名称声称已经具备。
+Runtime Diff、独立 Turn 生命周期、NativeRef、Plan、Compaction 与 Interaction 已接入。Harness 专有的完整事件集合仍留在 Adapter 边界，不宣称四家所有高级功能完全等价。
 
 本轮核对源码：[Codex Turn](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/Turn.ts)、[Codex ThreadItem](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/ThreadItem.ts)、[codex-host Harness 契约](https://github.com/BytePioneer-AI/codex-host/blob/main/packages/harness-adapter/src/text-session.ts)、[codex-host UI projector](https://github.com/BytePioneer-AI/codex-host/blob/main/packages/protocol-core/src/codex-ui-projector.ts)。借鉴明确区分正文、推理与工具 Item 的语义，UI 不把正文当作思考一起隐藏。
 
 ## 统一事件模型（Adapter → Host 投影）
 
-| kind | 含义 | Pi 来源 | DSH(ACP) 来源 |
-|---|---|---|---|
-| `text-delta` / `thinking-delta` | 流式正文 / 思考 | `message_update` | `agent_message_chunk` / `agent_thought_chunk` |
-| `tool` | 工具状态（running/done/error + 摘要） | `tool_execution_*` | `tool_call` / `tool_call_update` |
-| `artifact` | 返回的图片 / 文件产物 | 工具结果中的 image 块 | `agent_message_chunk`（image / resource_link） |
-| `approval` | 审批 / 提问（select·confirm·input·permission） | `extension_ui_request` | `session/request_permission` |
-| `usage` | tokens / 上下文占比 | `message_update.usage` | `usage_update` |
-| `status` / `notice` | 重试、压缩、通知等瞬态 | `auto_retry_*`、`compaction_*`、`notify` | `plan` 等 |
-| `completed` / `error` | 回合结束 / 失败 | `agent_settled` | `session/prompt` 结算 |
+| kind | 含义 | Codex 来源 | Pi 来源 | DSH(Web Remote) 来源 | Claude Code 来源 |
+|---|---|---|---|---|---|
+| `text-delta` / `thinking-delta` | 流式正文 / 思考 | `item/agentMessage/delta` / `item/reasoning/*Delta` | `message_update` | `assistant/chunk` 的 text-delta / reasoning-delta | SDK assistant content block |
+| `tool` | 工具状态（running/done/error + 摘要） | `item/started` / `item/completed` / output delta | `tool_execution_*` | `tool/call` / `tool/result` | assistant `tool_use` / user `tool_result` |
+| `artifact` | 返回的图片 / 文件产物 | `imageGeneration` / `imageView` Item | 工具结果中的 image 块 | 暂无独立 artifact 投影 | SDK 工具结果中的图片 / 文件块 |
+| `approval` | 审批 / 提问（select·confirm·input·permission） | JSON-RPC Server Request | `extension_ui_request` | `$events` waterfall `approval/request` / `agent/question` | SDK `canUseTool` |
+| `usage` | tokens / 上下文占比 | `thread/tokenUsage/updated` | `message_update.usage` / `get_session_stats` | `assistant/chunk` usage（窗口取自 `request/context`） | SDK result `modelUsage` |
+| `status` / `notice` | 重试、压缩、通知等瞬态 | warning / `contextCompaction` Item | `auto_retry_*`、`compaction_*`、`notify` | `agent/compaction`、`plan/update` 等 | SDK system / status / result |
+| `completed` / `error` | 回合结束 / 失败 | `turn/completed` / error | `agent_settled` | `turn/end` | SDK result |
 
-应答路径反向走 `approval:respond` → Adapter.respond → Pi `extension_ui_response` /
-ACP `session/request_permission` 结果，全程不伪造原生权限决策。
+应答路径反向走 `approval:respond` → Adapter.respond → Codex JSON-RPC Server Request / Pi
+`extension_ui_response` / DSH `$events/result` / Claude `canUseTool`，全程不伪造原生权限决策。
 
 ## 能力矩阵（如实声明，不做假的通用开关）
 
-| 能力 | Pi | DSH | Claude Code（脚手架） |
-|---|---|---|---|
-| 流式回复 / 工具状态 | ✅ | ✅ | ✅（回合级） |
-| 思考流 | ✅ | ✅ | — |
-| 审批 / 提问 | ✅ extension UI | ✅ 一次性 allow/reject | — |
-| 模型选择 | ✅ 完整目录 | ✅ 会话配置项 | — |
-| 会话恢复 | ✅ `--session-id` | ✅ `session/resume` | ✅ `--resume` |
-| 任务 / 回复 Fork | ✅ 原生 Pi | ❌（ACP 未支持） | ✅ 官方 SDK `forkSession` |
-| 快捷压缩 | ✅ 原生 RPC `compact` | ❌（ACP 未暴露） | ✅ 原生 `/compact` |
-| Usage | ✅ | ✅ | — |
+| 能力 | Codex | Pi | DSH | Claude Code |
+|---|---|---|---|---|
+| 流式回复 / 工具状态 | ✅ app-server Item | ✅ | ✅ | ✅ |
+| 思考流 | ✅ reasoning notification | ✅ | ✅ | ✅ |
+| 审批 / 提问 | ✅ 原生 Server Request，支持多问题 | ✅ extension UI | ✅ waterfall | ✅ canUseTool / AskUserQuestion |
+| 模型选择 | ✅ `model/list` | ✅ 完整目录 | ✅ 会话配置项 | ✅ `supportedModels()` |
+| 会话恢复 | ✅ `thread/resume` | ✅ `--session-id` | ✅ `session/follow` | ✅ `resume` |
+| 任务 / 回复 Fork | ✅ `thread/fork(lastTurnId)` | ✅ 原生 Pi | ✅ `session/fork(atSeq)` | ✅ SDK `forkSession` |
+| 快捷压缩 | ✅ `thread/compact/start` | ✅ 原生 RPC | ✅ 原生 `/compact` | ✅ 原生 `/compact` |
+| Usage | ✅ `thread/tokenUsage/updated` | ✅ | ✅ | ✅ result modelUsage |
 
 ## 运行与验证
 
@@ -95,9 +96,16 @@ npm run check    # 全部源码语法检查
 npm run smoke    # 真实 Renderer + 模拟 IPC 的集成检查（不调用模型）
 ```
 
-环境依赖：`pi.cmd`（`npm i -g @earendil-works/pi-coding-agent`）；
+环境依赖：`codex.cmd`（`npm i -g @openai/codex`）、`pi.cmd`（`npm i -g @earendil-works/pi-coding-agent`）；
 DSH 检出默认 `E:\dsh\deepseek-harness`，可用 `HARNESS_MIX_DSH_ROOT` 覆盖；
-Claude Code 为可选脚手架（`claude` CLI 存在即启用基础链路）。
+Claude Code 通过 `@anthropic-ai/claude-agent-sdk` 接入；各原生 CLI 或 SDK 不存在时，对应 Adapter 会如实标记为不可用。
+
+DSH 走其官方 Web Remote：由本机 `npm run dsh -- web` 拉起（不打开浏览器），以启动 URL 的一次性
+token 换会话 cookie，经 HTTP unary + WebSocket `/api/remote.mux` 复用流（Typert RPC）驱动 `session/*` 命名空间；
+不嵌入 DSH Web UI，也不读取其账户或密钥。
+启动探测会验证目标根目录、`package.json#scripts.dsh` 和 `node_modules`；原生会话创建/恢复、
+模型与 reasoning 配置、工具输入输出、审批与提问（waterfall）、用量、计划、检查点 fork 和压缩均从官方事件流投影。
+可运行 `npm run test:dsh-adapter` 做离线协议回放，`npm run e2e:dsh` 做真实最小模型调用。
 
 账号、密钥、模型调用、工具执行、权限与会话持久化仍属于各原生 Harness；
 Harness Mix 不读取或保存任何凭据。
@@ -137,7 +145,7 @@ Git 标签使用本机 Git for Windows，支持仓库初始化、分支名、工
 用量弹层的 Pi 会话 Token / 缓存 / 费用来自 `get_session_stats`，上下文来自
 同一返回的 `contextUsage`；最近缓存命中率来自 `message_end`，按
 `cacheRead / (input + cacheRead + cacheWrite)` 计算，与 codex-host 的 Pi 统计口径一致。
-DSH 上下文仍使用 ACP `usage_update`。百分比最多一位小数，缺失字段显示 `—`。
+DSH 上下文使用 Web Remote `request/context` 的原生窗口与 usage chunk 合计。百分比最多一位小数，缺失字段显示 `—`。
 不虚构推理 Token、5 小时 / 7 天额度。文件审查/撤回的实现边界见上节。
 可运行 `npm run test:core-all` 验证协议、顺序、并发工具、取消、持久化、原生回放及文件变更。
 `npm run test:transcript` 保留独立旧投影对照与用量口径测试。
@@ -149,7 +157,7 @@ Turn 在调用原生 Harness 前建立，状态由 TurnManager 维护；最终�
 InteractionRouter 统一审批和问题，能力来自 Adapter Manifest；native/snapshot/git 差异使用 FileChange Item。
 Legacy 实时投影已移到测试支持目录，旧数据在加载时迁移，默认 `npm start` 使用 Core。
 完整完成清单、测试证据和能力边界见 [CORE-MIGRATION-STATUS.md](CORE-MIGRATION-STATUS.md)。
-`npm run smoke:app` 验证真实应用启动、历史迁移、刷新及退出保存；`npm run e2e:core-files` 会在临时目录调用三套真实 Harness 并验证编辑与撤回。
+`npm run smoke:app` 验证真实应用启动、历史迁移、刷新及退出保存；`npm run e2e:core-files` 会在临时目录调用原生 Harness 并验证编辑与撤回。Codex 使用 `npm run e2e:codex` 验证 app-server 流式回复、Usage、回复 Fork、冷恢复和压缩。
 
 第一版 Host Runtime，不承诺跨 Harness 完全功能等价；界面只为已声明能力渲染入口。
 
@@ -157,14 +165,14 @@ Legacy 实时投影已移到测试支持目录，旧数据在加载时迁移，�
 
 - 模型和权限目录只在点击菜单时读取；按 Harness 缓存、合并并发请求。切换对话或关闭菜单后，迟到结果不会重新打开旧菜单，加载提示留在菜单内部。
 - 项目行用关闭/打开文件夹图标表示折叠状态，悬停或键盘聚焦时显示新建对话和操作菜单。菜单支持新建对话、置顶、编辑显示名称、在资源管理器打开、移除；名称和置顶顺序保存在本机。
-- 用户气泡按内容宽度显示。上下文占用与会话累计 Token 分开展示；未知值、压缩后的待更新值会清空旧百分比。点击用量可按 Adapter 能力查询原生最新统计；DSH 使用 ACP 事件值。
-- Pi 回复下方可“分支到新聊天”，原生会话和桌面历史都截断到所选回复。新回复保存原生 checkpoint；旧回复仅在原生历史可唯一定位时允许分支，不能定位则明确报错。原任务不受影响。
-- `session.forkFromMessage` 独立声明回复级分支能力。Pi 和 Claude Code 已接入；Claude 使用官方 SDK `forkSession({ upToMessageId })`，保留回复边界并映射新会话的消息 UUID，支持再次分支。DSH ACP 尚未暴露此能力。
+- 用户气泡按内容宽度显示。上下文占用与会话累计 Token 分开展示；未知值、压缩后的待更新值会清空旧百分比。点击用量可按 Adapter 能力查询原生最新统计；DSH 使用 Web Remote 事件值。
+- 支持该能力的 Harness 可在回复下方“分支到新聊天”，原生会话和桌面历史都截断到所选回复。新回复保存原生 checkpoint；旧回复仅在原生历史可唯一定位时允许分支，不能定位则明确报错。原任务不受影响。
+- `session.forkFromMessage` 独立声明回复级分支能力。四家均已接入；Codex 使用官方 `thread/fork({ lastTurnId })`，Pi 截断原生会话到所选回复，Claude 使用官方 SDK `forkSession({ upToMessageId })`，DSH 使用 `session/fork` 的 `atSeq` 检查点。
 
 语义参考 [Codex ThreadForkParams 的 lastTurnId](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/ThreadForkParams.ts)，上下文统计对照 [codex-host Pi Usage](https://github.com/BytePioneer-AI/codex-host/blob/main/packages/adapters/pi/src/pi-usage.ts)。实际调用本机 Pi 的原生 RPC，不修改其会话文件。
 
 验证：`smoke` 覆盖延迟菜单、请求去重、项目操作、气泡和回复分支 IPC；`smoke:app` 覆盖项目重命名/置顶后刷新恢复；`e2e:core-fork` 实际验证原生分支不含后续轮次，并逐项比对上下文 Token 与原生统计。
 
-输入框的上下文占用左侧新增指令按钮（用户提供的 `commands.svg`）。仅点击后读取当前 Harness 指令：Pi 提供原生压缩及扩展/技能指令插入；Claude 提供原生压缩。压缩要求已有会话且回复和文件结算已完成，错误直接显示原生返回原因。DSH 当前 ACP 未提供指令入口，不将其当作普通提示词执行。
+输入框的上下文占用左侧新增指令按钮（用户提供的 `commands.svg`）。仅点击后读取当前 Harness 指令：Codex、Pi、Claude 和 DSH 都提供各自原生压缩入口。压缩要求已有会话且回复和文件结算已完成，错误直接显示原生返回原因。
 
 `npm run e2e:commands-claude` 验证指定回复分支、再次分支、排除后续消息、压缩及后续回忆；`npm run e2e:commands-pi` 验证原生压缩及回忆。测试使用临时项目，Pi 的较小压缩保留窗口仅写入测试项目设置，不修改用户全局配置。运行报告在 `output/verification/commands-{claude,pi}.json`。

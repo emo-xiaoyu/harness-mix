@@ -1,9 +1,9 @@
 {
-  "capturedAt": "2026-09-08T04:33:13.400Z",
+  "capturedAt": "2026-09-08T04:33:07.118Z",
   "harnessId": "dsh",
-  "label": "file-edit",
-  "nativeEvents": 123,
-  "fileVerified": true,
+  "label": "tool-call",
+  "nativeEvents": 108,
+  "fileVerified": false,
   "report": {
     "enabled": true,
     "comparisons": 1,

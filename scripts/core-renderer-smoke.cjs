@@ -11,7 +11,7 @@ const { registerWorkspace } = require('../src/main/workspace/ipc');
 const projectors = {
   pi: require('../src/main/adapters/pi').project,
   claude: require('../src/main/adapters/claude').projectEvent,
-  dsh: require('../src/main/adapters/dsh').projectNotification,
+  dsh: require('../src/main/adapters/dsh').projectWireEvent,
 };
 const directory = mkdtempSync(path.join(os.tmpdir(), 'hm-core-ui-'));
 app.setPath('userData', path.join(directory, 'electron'));
@@ -59,9 +59,9 @@ app.whenReady().then(async () => {
       reply.text = 'LEGACY-POISON'; reply.items = [{ kind: 'text', text: 'LEGACY-POISON' }];
       reply.at = 1; reply.endedAt = 9999999;
       await refresh();
-      await run(`check(!$('.message.assistant').textContent.includes('LEGACY-POISON'),'legacy content ignored');check($('.final-answer'),'Core final');check(!$('.turn-header.is-live'),'Core completed');check($('#taskStatus').textContent.includes('准备就绪'),'top status from Core');check($('#stop').hidden,'stop follows Core');check($('.turn-process'),'tool group');$('.turn-process summary').click();check($('.turn-process').open,'tool group opens');`);
+      await run(`check(!$('.message.assistant').textContent.includes('LEGACY-POISON'),'legacy content ignored');check($('.final-answer'),'Core final');check(!$('.turn-header.is-live'),'Core completed');check($('#taskStatus').textContent.includes('准备就绪'),'top status from Core');check($('#stop').hidden,'stop follows Core');check($('.turn-history'),'completed process');$('.turn-history summary').click();check($('.turn-history').open,'completed process opens');`);
       await refresh();
-      await run(`check($('.turn-process').open,'disclosure preserved');check(document.documentElement.scrollWidth<=innerWidth,'desktop width');`);
+      await run(`check($('.turn-history').open,'disclosure preserved');check(document.documentElement.scrollWidth<=innerWidth,'desktop width');`);
       await run(`check($('#tabs [aria-selected="true"]').textContent.includes('${harnessId}'),'selected harness');await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);
       await sleep(200);
       await fs.writeFile(`output/playwright/core-${harnessId}.png`, (await win.webContents.capturePage()).toPNG());
@@ -86,11 +86,11 @@ app.whenReady().then(async () => {
     await refresh();
     const messageId = thread.messages.at(-1).id;
     await run(`const review=await window.harnessMix.review({threadId:'${thread.id}',messageId:'${messageId}'});check(review.files.some(f=>f.type==='file_change'&&f.path==='core-ui.txt'),'Core FileChange IPC');`);
-    await run(`check([...document.querySelectorAll('.turn-header')].at(-1).textContent.includes('已停止'),'Core cancelled');`);
+    await run(`check([...document.querySelectorAll('.turn-history')].at(-1).textContent.includes('已停止'),'Core cancelled');`);
     await run(`await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);
     await fs.writeFile('output/playwright/core-services.png', (await win.webContents.capturePage()).toPNG());
     await win.reload(); await sleep(300);
-    await run(`$('[data-thread="${thread.id}"]').click();check([...document.querySelectorAll('.turn-header')].at(-1).textContent.includes('已停止'),'reload preserves Core');`);
+    await run(`$('[data-thread="${thread.id}"]').click();check([...document.querySelectorAll('.turn-history')].at(-1).textContent.includes('已停止'),'reload preserves Core');`);
     console.log('core-renderer: waiting, cancelled, reload and layout passed');
   } catch (error) { console.error(error); process.exitCode = 1; }
   finally { await terminal?.close(); await rt?.close(); win?.destroy(); app.exit(process.exitCode ?? 0); }

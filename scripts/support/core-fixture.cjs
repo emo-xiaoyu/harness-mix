@@ -9,7 +9,9 @@ function coreFixture(input) {
     if (message.role !== 'assistant') continue;
     const id = `fixture_${thread.id}_${message.id ?? index}`;
     const turn = createTurn({ id, threadId: thread.id }, message.at ?? 1000);
-    Object.assign(turn, { status: message.streaming ? 'running' : 'completed', startedAt: message.at ?? 1000, completedAt: message.streaming ? null : message.endedAt ?? 2000 });
+    const status = message.streaming ? 'running' : message.stopReason === 'cancelled' ? 'cancelled'
+      : message.stopReason === 'error' ? 'error' : message.stopReason === 'interrupted' ? 'interrupted' : 'completed';
+    Object.assign(turn, { status, startedAt: message.at ?? 1000, completedAt: message.streaming ? null : message.endedAt ?? 2000 });
     const ordered = message.items ?? [{ kind: 'text', text: message.text }];
     const result = ordered.map((part, n) => {
       const tool = part.kind === 'tool' ? thread.tools.find(t => t.id === part.toolId) : {};

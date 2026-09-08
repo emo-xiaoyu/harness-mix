@@ -14,14 +14,12 @@ const dsh = require('../src/main/adapters/dsh');
 const PROJECTORS = {
   pi: (event) => pi.project(event),
   claude: (event) => claude.projectEvent(event),
-  dsh: (event) => dsh.projectNotification(event),
+  dsh: (event) => dsh.projectWireEvent(event),
 };
 // Adapter 在原生流之外自行合成的事件（§replay 边界诚实声明）：
-// - dsh：ACP session/prompt resolve 即 completed
-// - cancel 场景：runtime.cancel() 直接结算为 cancelled
+// - cancel 场景：runtime.cancel() 直接结算为 cancelled（DSH turn/end interrupted 同为原生结算）
 function syntheticTail(harnessId, label) {
   if (label === 'cancel') return [{ kind: 'completed', stopReason: 'cancelled' }];
-  if (harnessId === 'dsh') return [{ kind: 'completed', finalAnswer: true }];
   return [];
 }
 
