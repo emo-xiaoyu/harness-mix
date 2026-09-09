@@ -11,9 +11,10 @@ async function main() {
   const runtime = new HostRuntime({ dataDirectory: path.join(root, 'data') });
   await runtime.store.load();
   let emit;
+  const emits = [];
   const answers = [];
   const adapter = { manifest: { id: 'pi', name: 'Pi', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true } },
-    async open(input) { emit = input.emit; return {}; },
+    async open(input) { emits.push(input.emit); emit = input.emit; return {}; },
     async describe() { return { models: [{ id: 'demo', name: 'Demo', provider: 'test' }], thinkingLevels: [], permissionModes: [] }; },
     async send() {}, async cancel() {}, async close() {},
     async respond(session, id, answer) { answers.push({ id, answer }); } };
@@ -29,6 +30,17 @@ async function main() {
     schemas.harnessPluginListResultSchema.parse(await bridge.request('codexhost/harness/plugins/list'));
     const started = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
     const threadId = started.thread.id;
+    // Desktop draft prewarm: ephemeral threads project as ephemeral and stay out of the sidebar;
+    // the first real turn materializes them.
+    const prewarmed = await bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true });
+    assert.equal(prewarmed.thread.ephemeral, true, 'Prewarm thread projects as ephemeral');
+    await bridge.request('turn/start', { threadId: prewarmed.thread.id, input: [{ type: 'text', text: 'real input' }] });
+    assert.equal(runtime.threads.find(t => t.id === prewarmed.thread.id).ephemeral, undefined, 'First real input materializes the thread');
+    const materialized = await bridge.request('thread/read', { threadId: prewarmed.thread.id });
+    assert.equal(materialized.thread.ephemeral, false, 'Materialized thread projects as persistent');
+    await bridge.request('turn/interrupt', { threadId: prewarmed.thread.id });
+    await wait(() => !runtime.threads.find(t => t.id === prewarmed.thread.id).reviewPending);
+    emit = emits[0]; // 恢复主线程的事件源（open 顺序：主线程序，预热线程后）
     schemas.threadInspectionSchema.parse(await bridge.request('codexhost/thread/inspect', { threadId }));
     const turn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'test' }] });
     assert.ok(runtime.core.getTurn(turn.turn.id), 'Native turn IDs come from the existing ProtocolCore');
@@ -48,20 +60,20 @@ async function main() {
     assert.equal(answers[1].answer.value, 'Alice');
     emit({ kind: 'file-change', changes: [{ path: 'a.txt', changeType: 'added', before: '', after: 'hello', complete: true }] });
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads[0].reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
     assert.equal(events.filter(e => e.method === 'item/agentMessage/delta').map(e => e.params.delta).join(''), 'hello world');
     assert.ok(events.some(e => e.method === 'item/completed' && e.params.item.type === 'mcpToolCall'));
     assert.ok(events.some(e => e.method === 'turn/diff/updated' && e.params.diff.includes('a.txt')));
-    assert.equal(events.filter(e => e.method === 'turn/completed').length, 1);
+    assert.equal(events.filter(e => e.method === 'turn/completed' && e.params.threadId === threadId).length, 1);
     const history = await bridge.request('thread/read', { threadId });
     assert.equal(history.thread.turns[0].status, 'completed');
     await bridge.request('thread/name/set', { threadId, name: 'Local Core' });
     await bridge.request('thread/archive', { threadId });
-    assert.equal(runtime.threads[0].archived, true);
+    assert.equal(runtime.threads.find(t => t.id === threadId).archived, true);
     await bridge.request('thread/unarchive', { threadId });
     await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'cancel' }] });
     await bridge.request('turn/interrupt', { threadId });
-    await wait(() => !runtime.threads[0].reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
     assert.equal(events.filter(e => e.method === 'turn/completed').at(-1).params.turn.status, 'interrupted');
     // External steering: cancel the active Turn, settle, then start a real new Turn.
     const stale = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'first' }] });
@@ -74,15 +86,15 @@ async function main() {
     assert.equal(replay.turnId, steered.turnId, 'Identical retry returns the delivery receipt');
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'other', clientUserMessageId: 'msg-1', input: [{ type: 'text', text: 'changed' }] }), /Conflicting/, 'Same message ID with different payload is rejected');
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads[0].reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
     await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'second' }] });
-    const current = runtime.threads[0].currentTurn.id;
+    const current = runtime.threads.find(t => t.id === threadId).currentTurn.id;
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'wrong-turn', input: [{ type: 'text', text: 'x' }] }), /no longer matches/, 'Stale target is not guessed');
-    assert.ok(runtime.execution.isRunning(threadId) && runtime.threads[0].currentTurn.id === current, 'Stale steering never cancels the running Turn');
+    assert.ok(runtime.execution.isRunning(threadId) && runtime.threads.find(t => t.id === threadId).currentTurn.id === current, 'Stale steering never cancels the running Turn');
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads[0].reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
     assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex requests pass through');
-    console.log('PASS: local Core ownership, renderer schemas, streaming, tools, reject/input routing, diffs, history, rename/archive, cancellation and external steering');
+    console.log('PASS: local Core ownership, renderer schemas, streaming, tools, reject/input routing, diffs, history, rename/archive, cancellation, ephemeral prewarm and external steering');
   } finally { bridge.close(); await runtime.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -84,13 +84,15 @@ class HostRuntime {
     };
   }
 
-  async createThread({ harnessId, cwd, title, options }) {
+  async createThread({ harnessId, cwd, title, options, ephemeral }) {
     const adapter = this.#requireAdapter(harnessId);
     await this.#assertCwd(cwd);
     const thread = {
       id: randomUUID(), harnessId, title: title || "新任务", cwd,
       nativeSessionId: randomUUID(), status: "opening",
       messages: [], tools: [], pendingApprovals: [], createdAt: Date.now(), restore: false,
+      // Desktop 草稿预热线程：投影为 ephemeral，发送首轮消息时转正
+      ephemeral: ephemeral === true,
       options: options && typeof options === "object" ? {
         model: options.model?.id ? { id: String(options.model.id), name: String(options.model.name ?? options.model.id), provider: options.model.provider } : undefined,
         thinking: typeof options.thinking === "string" ? options.thinking : undefined,
@@ -132,6 +134,8 @@ class HostRuntime {
     const prepared = this.#prepareAttachments(thread, attachments);
     const typed = typeof text === "string" ? text.trim() : "";
     if (!typed && !prepared.images.length && !prepared.texts.length) throw new Error("请输入消息");
+    // 首个真实输入让预热（ephemeral）线程转正为持久会话
+    if (thread.ephemeral) delete thread.ephemeral;
     const session = await this.#ensureOpen(thread);
     if (!session) throw Error(thread.error ?? '原生会话未连接');
     if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && (this.execution.isRunning(t.id) || t.reviewPending))) throw Error('同一项目已有任务执行或结算中，请等待完成以避免审查记录混入其他任务');

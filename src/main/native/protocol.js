@@ -83,7 +83,7 @@ class NativeProtocol {
     items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) }; }
   projectThread(thread, includeTurns = true) {
     return { id: thread.id, preview: thread.messages.find(m => m.role === 'user')?.text || thread.title,
-      ephemeral: false, modelProvider: 'harness-mix', createdAt: Math.floor(thread.createdAt / 1000),
+      ephemeral: thread.ephemeral === true, modelProvider: 'harness-mix', createdAt: Math.floor(thread.createdAt / 1000),
       updatedAt: Math.floor((thread.updatedAt || thread.createdAt) / 1000), status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
       path: null, cwd: thread.cwd, cliVersion: 'harness-mix', source: 'appServer', name: thread.title,
       agentNickname: null, agentRole: null, gitInfo: null,
@@ -152,7 +152,7 @@ class NativeProtocol {
       if (!route) return undefined;
       const id = ALIASES[route.harnessId] || route.harnessId;
       if (!this.runtime.adapters.has(id)) throw new Error(`Unsupported Harness: ${id}`);
-      const created = await this.runtime.createThread({ harnessId: id, cwd: params.cwd, options: {
+      const created = await this.runtime.createThread({ harnessId: id, cwd: params.cwd, ephemeral: params.ephemeral === true, options: {
         model: await this.resolveModel(id, route.model), thinking: route.thinkingOptionId, permissionMode: route.permissionModeId } });
       if (created.error) throw new Error(created.error);
       const result = { thread: this.projectThread(created), model: params.model, modelProvider: 'harness-mix', cwd: created.cwd,
