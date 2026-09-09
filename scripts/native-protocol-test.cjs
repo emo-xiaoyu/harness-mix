@@ -63,9 +63,26 @@ async function main() {
     await bridge.request('turn/interrupt', { threadId });
     await wait(() => !runtime.threads[0].reviewPending);
     assert.equal(events.filter(e => e.method === 'turn/completed').at(-1).params.turn.status, 'interrupted');
-    await assert.rejects(bridge.request('turn/steer', { threadId }), /does not support/);
+    // External steering: cancel the active Turn, settle, then start a real new Turn.
+    const stale = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'first' }] });
+    await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: stale.turn.id, input: [] }), /non-empty text/, 'Invalid input is rejected before cancelling');
+    assert.ok(runtime.execution.isRunning(threadId), 'Rejected steering leaves the active Turn running');
+    const steered = await bridge.request('turn/steer', { threadId, expectedTurnId: stale.turn.id, clientUserMessageId: 'msg-1', input: [{ type: 'text', text: 'redirect' }] });
+    assert.ok(steered.turnId && steered.turnId !== stale.turn.id, 'Steering allocates a real new Turn identity');
+    assert.equal(runtime.core.getTurn(stale.turn.id).status, 'cancelled', 'Old Turn was cancelled');
+    const replay = await bridge.request('turn/steer', { threadId, expectedTurnId: stale.turn.id, clientUserMessageId: 'msg-1', input: [{ type: 'text', text: 'redirect' }] });
+    assert.equal(replay.turnId, steered.turnId, 'Identical retry returns the delivery receipt');
+    await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'other', clientUserMessageId: 'msg-1', input: [{ type: 'text', text: 'changed' }] }), /Conflicting/, 'Same message ID with different payload is rejected');
+    emit({ kind: 'completed', finalAnswer: true });
+    await wait(() => !runtime.threads[0].reviewPending);
+    await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'second' }] });
+    const current = runtime.threads[0].currentTurn.id;
+    await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'wrong-turn', input: [{ type: 'text', text: 'x' }] }), /no longer matches/, 'Stale target is not guessed');
+    assert.ok(runtime.execution.isRunning(threadId) && runtime.threads[0].currentTurn.id === current, 'Stale steering never cancels the running Turn');
+    emit({ kind: 'completed', finalAnswer: true });
+    await wait(() => !runtime.threads[0].reviewPending);
     assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex requests pass through');
-    console.log('PASS: local Core ownership, renderer schemas, streaming, tools, reject/input routing, diffs, history, rename/archive and cancellation');
+    console.log('PASS: local Core ownership, renderer schemas, streaming, tools, reject/input routing, diffs, history, rename/archive, cancellation and external steering');
   } finally { bridge.close(); await runtime.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

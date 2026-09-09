@@ -78,6 +78,33 @@ async function main() {
       assert.equal(history.thread.id, threadId, 'External thread history is readable through native protocol');
       report.live = { harnessId, threadId, turnId: turn.turn?.id, status: completed.params.turn.status, reply: finalReply || reply };
       report.checks.push(`real ${harnessId} turn through Shim and Desktop protocol`);
+      // Live external steering: a slow Turn is replaced mid-flight by turn/steer.
+      const slow = await request('turn/start', {
+        threadId, input: [{ type: 'text', text: 'Count from 1 to 30, one number per line. No commentary.' }],
+      });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const steered = await request('turn/steer', {
+        threadId,
+        expectedTurnId: slow.turn.id,
+        clientUserMessageId: `e2e-steer-${Date.now()}`,
+        input: [{ type: 'text', text: 'Reply with exactly HARNESS_MIX_STEER_OK. Do not use any tools.' }],
+      });
+      assert.ok(steered.turnId && steered.turnId !== slow.turn.id, 'Steering allocates a new Turn identity');
+      const steerDeadline = Date.now() + 120000;
+      while (Date.now() < steerDeadline && !events.some(event => event.method === 'turn/completed' && event.params?.turn?.id === steered.turnId)) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      const steerCompleted = events.find(event => event.method === 'turn/completed' && event.params?.turn?.id === steered.turnId);
+      assert.ok(steerCompleted, 'Steered turn completion projected');
+      const oldTurn = events.filter(event => event.method === 'turn/completed' && event.params?.turn?.id === slow.turn.id).at(-1);
+      assert.ok(oldTurn && ['interrupted', 'completed'].includes(oldTurn.params.turn.status), 'Replaced Turn reached a terminal state');
+      const steerReply = events.filter(event => event.method === 'item/agentMessage/delta' && event.params?.turnId === steered.turnId)
+        .map(event => event.params.delta || '').join('');
+      const steerFinal = events.filter(event => event.method === 'item/completed' && event.params?.turnId === steered.turnId && event.params?.item?.type === 'agentMessage')
+        .map(event => event.params.item.text || '').join('');
+      assert.ok(`${steerReply}${steerFinal}`.includes('HARNESS_MIX_STEER_OK'), 'Steered turn output contains the marker');
+      report.live.steer = { replacedTurnId: slow.turn.id, turnId: steered.turnId, replacedStatus: oldTurn.params.turn.status };
+      report.checks.push(`real ${harnessId} external steering through turn/steer`);
     }
     fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify(report, null, 2));
     console.log(`PASS: ${report.checks.join('; ')}\nReport: ${directory}`);
