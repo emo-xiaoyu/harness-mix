@@ -8,6 +8,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 #[cfg(windows)]
@@ -18,6 +19,69 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn read_trimmed(path: &Path) -> io::Result<String> {
     Ok(fs::read_to_string(path)?.trim().to_string())
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+// Invocation journal next to the exe: one JSON line on spawn, one on exit.
+// The desktop spawns this shim for every CLI call, so this is the ground
+// truth for which invocation fails and with what stderr.
+fn log_line(exe_dir: &Path, line: &str) {
+    let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(exe_dir.join("shim-invocations.log"))
+    else {
+        return;
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let _ = writeln!(file, "{{\"ts\":{ts},{line}}}");
+}
+
+fn log_spawn(exe_dir: &Path, mode: &str, args: &[String]) {
+    let args = args
+        .iter()
+        .map(|a| format!("\"{}\"", json_escape(a)))
+        .collect::<Vec<_>>()
+        .join(",");
+    log_line(
+        exe_dir,
+        &format!(
+            "\"pid\":{},\"mode\":\"{}\",\"args\":[{}]",
+            std::process::id(),
+            mode,
+            args
+        ),
+    );
+}
+
+fn log_exit(exe_dir: &Path, code: i32, stderr_tail: &[u8]) {
+    let tail = json_escape(&String::from_utf8_lossy(stderr_tail));
+    log_line(
+        exe_dir,
+        &format!(
+            "\"pid\":{},\"exit\":{},\"stderr_tail\":\"{}\"",
+            std::process::id(),
+            code,
+            tail
+        ),
+    );
 }
 
 fn setting(env_name: &str, file: &Path) -> io::Result<String> {
@@ -53,6 +117,7 @@ fn run() -> io::Result<i32> {
         &build_dir.join("stock-path.txt"),
     )?;
     let node = setting("HARNESS_MIX_NODE_PATH", &build_dir.join("node-path.txt"))?;
+    log_spawn(exe_dir, if server { "server" } else { "passthrough" }, &args);
 
     let mut command = if server {
         let mut command = Command::new(&node);
@@ -95,13 +160,40 @@ fn run() -> io::Result<i32> {
         drop(writer);
     });
     let output = pump(child_stdout, io::stdout());
-    let error = pump(child_stderr, io::stderr());
+    // Tee stderr: forward live and keep the tail for the invocation journal.
+    let tail = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let tail_writer = Arc::clone(&tail);
+    let error = thread::spawn(move || {
+        let mut reader = child_stderr;
+        let mut stderr = io::stderr();
+        let mut buffer = [0u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    let chunk = &buffer[..count];
+                    let _ = stderr.write_all(chunk);
+                    let _ = stderr.flush();
+                    if let Ok(mut tail) = tail_writer.lock() {
+                        tail.extend_from_slice(chunk);
+                        if tail.len() > 4096 {
+                            let excess = tail.len() - 4096;
+                            tail.drain(..excess);
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     let status = child.wait()?;
     let _ = output.join();
     let _ = error.join();
+    let code = status.code().unwrap_or(1);
+    let tail = tail.lock().map(|t| t.clone()).unwrap_or_default();
+    log_exit(&exe_dir, code, &tail);
     drop(input); // stdin may outlive the child; do not block exit on it.
-    Ok(status.code().unwrap_or(1))
+    Ok(code)
 }
 
 fn main() {
