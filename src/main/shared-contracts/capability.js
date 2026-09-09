@@ -1,7 +1,7 @@
 // Capability：UI/Core 判断功能的唯一依据，禁止按 Harness 名称分支。
 // 结构按域分组，默认全部为 false，由 Adapter Manifest 显式声明开启。
 const CAPABILITY_GROUPS = {
-  conversation: ['streaming', 'reasoning', 'plan', 'compaction'],
+  conversation: ['streaming', 'reasoning', 'plan', 'compaction', 'attachments'],
   interaction: ['approval', 'question', 'permissionMode'],
   session: ['resume', 'fork', 'forkFromMessage'],
   workspace: ['nativeDiff', 'nativePatch'],

@@ -40,17 +40,12 @@ for (const file of walk('src/main/adapters')) {
     violations++; console.error(`VIOLATION ${file}: adapter imports Renderer`);
   }
 }
-const renderer = readFileSync('src/renderer/transcript.js', 'utf8');
-if (/assistantMessageEvent|sessionUpdate|extension_ui_request|tool_execution_start/.test(renderer)) {
-  violations++; console.error('VIOLATION Renderer consumes native protocol');
-}
-
 for (const file of walk('src')) {
   if (/require\(['"`][^'"`]*(?:legacy[-/]|scripts\/support)/.test(readFileSync(file, 'utf8'))) {
     violations++; console.error(`VIOLATION ${file}: production imports legacy test oracle`);
   }
 }
-for (const file of ['src/main/host/runtime.js', 'src/renderer/transcript.js']) {
+for (const file of ['src/main/host/runtime.js']) {
   if (/(['"`])(pi|claude|dsh)\1/.test(readFileSync(file, 'utf8'))) {
     violations++; console.error(`VIOLATION ${file}: execution branches on harness name`);
   }

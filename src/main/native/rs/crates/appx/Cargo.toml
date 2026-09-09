@@ -1,0 +1,13 @@
+[package]
+name = "harness-mix-appx"
+version = "0.2.0"
+edition = "2021"
+description = "Harness Mix Windows AppX activation boundary (IApplicationActivationManager / IPackageDebugSettings)"
+license = "Apache-2.0"
+
+[[bin]]
+name = "harness-mix-appx"
+path = "src/main.rs"
+
+# Zero external dependencies: COM and kernel32 are declared by hand so the build
+# needs nothing beyond a stock Rust toolchain (no dlltool, no crates.io fetch).

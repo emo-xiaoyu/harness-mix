@@ -13,7 +13,7 @@ const manifest = {
   id: "pi",
   name: "Pi",
   icon: "pinumber1_80899.svg",
-  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true },
+  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
 /** Pi 的权限模型 = 项目信任（project trust）：启动时用 --approve / --no-approve 覆盖一次 */
@@ -110,8 +110,10 @@ function create(emit) {
       };
     },
 
-    async send(session, text) {
-      await session.process.command({ type: "prompt", message: text });
+    async send(session, text, _hooks, attachments) {
+      // 图片走 Pi RPC 原生 images 字段（base64）；文本附件由 Host 内联进 text
+      const images = (attachments?.images ?? []).map((a) => ({ type: 'image', data: a.data, mimeType: a.mime }));
+      await session.process.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
     },
 
     async cancel(session) {

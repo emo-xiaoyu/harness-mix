@@ -11,6 +11,7 @@ class CodexAppServer {
   constructor(diagnostic) {
     this.refs = 0;
     this.routes = new Map();
+    this.notifications = new Set();
     this.diagnostics = new Set(diagnostic ? [diagnostic] : []);
     this.closed = false;
     const { command, args } = cliSpawn('codex', ['app-server', '--stdio']);
@@ -62,6 +63,8 @@ class CodexAppServer {
 
   request(method, params) { return this.process.request(method, params); }
 
+  onNotification(listener) { this.notifications.add(listener); return () => this.notifications.delete(listener); }
+
   release() {
     this.refs = Math.max(0, this.refs - 1);
     if (this.refs === 0) this.stop();
@@ -71,6 +74,7 @@ class CodexAppServer {
     if (this.closed) return;
     this.closed = true;
     this.routes.clear();
+    this.notifications.clear();
     this.process.stop();
     if (shared === this) shared = undefined;
   }
@@ -81,6 +85,7 @@ class CodexAppServer {
   }
 
   #notification(message) {
+    for (const listener of this.notifications) listener(message);
     const route = this.#route(message);
     if (route) route.onEvent?.(message);
     else if (message?.method === 'warning' || message?.method === 'configWarning') {

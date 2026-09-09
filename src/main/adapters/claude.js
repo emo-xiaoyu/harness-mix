@@ -9,7 +9,7 @@ const manifest = {
   icon: "claude-color.svg",
   // 完整接入（对齐 codex-host）：官方 Agent SDK query() 常驻双向 stream-json 会话，
   // 审批/提问经 canUseTool 桥接回 Host，中断/模型/权限模式走原生控制协议。
-  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: false, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true },
+  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: false, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
 /** Claude Code 原生权限模式（SDK PermissionMode 全集），与其 TUI/Desktop 一致 */
@@ -266,13 +266,18 @@ function create() {
       });
     },
 
-    async send(session, text) {
+    async send(session, text, _hooks, attachments) {
       if (!session.query || session.state?.crashed) throw new Error("Claude 原生会话不可用");
+      // stream-json 原生内容块：text + base64 图片块；文本附件由 Host 内联进 text
+      const content = [
+        ...(text ? [{ type: "text", text }] : []),
+        ...(attachments?.images ?? []).map((a) => ({ type: "image", source: { type: "base64", media_type: a.mime, data: a.data } })),
+      ];
       await new Promise((resolve, reject) => {
         session.state.turn = { resolve, reject };
         session.input.push({
           type: "user",
-          message: { role: "user", content: [{ type: "text", text }] },
+          message: { role: "user", content },
           parent_tool_use_id: null,
         });
       });

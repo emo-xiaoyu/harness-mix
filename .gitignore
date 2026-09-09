@@ -3,3 +3,4 @@ data/
 *.log
 output/
 .learnings/
+src/main/native/rs/target/

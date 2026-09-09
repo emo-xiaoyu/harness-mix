@@ -119,24 +119,27 @@ class HostRuntime {
     const commands = await this.listCommands({ threadId });
     const command = commands.find(c => c.id === commandId && c.action === 'execute');
     if (!command) throw new Error('当前 Harness 不支持此指令');
-    await this.send(threadId, '/' + command.id, command.id);
+    await this.send(threadId, '/' + command.id, { commandId: command.id });
     await this.#refreshContextUsage(thread);
     await this.#save();
     this.#broadcast();
     if (thread.error) throw new Error(thread.error);
   }
 
-  async send(threadId, text, commandId) {
+  async send(threadId, text, { commandId, attachments } = {}) {
     const thread = this.#requireThread(threadId);
     if (this.execution.isRunning(thread.id)) throw new Error("任务正在执行，请先停止或等待完成");
-    if (typeof text !== "string" || !text.trim()) throw new Error("请输入消息");
+    const prepared = this.#prepareAttachments(thread, attachments);
+    const typed = typeof text === "string" ? text.trim() : "";
+    if (!typed && !prepared.images.length && !prepared.texts.length) throw new Error("请输入消息");
     const session = await this.#ensureOpen(thread);
     if (!session) throw Error(thread.error ?? '原生会话未连接');
     if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && (this.execution.isRunning(t.id) || t.reviewPending))) throw Error('同一项目已有任务执行或结算中，请等待完成以避免审查记录混入其他任务');
-    thread.messages.push({ id: randomUUID(), role: "user", text, at: Date.now() });
+    thread.messages.push({ id: randomUUID(), role: "user", text: text ?? '', at: Date.now(), ...(prepared.meta.length ? { attachments: prepared.meta } : {}) });
     thread.updatedAt = Date.now();
     delete thread.error;
-    this.execution.turnStarted(thread, text);
+    const promptText = this.#composePrompt(typed, prepared.texts);
+    this.execution.turnStarted(thread, promptText);
     const message = thread.messages.at(-1);
     this.observer?.turnStarted(thread, this.core);
     this.#syncCore(thread);
@@ -152,11 +155,44 @@ class HostRuntime {
     try {
       const hooks = { emit: (event) => this.#applyEvent({ threadId, event }) };
       if (commandId) await session.adapter.executeCommand(session, commandId, hooks);
-      else await session.adapter.send(session, text, hooks);
+      else await session.adapter.send(session, promptText, hooks, { images: prepared.images });
     } catch (error) {
       // 用户取消造成的 reject 已由 cancel() 结算，不再标错
       if (this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: "error", message: error.message } });
     }
+  }
+
+  /** 附件校验与分类：图片走各 Harness 原生协议（需 conversation.attachments 能力），文本文件由 Host 内联进 prompt */
+  #prepareAttachments(thread, attachments) {
+    const images = [], texts = [], meta = [];
+    if (!Array.isArray(attachments) || !attachments.length) return { images, texts, meta };
+    if (attachments.length > 6) throw new Error('一次最多携带 6 个附件');
+    const supportsImages = this.getCapabilities(thread.harnessId).conversation.attachments;
+    for (const attachment of attachments) {
+      if (!attachment || typeof attachment.name !== 'string') continue;
+      if (attachment.kind === 'image') {
+        if (!supportsImages) throw new Error(`${this.adapters.get(thread.harnessId)?.manifest.name ?? thread.harnessId} 的原生接口暂不支持图片附件`);
+        if (typeof attachment.data !== 'string' || !attachment.data) throw new Error(`附件「${attachment.name}」缺少内容`);
+        if (attachment.data.length > 14_000_000) throw new Error(`图片「${attachment.name}」超过 10MB 上限`);
+        images.push({ name: attachment.name, mime: typeof attachment.mime === 'string' ? attachment.mime : 'image/png', data: attachment.data });
+        // 小图片随消息持久化以便回放缩略图；大图片只留元数据（原生会话侧仍保留完整内容）
+        meta.push({ kind: 'image', name: attachment.name, mime: attachment.mime, size: attachment.size, ...(attachment.data.length <= 800_000 ? { data: attachment.data } : {}) });
+      } else if (attachment.kind === 'text') {
+        if (typeof attachment.text !== 'string') throw new Error(`附件「${attachment.name}」缺少内容`);
+        texts.push({ name: attachment.name, path: attachment.path, text: attachment.text.slice(0, 200_000) });
+        meta.push({ kind: 'text', name: attachment.name, size: attachment.size });
+      } else {
+        throw new Error(`附件「${attachment.name}」类型不支持（仅支持图片与文本文件）`);
+      }
+    }
+    return { images, texts, meta };
+  }
+
+  /** 文本附件内联为模型可见的 prompt 上下文；图片不经文本通道 */
+  #composePrompt(text, texts) {
+    let prompt = text;
+    for (const file of texts) prompt += `${prompt ? '\n\n' : ''}附件文件 ${file.path ?? file.name} 的内容：\n\`\`\`\n${file.text}\n\`\`\``;
+    return prompt;
   }
 
   async cancel(threadId) {
@@ -279,6 +315,20 @@ class HostRuntime {
   }
 
   /** 删除任务：关闭原生会话进程并移除记录（原生会话文件保留在 Harness 侧） */
+  async renameThread(threadId, title) {
+    if (typeof title !== 'string' || !title.trim()) throw new Error('任务标题不能为空');
+    const thread = this.#requireThread(threadId);
+    thread.title = title.trim();
+    await this.#save(); this.#broadcast();
+  }
+
+  async setThreadArchived(threadId, archived) {
+    const thread = this.#requireThread(threadId);
+    if (this.execution.isRunning(thread.id)) throw new Error('任务执行中，不能归档');
+    thread.archived = Boolean(archived);
+    await this.#save(); this.#broadcast();
+  }
+
   async removeThread(threadId) {
     const thread = this.#requireThread(threadId);
     const session = this.sessions.get(threadId);

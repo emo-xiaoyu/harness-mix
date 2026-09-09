@@ -12,7 +12,7 @@ const manifest = {
     approvals: true, questions: true, models: true, thinkingLevels: true,
     permissionModes: true, resume: true, fork: true, forkFromMessage: true,
     compaction: true, nativeDiff: true, nativePatch: true,
-    usage: true, contextUsage: true, cost: false,
+    usage: true, contextUsage: true, cost: false, attachments: true,
   },
 };
 
@@ -350,15 +350,20 @@ function create() {
       }
     },
 
-    async send(session, prompt) {
+    async send(session, prompt, _hooks, attachments) {
       if (session.state.turn) throw new Error('Codex 当前回合尚未结束');
       session.state.itemText.clear();
       session.state.reasoningItems.clear();
       const settled = new Promise((resolve, reject) => { session.state.turn = { resolve, reject }; });
       try {
+        // UserInput 原生项：text + image（data URL）；文本附件由 Host 内联进 prompt
+        const input = [
+          ...(prompt ? [{ type: 'text', text: prompt }] : []),
+          ...(attachments?.images ?? []).map((a) => ({ type: 'image', url: `data:${a.mime};base64,${a.data}` })),
+        ];
         const result = await session.host.request('turn/start', {
           threadId: session.nativeSessionId,
-          input: [{ type: 'text', text: prompt }],
+          input,
           ...(session.model?.id ? { model: session.model.id } : {}),
           ...(session.state.effort ? { effort: session.state.effort } : {}),
         });

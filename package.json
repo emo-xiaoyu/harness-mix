@@ -3,10 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "An independent desktop shell for native coding harnesses (Codex / Pi / Claude Code / DeepSeek Harness).",
-  "main": "src/main/main.js",
+  "description": "Harness Mix native Codex UI bridge — local HostRuntime/ProtocolCore kernel driving Pi, Claude Code, DeepSeek Harness, Antigravity and Codex inside the official Codex Desktop.",
+  "engines": {
+    "node": ">=22.19.0 <23 || >=24 <25"
+  },
   "scripts": {
-    "start": "electron .",
+    "build:native": "node scripts/build-native.cjs",
+    "test:native-protocol": "node scripts/native-protocol-test.cjs",
+    "smoke:native-ui": "electron scripts/native-ui-smoke.cjs",
+    "start": "node scripts/launch-codex.cjs",
+    "check:native": "node scripts/launch-codex.cjs --check",
+    "test:native-config": "node scripts/native-config-test.cjs",
+    "e2e:native": "node scripts/e2e-native-host.cjs",
+    "e2e:native:pi": "node scripts/e2e-native-host.cjs --live --harness=pi",
+    "e2e:native:dsh": "node scripts/e2e-native-host.cjs --live --harness=deepseek-harness",
+    "e2e:native:claude": "node scripts/e2e-native-host.cjs --live --harness=claude-code",
+    "start:codex": "node scripts/launch-codex.cjs",
     "check": "node scripts/check.cjs",
     "test:contracts": "node scripts/contracts-test.cjs",
     "test:projector": "node scripts/projector-test.cjs",
@@ -18,12 +30,11 @@
     "test:adapters": "node scripts/adapters-test.cjs",
     "test:dsh-adapter": "node scripts/dsh-adapter-test.cjs",
     "test:codex-adapter": "node scripts/codex-adapter-test.cjs",
-    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs",
+    "test:antigravity-adapter": "node scripts/antigravity-adapter-test.cjs",
+    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
     "test:git": "node scripts/git-test.cjs",
-    "smoke:workbench": "electron scripts/workbench-smoke.cjs",
-    "smoke": "electron scripts/ui-smoke.cjs",
     "e2e:pi": "node scripts/e2e-pi.cjs",
     "e2e:shadow-pi": "node scripts/e2e-shadow.cjs pi",
     "e2e:shadow-claude": "node scripts/e2e-shadow.cjs claude",
@@ -32,7 +43,6 @@
     "e2e:codex": "node scripts/e2e-codex.cjs",
     "test:determinism": "node scripts/determinism-test.cjs",
     "test:core-runtime": "node scripts/core-runtime-test.cjs",
-    "smoke:core": "electron scripts/core-renderer-smoke.cjs",
     "e2e:core-pi": "node scripts/e2e-core-resume.cjs pi",
     "e2e:core-claude": "node scripts/e2e-core-resume.cjs claude",
     "e2e:core-dsh": "node scripts/e2e-core-resume.cjs dsh",
@@ -45,12 +55,17 @@
     "test:native-files": "node scripts/native-file-change-test.cjs",
     "e2e:core-files": "node scripts/e2e-core-files.cjs",
     "e2e:claude": "node scripts/e2e-core-resume.cjs claude",
-    "smoke:app": "electron scripts/app-lifecycle-smoke.cjs"
+    "update": "node scripts/launch-codex.cjs --update",
+    "test:native-updater": "node scripts/native-updater-test.cjs"
   },
   "devDependencies": {
-    "electron": "^43.3.0"
+    "electron": "^43.3.0",
+    "esbuild": "0.28.1"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.263"
+    "@anthropic-ai/claude-agent-sdk": "0.3.263",
+    "@deepseek-ai/dsh": "0.1.2-rc.1",
+    "lucide": "1.28.0",
+    "zod": "4.4.3"
   }
 }

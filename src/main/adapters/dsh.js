@@ -10,7 +10,7 @@ const manifest = {
   icon: "deepseek-color.svg",
   // 完整接入（对齐 codex-host）：官方 Web Remote 协议（Typert RPC + remote.mux 流），
   // 审批/提问走 $events waterfall 原生应答；ACP 自动化面（无 fork/提问/plan）已弃用。
-  capabilities: { plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true },
+  capabilities: { plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
 const MAX_TOOL_TEXT = 24_000;
@@ -288,14 +288,18 @@ function create() {
       return session;
     },
 
-    async send(session, text, hooks) {
+    async send(session, text, hooks, attachments) {
       // 官方 slash 命令通道：/compact 由 commands/execute 原生执行（同 DSH Web UI），不进模型
       if (text.trim() === "/compact" && hooks?.emit) return this.executeCommand(session, "compact", hooks);
-      // Web Remote：prompt 立即 accepted；回合结算以 turn/end 事件为准
+      // Web Remote：prompt 立即 accepted；回合结算以 turn/end 事件为准；图片走原生 PromptContentPart
+      const content = [
+        ...(text ? [{ type: "text", text }] : []),
+        ...(attachments?.images ?? []).map((a) => ({ type: "image", mediaType: a.mime, data: a.data, name: a.name })),
+      ];
       await new Promise((resolve, reject) => {
         session.state.turn = { resolve, reject };
         session.host.call("session/prompt", {
-          request: { requestId: randomUUID(), sessionId: session.nativeSessionId, mode: "queue", content: [{ type: "text", text }] },
+          request: { requestId: randomUUID(), sessionId: session.nativeSessionId, mode: "queue", content },
         }).catch((error) => {
           session.state.turn = null;
           reject(error);
