@@ -73,6 +73,8 @@ class NativeProtocol {
     this.emit = emit;
     this.approvals = new Map();
     this.published = new Map();
+    this.steering = new Map();      // threadId -> in-flight steer promise
+    this.steerReceipts = new Map(); // `${threadId}\0${clientUserMessageId}` -> bounded delivery receipt
     this.unsubscribe = runtime.core.subscribe(({ event, projected }) => this.onCore(event, projected));
   }
   thread(id) { return this.runtime.threads.find(t => t.id === id); }
@@ -168,14 +170,28 @@ class NativeProtocol {
       const unsupported = (params.input || []).filter(i => i.type !== 'text');
       if (unsupported.length) throw new Error('Native bridge currently accepts text input only');
       const text = (params.input || []).map(i => i.text).join('\n');
-      const before = thread.currentTurn?.id;
-      let failure;
-      const running = this.runtime.send(thread.id, text).catch(error => { failure = error; });
-      for (let attempt = 0; attempt < 600 && thread.currentTurn?.id === before && !failure; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (failure) throw failure;
-      if (!thread.currentTurn || thread.currentTurn.id === before) throw new Error('Native turn did not start');
-      void running;
-      return { turn: this.turn(thread.currentTurn) };
+      return { turn: this.turn(await this.startNativeTurn(thread, text)) };
+    }
+    // External steering: cancel the active Turn, wait for it to fully settle, then start
+    // the new input as a real new Turn. Never guess a stale target, never auto-start on
+    // failure, and never let a concurrent start race the replacement.
+    if (method === 'turn/steer') {
+      const input = Array.isArray(params.input) ? params.input : [];
+      // Reject before touching the active Turn; nothing is silently dropped mid-flight.
+      if (!input.length || input.some(i => i.type !== 'text' || typeof i.text !== 'string')) {
+        throw new Error('Native steering currently accepts non-empty text input only');
+      }
+      const text = input.map(i => i.text).join('\n');
+      if (!text.trim()) throw new Error('Native steering currently accepts non-empty text input only');
+      const expectedTurnId = params.expectedTurnId;
+      if (typeof expectedTurnId !== 'string' || !expectedTurnId) throw new Error('Native steering requires the active Turn identity');
+      return this.steerThread(thread, {
+        expectedTurnId,
+        text,
+        messageKey: typeof params.clientUserMessageId === 'string' && params.clientUserMessageId
+          ? `${thread.id}\0${params.clientUserMessageId}` : null,
+        fingerprint: JSON.stringify({ expectedTurnId, input }),
+      });
     }
     if (method === 'turn/interrupt') { await this.runtime.cancel(thread.id); return {}; }
     if (method === 'thread/name/set') { await this.runtime.renameThread(thread.id, params.name); return {}; }
@@ -225,6 +241,61 @@ class NativeProtocol {
       }
     }
     if (event.type.startsWith('turn.') && projected.turn && terminal(projected.turn.status)) notify('turn/completed', { turn: this.turn(projected.turn) });
+  }
+  async startNativeTurn(thread, text) {
+    const before = thread.currentTurn?.id;
+    let failure;
+    const running = this.runtime.send(thread.id, text).catch(error => { failure = error; });
+    for (let attempt = 0; attempt < 600 && thread.currentTurn?.id === before && !failure; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+    if (failure) throw failure;
+    if (!thread.currentTurn || thread.currentTurn.id === before) throw new Error('Native turn did not start');
+    void running;
+    return thread.currentTurn;
+  }
+  async steerThread(thread, { expectedTurnId, text, messageKey, fingerprint }) {
+    if (messageKey) {
+      const receipt = this.steerReceipts.get(messageKey);
+      // Outcome-unknown retry: identical payload returns the original receipt; a
+      // conflicting payload under the same message identity is rejected.
+      if (receipt) {
+        if (receipt.fingerprint !== fingerprint) throw new Error('Conflicting steering payload for the same message');
+        return { turnId: await receipt.promise };
+      }
+    }
+    if (this.steering.has(thread.id)) throw new Error('This Thread is already changing direction');
+    const work = this.steerExclusive(thread, expectedTurnId, text);
+    this.steering.set(thread.id, work);
+    if (messageKey) {
+      if (this.steerReceipts.size >= 200) this.steerReceipts.delete(this.steerReceipts.keys().next().value);
+      this.steerReceipts.set(messageKey, { fingerprint, promise: work });
+    }
+    try {
+      return { turnId: await work };
+    } finally {
+      this.steering.delete(thread.id);
+    }
+  }
+  async steerExclusive(thread, expectedTurnId, text) {
+    const active = this.runtime.execution.isRunning(thread.id) ? thread.currentTurn : null;
+    if (active) {
+      if (active.id !== expectedTurnId) throw new Error('The active Turn no longer matches the steering target');
+      await this.runtime.cancel(thread.id);
+      // Cancel settles synchronously in Core, but the acknowledgement is not completion:
+      // the replacement waits until the old Turn is fully terminal and the file-review
+      // snapshot has settled (≤20s, shorter than the Desktop submission timeout).
+      const settled = () => !this.runtime.execution.isRunning(thread.id) && !thread.reviewPending;
+      const deadline = Date.now() + 20_000;
+      while (!settled() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!settled()) throw new Error('Timed out waiting for the previous Turn to settle');
+    } else {
+      const last = thread.currentTurn;
+      // A later Turn already exists, or the target was never this Thread's last Turn: stale.
+      if (last && last.id !== expectedTurnId) throw new Error('The active Turn no longer matches the steering target');
+    }
+    // If a native Turn started on its own in the meantime, send() refuses and the new
+    // Turn is left running; a failed replacement never cancels unexpected work.
+    const started = await this.startNativeTurn(thread, text);
+    return started.id;
   }
   async respond(message) {
     const pending = this.approvals.get(message.id);

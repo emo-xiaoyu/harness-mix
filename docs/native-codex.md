@@ -14,6 +14,8 @@ Codex Desktop 原生输入框 / Harness 选择器
   → Codex Desktop 原生流式文本、工具、审批和 Diff 组件
 ```
 
+外部 Thread 支持「调整方向」：会话运行中发送新消息会取消当前 Turn、等待其完全终结（含文件快照结算），再将新输入作为独立新 Turn 启动；超时、目标过期或并发冲突一律失败，绝不自动启动非预期 Turn。
+
 这是完全内化于本项目的自研自建架构：
 - **无上游 npm 依赖**：Launcher、Shim、Host Runtime 与 Renderer 扩展源码均维护在本项目（`src/main/native` 与 `src/native-ui`），不依赖任何上游 npm 包。
 - **内核 100% 属于 Harness Mix**：由本项目的 `HostRuntime`、`ProtocolCore` 与原生适配器（`src/main/adapters`）直接管理会话生命周期、模型调用、多轮对话、交互审批与文件差异。
