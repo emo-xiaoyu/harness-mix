@@ -7,7 +7,7 @@ const { CAPABILITY_GROUPS, createCapabilities } = require('../shared-contracts')
 const MANIFEST_CAPABILITY_FLAGS = [
   'streaming', 'thinking', 'tools', 'approvals', 'questions', 'models',
   'plan', 'nativeDiff', 'nativePatch', 'cost', 'compaction',
-  'thinkingLevels', 'permissionModes', 'resume', 'fork', 'forkFromMessage', 'usage', 'contextUsage',
+  'thinkingLevels', 'permissionModes', 'resume', 'fork', 'forkFromMessage', 'usage', 'contextUsage', 'attachments',
 ];
 
 function validateManifest(manifest) {
@@ -31,7 +31,7 @@ function validateManifest(manifest) {
 /** 扁平 flags → §22 分组结构（Core Capability Manager 的消费形态） */
 function normalizeCapabilities(caps = {}) {
   return createCapabilities({
-    conversation: { streaming: caps.streaming === true, reasoning: caps.thinking === true, plan: caps.plan === true, compaction: caps.compaction === true },
+    conversation: { streaming: caps.streaming === true, reasoning: caps.thinking === true, plan: caps.plan === true, compaction: caps.compaction === true, attachments: caps.attachments === true },
     interaction: { approval: caps.approvals === true, question: caps.questions === true, permissionMode: caps.permissionModes === true },
     workspace: { nativeDiff: caps.nativeDiff === true, nativePatch: caps.nativePatch === true },
     session: { resume: caps.resume === true, fork: caps.fork === true, forkFromMessage: caps.fork === true && caps.forkFromMessage === true },

@@ -16,25 +16,33 @@ const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || "E:\\dsh\\deepseek-harness"
 class DshWebHost {
   static #shared = null;
   static #refs = 0;
+  static #starting = null;
+  static #stopping = null;
 
   /** 获取共享宿主（必要时拉起）。配对调用 release()。 */
   static async acquire(diagnostic = () => {}) {
-    if (DshWebHost.#shared) {
-      DshWebHost.#refs++;
-      return DshWebHost.#shared;
+    if (DshWebHost.#stopping) await DshWebHost.#stopping;
+    if (!DshWebHost.#shared && !DshWebHost.#starting) {
+      DshWebHost.#starting = (async () => {
+        const host = new DshWebHost(diagnostic);
+        try { await host.#start(); DshWebHost.#shared = host; }
+        catch (error) { await host.stop(); throw error; }
+      })().finally(() => { DshWebHost.#starting = null; });
     }
-    const host = new DshWebHost(diagnostic);
-    await host.#start();
-    DshWebHost.#shared = host;
-    DshWebHost.#refs = 1;
-    return host;
+    if (DshWebHost.#starting) await DshWebHost.#starting;
+    DshWebHost.#refs++;
+    return DshWebHost.#shared;
   }
 
   static async release() {
     DshWebHost.#refs = Math.max(0, DshWebHost.#refs - 1);
     if (DshWebHost.#refs === 0 && DshWebHost.#shared) {
-      await DshWebHost.#shared.stop();
+      const host = DshWebHost.#shared;
       DshWebHost.#shared = null;
+      const stopping = host.stop();
+      DshWebHost.#stopping = stopping;
+      try { await stopping; }
+      finally { if (DshWebHost.#stopping === stopping) DshWebHost.#stopping = null; }
     }
   }
 

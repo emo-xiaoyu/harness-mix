@@ -1,36 +1,38 @@
 # Harness Mix
 
 <p align="center">
-  <img src="src/renderer/brand-harness-mix.png" width="92" alt="Harness Mix logo">
+  <img src="src/assets/brand-harness-mix.png" width="92" alt="Harness Mix logo">
 </p>
 
-<p align="center"><strong>一个工作台，连接多个原生 Coding Harness。</strong></p>
+<p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness。</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <img alt="Electron" src="https://img.shields.io/badge/desktop-Electron-47848F.svg">
+  <img alt="UI" src="https://img.shields.io/badge/UI-Codex%20Desktop-412991.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
 </p>
 
-Harness Mix 是一个独立的 Electron 桌面应用，把 Codex、Pi、Claude Code 和 DeepSeek Harness 放进同一个项目工作台。每个 Harness 仍通过自己的原生协议运行，并继续拥有会话、模型调用、工具、权限和凭据；Harness Mix 负责桌面交互、任务编排和统一事件投影。
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核：通过本地编译的 CLI Shim 接管桌面的 app-server 协议，把 Pi、Claude Code、DeepSeek Harness、Antigravity 和 Codex 统一进同一套原生 UI。会话生命周期、模型调用、多轮对话、审批与文件差异全部由本仓库的 Host Runtime + Protocol Core + 原生适配器管理；凭据与权限决定仍属于各原生 Harness。
 
 ![Harness Mix 首页](docs/images/harness-mix-home.png)
 
 ## 能做什么
 
-- 在项目下组织、恢复、置顶、编辑、移除和 Fork 会话。
+- 在 Codex Desktop 原生输入框中选择 Harness 并发起会话。
 - 流式呈现回答、思考、命令执行、工具调用、文件变更和上下文压缩。
 - 调用每个 Harness 原生提供的模型、权限、上下文用量和快捷指令。
-- 在任务运行期间查看文件 Diff、Git 状态和终端输出。
-- 将审批与提问送回原生 Harness，不代替用户作出权限决定。
-- 通过 Adapter 注册新 Harness，Renderer 无需理解厂商协议。
+- 原生 Diff、审批与提问组件直接渲染，审批路由回原生 Harness，不代替用户作出权限决定。
+- 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
 
 ![Harness Mix 会话](docs/images/harness-mix-session.png)
 
 ## 原生接入
 
+通过 Codex Desktop 内的 Harness 选择器统一查看连接、筛选模型和保存每个 Harness 的新对话默认模型。具体流程与原生边界见 [Harness 管理说明](docs/harness-management.md)。
+
 | Harness | 原生接口 | 当前接入重点 |
 | --- | --- | --- |
+| Antigravity | `agy` CLI (`stream-json` / PreToolUse Hook) | 流式输出、Gemini 模型目录与思考档位、Desktop 审批与提问桥接、文件变更、配额查询与 Fork |
 | Codex | `codex app-server --stdio` | Thread / Turn / Item、流式事件、审批、Usage、Resume、Fork、Compact |
 | Pi | `pi --mode rpc` | 会话恢复、模型目录、Usage、原生命令、Fork |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` 的 `query()` | 持久会话、流式消息、工具、权限、模型与 Resume |
@@ -42,11 +44,13 @@ Harness Mix 是一个独立的 Electron 桌面应用，把 Codex、Pi、Claude C
 
 ```mermaid
 flowchart TB
-  UI[Electron Renderer] --> IPC[Preload IPC whitelist]
-  IPC --> Runtime[Host Runtime]
+  Desktop[Codex Desktop 原生 UI] --> Shim[Harness Mix CLI Shim]
+  Shim --> Host[原生 Host 入口 src/main/native]
+  Host --> Runtime[Host Runtime]
   Runtime --> Core[Protocol Core]
-  Runtime --> Store[(Task and session store)]
+  Runtime --> Store[(Thread and session store)]
   Runtime --> Registry[Adapter registry]
+  Registry --> Antigravity[Antigravity CLI]
   Registry --> Codex[Codex app-server]
   Registry --> Pi[Pi RPC]
   Registry --> Claude[Claude Agent SDK]
@@ -59,10 +63,13 @@ src/
 │  ├─ adapters/          # 每个 Harness 的原生适配器
 │  ├─ harness-adapter/   # Manifest、能力与适配器契约
 │  ├─ host/              # 编排、恢复、持久化与事件投影
-│  ├─ protocol-core/     # Thread / Turn / Item 统一语义
-│  ├─ preload.js         # Renderer 可调用的 IPC 白名单
-│  └─ main.js            # Electron 生命周期
-└─ renderer/             # 桌面 UI、样式和图标
+│  ├─ native/            # 原生模式：Launcher、Shim、Host 入口、协议桥
+│  └─ protocol-core/     # Thread / Turn / Item 统一语义
+├─ native-ui/
+│  ├─ renderer-extension/  # 注入 Codex Desktop 的渲染扩展（选择器、模型目录）
+│  ├─ desktop-control/     # CDP 控制器与请求桥
+│  └─ shared-contracts/    # 渲染侧与内核共享的协议契约
+└─ assets/icons/         # Harness 与模型图标（编译期嵌入）
 ```
 
 新增 Harness 时，实现同形 Adapter 并注册到 `src/main/adapters/index.js`。核心形态如下：
@@ -99,6 +106,12 @@ module.exports = {
 git clone https://github.com/emo-xiaoyu/harness-mix.git
 cd harness-mix
 npm install
+```
+
+### 运行方式
+
+原生模式（默认）：本地编译的 Shim 与 Renderer 扩展接入官方 Codex Desktop，模型选择会路由到对应 Harness。首次启动会重启已打开的 Codex Desktop：
+```powershell
 npm start
 ```
 
@@ -107,15 +120,17 @@ npm start
 - Codex：安装 `@openai/codex`，确保 `codex` 命令可用。
 - Pi：确保 `pi.cmd` 可用。
 - Claude Code：SDK 已由 npm 依赖安装，认证仍由 Claude Code 环境管理。
-- DeepSeek Harness：默认查找 `E:\dsh\deepseek-harness`，也可设置 `HARNESS_MIX_DSH_ROOT`。
+- DeepSeek Harness：使用本项目锁定的 `@deepseek-ai/dsh@0.1.2-rc.1`。可通过 `HARNESS_MIX_DSH_ROOT` 显式指定源码目录，但版本必须被内核支持。
+
+原生接入方式、数据目录和验证说明见 [原生 Codex 接入](docs/native-codex.md)。
 
 ## 验证
 
 ```powershell
 npm run check
 npm run test:core-all
-npm run smoke
-npm run smoke:app
+npm run e2e:native
+npm run smoke:native-ui
 ```
 
 涉及原生 Adapter 时，再执行对应的真实链路：

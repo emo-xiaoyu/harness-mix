@@ -22,25 +22,3 @@ assert.deepEqual(sessionUsage({ tokens: { input: NaN, output: -1 } }), { tokens:
 assert.equal(latestUsage({ role: 'assistant', usage: { input: 10, cacheRead: 90, cacheWrite: 0 } }).usage.cacheHitPercent, 90);
 assert.equal(latestUsage({ role: 'assistant', usage: { input: 0, cacheRead: 0, cacheWrite: 0 } }).usage.cacheHitPercent, null);
 console.log('ordered deltas, concurrent tools, cancellation, persistence and native usage passed');
-// The first render and interval must use the same clock and rounding rules.
-const vm = require('node:vm');
-const context = { window: {}, Date, document: {} };
-vm.runInNewContext(require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/renderer/transcript.js'), 'utf8'), context);
-const view = context.window.Transcript;
-assert.equal(view.duration(1000, 14999), '13秒');
-assert.equal(view.duration(1000, 60999), '59秒');
-assert.equal(view.duration(1000, 61000), '1分 0秒');
-assert.equal(view.duration(1000, 1000), '0秒');
-assert.equal(view.duration(undefined, 2000), '');
-const now = Date.now;
-try {
-  Date.now = () => 14999;
-  const el = { dataset: { startedAt: '1000' }, textContent: '' };
-  view.updateClocks({ querySelectorAll: () => [el] });
-  assert.equal(el.textContent, view.liveLabel(1000));
-  assert.equal(el.textContent, '正在执行 · 13秒');
-  Date.now = () => 61000;
-  view.updateClocks({ querySelectorAll: () => [el] });
-  assert.equal(el.textContent, '正在执行 · 1分 0秒');
-} finally { Date.now = now; }
-console.log('shared render/tick clock, second/minute boundaries and missing timing passed');

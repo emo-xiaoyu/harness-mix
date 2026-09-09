@@ -4,3 +4,11 @@ Copyright 2026 Harness Mix contributors
 
 This product includes software developed by third-party open source projects.
 Third-party components remain subject to their respective licenses.
+
+Native Codex Desktop components (renderer-extension, desktop-control, shared-contracts)
+are derived from BytePioneer-AI/codex-host v0.6.1 under the MIT License.
+Copyright (c) 2026 BytePioneer-AI.
+Source: https://github.com/BytePioneer-AI/codex-host
+All execution runtimes, protocols, adapters and local launchers are developed and maintained in this repository.
+
+Native DeepSeek integration uses @deepseek-ai/dsh 0.1.2-rc.1 (MIT).

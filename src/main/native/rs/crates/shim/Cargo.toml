@@ -1,0 +1,10 @@
+[package]
+name = "harness-mix-shim"
+version = "0.2.0"
+edition = "2021"
+description = "Harness Mix executable bridge: routes Codex Desktop app-server traffic to the local HostRuntime"
+license = "Apache-2.0"
+
+[[bin]]
+name = "harness-mix-shim"
+path = "src/main.rs"
