@@ -82,11 +82,17 @@ class NativeProtocol {
   turn(turn) { return { id: turn.id, status: turnStatus(turn.status), error: turn.error ? { message: String(turn.error), codexErrorInfo: null, additionalDetails: null } : null,
     items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) }; }
   projectThread(thread, includeTurns = true) {
+    // Projection shape mirrors the upstream codexhost external-thread contract: every
+    // field the Desktop sidebar/composer reads must be present with the same defaults.
+    const updatedAt = Math.floor((thread.updatedAt || thread.createdAt) / 1000);
     return { id: thread.id, preview: thread.messages.find(m => m.role === 'user')?.text || thread.title,
-      ephemeral: thread.ephemeral === true, modelProvider: 'harness-mix', createdAt: Math.floor(thread.createdAt / 1000),
-      updatedAt: Math.floor((thread.updatedAt || thread.createdAt) / 1000), status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
-      path: null, cwd: thread.cwd, cliVersion: 'harness-mix', source: 'appServer', name: thread.title,
-      agentNickname: null, agentRole: null, gitInfo: null,
+      ephemeral: thread.ephemeral === true, modelProvider: 'codexhost', createdAt: Math.floor(thread.createdAt / 1000),
+      updatedAt, recencyAt: updatedAt,
+      status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
+      path: null, cwd: thread.cwd, cliVersion: 'codexhost', source: 'vscode', threadSource: null,
+      name: thread.title || null, agentNickname: null, agentRole: null, gitInfo: null,
+      sessionId: thread.nativeSessionId, forkedFromId: thread.forkedFrom ?? null, parentThreadId: null,
+      canAcceptDirectInput: true, historyMode: 'legacy', isPinned: false, extra: null,
       turns: includeTurns ? this.runtime.core.turns.turnsForThread(thread.id).map(t => this.turn(t)) : [] };
   }
   capabilities(id, catalog) {
