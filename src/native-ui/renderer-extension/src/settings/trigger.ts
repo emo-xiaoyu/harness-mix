@@ -170,7 +170,7 @@ export function mountRendererSettingsTrigger(
   button.style.opacity = available ? "1" : "0.5";
   button.style.outlineOffset = "2px";
   button.style.setProperty("-webkit-app-region", "no-drag");
-  button.append(createRendererSettingsBrandIcon(24));
+  button.append(createRendererSettingsBrandIcon(24, ownerDocument));
 
   const brandLabel = ownerDocument.createElement("span");
   brandLabel.textContent = "CodexHost";

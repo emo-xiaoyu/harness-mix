@@ -26,7 +26,7 @@ const FUTURE_HARNESS_ID = harnessIdSchema.parse("future-agent");
 
 class FakeRow implements SidebarAgentIconRow {
   connected = true;
-  agent: Exclude<RendererAgent, "codex"> | null = null;
+  agent: RendererAgent | null = null;
   renders = 0;
   clears = 0;
 
@@ -52,7 +52,7 @@ class FakeRow implements SidebarAgentIconRow {
     return this.draft;
   }
 
-  render(agent: Exclude<RendererAgent, "codex">): void {
+  render(agent: RendererAgent): void {
     this.agent = agent;
     this.renders += 1;
   }
@@ -245,7 +245,7 @@ describe("Renderer sidebar Agent ownership", () => {
     }
   });
 
-  it("batches mounted rows and decorates only known external Agents", async () => {
+  it("batches mounted rows and decorates Codex and known external Agents", async () => {
     const rows = [
       new FakeRow("codex-thread"),
       new FakeRow("pi-thread"),
@@ -279,7 +279,7 @@ describe("Renderer sidebar Agent ownership", () => {
     expect(client.listThreadOwnership).toHaveBeenCalledWith({
       threadIds: ["codex-thread", "pi-thread", "claude-thread", "unknown-thread"],
     });
-    expect(rows.map((row) => row.agent)).toEqual([null, "pi", "claude-code", null]);
+    expect(rows.map((row) => row.agent)).toEqual(["codex", "pi", "claude-code", null]);
     control.dispose();
   });
 

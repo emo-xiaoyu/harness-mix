@@ -127,6 +127,11 @@ export {
 } from "./external-thread-fork.js";
 export type { ExternalThreadForkParams, ExternalThreadForkResult } from "./external-thread-fork.js";
 export {
+  threadHarnessSwitchParamsSchema,
+  threadHarnessSwitchResultSchema,
+} from "./thread-harness-switch.js";
+export type { ThreadHarnessSwitchParams, ThreadHarnessSwitchResult } from "./thread-harness-switch.js";
+export {
   HARNESS_PERMISSION_MODE_CATALOG_MAX_LENGTH,
   HARNESS_PERMISSION_MODE_DESCRIPTION_MAX_LENGTH,
   HARNESS_PERMISSION_MODE_ID_MAX_LENGTH,
@@ -226,6 +231,16 @@ export type {
   ThreadUsageInspectionParams,
   ThreadUsageSnapshot,
 } from "./thread-usage.js";
+export {
+  threadDelegateParamsSchema,
+  threadDelegationResultSchema,
+  threadMessageParamsSchema,
+} from "./thread-delegate.js";
+export type {
+  ThreadDelegateParams,
+  ThreadDelegationResult,
+  ThreadMessageParams,
+} from "./thread-delegate.js";
 export {
   harnessIdSchema,
   hostInteractionIdSchema,

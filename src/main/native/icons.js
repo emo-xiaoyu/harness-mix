@@ -8,6 +8,7 @@ const MODEL_FAMILIES = [
   { id: 'deepseek', regex: /deepseek/i, file: 'model-deepseek.svg', label: 'DeepSeek' },
   { id: 'xiaomimimo', regex: /mimo|xiaomi/i, file: 'model-xiaomimimo.svg', label: 'Xiaomi MIMO' },
   { id: 'qwen', regex: /qwen|qwq/i, file: 'model-qwen-color.svg', label: 'Qwen' },
+  { id: 'hunyuan', regex: /hunyuan|混元/i, file: 'model-hunyuan.svg', label: 'Hunyuan' },
   { id: 'minimax', regex: /minimax|abab/i, file: 'model-minimax.svg', label: 'MiniMax' },
   { id: 'claude', regex: /claude|anthropic/i, file: 'model-claude.svg', label: 'Claude' },
   { id: 'kimi', regex: /kimi|moonshot/i, file: 'model-kimi.svg', label: 'Kimi' },
@@ -22,6 +23,15 @@ const HARNESS_ICONS = [
   { id: 'codex', file: 'codex-harness.svg', label: 'Codex' },
   { id: 'dsh', file: 'deepseek-color.svg', label: 'DeepSeek Harness' },
   { id: 'pi', file: 'pi.svg', label: 'Pi' },
+  { id: 'omp', file: 'omp-color.svg', label: 'Oh My Pi' },
+  { id: 'opencode', file: 'opencode-color.svg', label: 'OpenCode' },
+  { id: 'grok', file: 'grok-color.svg', label: 'Grok' },
+  { id: 'openclaw', file: 'openclaw-color.svg', label: 'OpenClaw' },
+  { id: 'hermes', file: 'hermes-color.svg', label: 'Hermes' },
+  { id: 'qoder', file: 'qoder-color.svg', label: 'Qoder' },
+  { id: 'workbuddy', file: 'workbuddy-color.svg', label: 'Workbuddy' },
+  { id: 'zcode', file: 'zcode-color.svg', label: 'ZCode' },
+  { id: 'trae', file: 'trae-color.svg', label: 'Trae' },
 ];
 
 const svgCache = new Map();

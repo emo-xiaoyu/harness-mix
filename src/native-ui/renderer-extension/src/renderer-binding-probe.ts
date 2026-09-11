@@ -1,6 +1,7 @@
 import {
   decodeHarnessPluginRoute,
   harnessIdSchema,
+  hostThreadIdSchema,
   permissionModeFixedAtCreate,
   type HarnessCommandDescriptor,
   type HarnessModelCatalog,
@@ -75,6 +76,7 @@ import {
   writeNewThreadExternalConfigurationPreference,
 } from "./renderer-new-thread-preference.js";
 import { installRendererSidebarAgentIcons } from "./renderer-sidebar-agent-icons.js";
+import { installHarnessMentions } from './renderer-harness-mentions.js';
 import {
   rendererHarnessCommandExecutesDirectly,
   routeRendererHarnessCommandSelection,
@@ -95,6 +97,13 @@ const externalHarnessIds = {
   omp: harnessIdSchema.parse("omp"),
   antigravity: harnessIdSchema.parse("antigravity"),
   "kiro-cli": harnessIdSchema.parse("kiro-cli"),
+  openclaw: harnessIdSchema.parse("openclaw"),
+  hermes: harnessIdSchema.parse("hermes"),
+  qoder: harnessIdSchema.parse("qoder"),
+  workbuddy: harnessIdSchema.parse("workbuddy"),
+  zcode: harnessIdSchema.parse("zcode"),
+  trae: harnessIdSchema.parse("trae"),
+  'codex-harness': harnessIdSchema.parse('codex-harness'),
 } as const;
 
 const externalAgents: readonly ExternalRendererAgent[] = [
@@ -106,6 +115,13 @@ const externalAgents: readonly ExternalRendererAgent[] = [
   "omp",
   "antigravity",
   "kiro-cli",
+  "openclaw",
+  "hermes",
+  "qoder",
+  "workbuddy",
+  "zcode",
+  "trae",
+  'codex-harness',
 ];
 type HarnessAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
 type HarnessAvailabilityErrors = Record<ExternalRendererAgent, CodexhostError | undefined>;
@@ -299,10 +315,11 @@ export function draftThinkingOptionForModel(
   requested: HarnessThinkingOptionId | undefined,
 ): HarnessThinkingOptionId | undefined {
   const options = thinkingOptionsForModel(catalog, model);
+  // 没有显式选择且目录未声明默认档时不预选：让原生会话自身的默认档生效，
+  // 避免把目录首档（如 Pi 的 off）静默强加给原生会话。
   return (
     options.find(({ id }) => id === requested)?.id ??
-    options.find(({ id }) => id === catalog.defaultThinkingOptionId)?.id ??
-    options[0]?.id
+    options.find(({ id }) => id === catalog.defaultThinkingOptionId)?.id
   );
 }
 
@@ -469,6 +486,25 @@ export function restoredThreadOwnership(inspection: ThreadInspection): RestoredT
     const permissionModeId = inspection.effectivePermissionModeId ?? route.permissionModeId;
     return {
       agent: "kiro-cli",
+      ...(model ? { model } : {}),
+      ...(thinkingOptionId ? { thinkingOptionId } : {}),
+      ...(permissionModeId ? { permissionModeId } : {}),
+    };
+  }
+  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'workbuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae') {
+    const harnessId = inspection.harnessId;
+    const route = decodeHarnessPluginRoute(inspection.transportModelId);
+    if (!route || route.harnessId !== harnessId) {
+      throw new Error("Thread reported an incompatible transport Model");
+    }
+    const model = inspection.effectiveModel ?? route.model;
+    const thinkingOptionId =
+      inspection.availableThinkingOptions !== undefined
+        ? selectableThinkingOptionId(inspection)
+        : (inspection.effectiveThinkingOptionId ?? route.thinkingOptionId);
+    const permissionModeId = inspection.effectivePermissionModeId ?? route.permissionModeId;
+    return {
+      agent: harnessId,
       ...(model ? { model } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
       ...(permissionModeId ? { permissionModeId } : {}),
@@ -661,6 +697,24 @@ export function installRendererBindingProbe(
     getClient: (hostId) => modelClientForHost(hostId),
     getLocalAgent: localAgentForSidebarThread,
   });
+  const harnessMentions = installHarnessMentions(async (editor, query) => {
+    const composer = editor.closest('[data-codex-composer-root]');
+    if (!composer) return { agents: [], sessions: [] };
+    const state = controller.get(composer);
+    // Stock Codex tasks bypass HostRuntime; do not advertise Host tools there.
+    if (state.agent === 'codex') return { agents: [], sessions: [] };
+    const client = modelClientForHost(modelControl?.currentHostId?.() ?? 'local');
+    const [agentResult, sessionResult] = await Promise.allSettled([
+      client?.listCollaborationAgents?.() ?? Promise.resolve([]),
+      client?.listHarnessSessions?.({ harnessId: harnessIdSchema.parse('all-harnesses'), query, offset: 0, limit: 12 }) ?? Promise.resolve({ candidates: [], total: 0 }),
+    ]);
+    const agents = agentResult.status === 'fulfilled' ? agentResult.value : [];
+    const sessions = sessionResult.status === 'fulfilled' ? sessionResult.value.candidates.map(candidate => {
+      const match = /^\[([^\]]+)\]\s*/.exec(candidate.title ?? '');
+      return { id: candidate.nativeSessionId, title: (candidate.title ?? '未命名会话').replace(/^\[[^\]]+\]\s*/, ''), harnessId: match?.[1] ?? 'codex', cwd: candidate.cwd, running: candidate.running };
+    }) : [];
+    return { agents, sessions, canDelegate: agents.some(agent => agent.id === state.agent && agent.lead) };
+  });
   let connectionDiagnostics: RendererConnectionDiagnostics | null = null;
   const settingsLifecycle = installRendererSettingsLifecycle(window, {
     getUpdateClient: () => modelControl,
@@ -704,6 +758,13 @@ export function installRendererBindingProbe(
       omp: undefined,
       antigravity: undefined,
       "kiro-cli": undefined,
+      openclaw: undefined,
+      hermes: undefined,
+      qoder: undefined,
+      workbuddy: undefined,
+      zcode: undefined,
+      trae: undefined,
+      'codex-harness': undefined,
     },
     webUi: Object.fromEntries(
       externalAgents.map((agent) => [agent, false]),
@@ -2269,6 +2330,18 @@ export function installRendererBindingProbe(
         throw error;
       }
     },
+    inspectHarness(hostId: string, agent: ExternalRendererAgent) {
+      const client = modelClientForHost(hostId);
+      if (!client?.inspectHarness) throw new Error("Harness inspect is unavailable");
+      return client.inspectHarness({ harnessId: externalHarnessIds[agent] });
+    },
+    async installHarness(hostId: string, agent: ExternalRendererAgent) {
+      const client = modelClientForHost(hostId);
+      if (!client?.installHarness) throw new Error("Harness install is unavailable");
+      const result = await client.installHarness({ harnessId: externalHarnessIds[agent] });
+      void refreshHarnessAvailabilityForHost(hostId, true, false, true).catch(() => undefined);
+      return result;
+    },
     subscribe(listener: () => void): () => void {
       connectionListeners.add(listener);
       return () => connectionListeners.delete(listener);
@@ -2829,6 +2902,7 @@ export function installRendererBindingProbe(
       modelControl = null;
       mutationObserver.disconnect();
       sidebarAgentIcons.dispose();
+      harnessMentions.dispose();
       settingsLifecycle.dispose();
       document.removeEventListener("beforeinput", onBeforeInput, true);
       document.removeEventListener("submit", onSubmit, true);

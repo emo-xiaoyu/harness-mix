@@ -17,6 +17,13 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   omp: "Oh My Pi",
   antigravity: "Antigravity CLI",
   "kiro-cli": "Kiro CLI",
+  openclaw: "OpenClaw",
+  hermes: "Hermes",
+  qoder: "Qoder",
+  workbuddy: "Workbuddy",
+  zcode: "ZCode",
+  trae: "Trae",
+  'codex-harness': 'Codex（协作）',
 };
 
 const PI_PATHS = [

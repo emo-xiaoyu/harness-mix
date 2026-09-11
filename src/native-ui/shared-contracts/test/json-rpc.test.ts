@@ -19,7 +19,7 @@ interface GateAAppServerFixture {
 
 const fixturePath = resolve(
   import.meta.dirname,
-  "../../../tests/fixtures/gate-a/windows/official-app-server.fixture.json",
+  "../../../../fixtures/codex/official-app-server.fixture.json",
 );
 const gateAFixture = JSON.parse(readFileSync(fixturePath, "utf8")) as GateAAppServerFixture;
 

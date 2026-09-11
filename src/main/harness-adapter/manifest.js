@@ -5,6 +5,7 @@ const { CAPABILITY_GROUPS, createCapabilities } = require('../shared-contracts')
 // 本模块是两者之间的唯一映射，避免 UI 判断 Harness 名称（§45）。
 
 const MANIFEST_CAPABILITY_FLAGS = [
+  'collaborationTools',
   'streaming', 'thinking', 'tools', 'approvals', 'questions', 'models',
   'plan', 'nativeDiff', 'nativePatch', 'cost', 'compaction',
   'thinkingLevels', 'permissionModes', 'resume', 'fork', 'forkFromMessage', 'usage', 'contextUsage', 'attachments',

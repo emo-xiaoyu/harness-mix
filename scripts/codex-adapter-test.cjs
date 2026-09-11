@@ -52,6 +52,16 @@ function fakeSession() {
   } }, approvalSession, () => {});
   await adapter.respond(approvalSession, 'codex-8', { optionId: 'accept' });
   assert.deepEqual(await approval, { decision: 'accept' });
+  const mcpSession = fakeSession();
+  const mcpEvents = [];
+  const mcpApproval = queueRequest({ id: 9, method: 'mcpServer/elicitation/request', params: {
+    threadId: 'thread-native', serverName: 'harness-mix', mode: 'form', message: 'Allow tool?',
+    requestedSchema: { type: 'object', properties: {}, additionalProperties: false },
+  } }, mcpSession, event => mcpEvents.push(event));
+  assert.equal(mcpEvents[0].kind, 'approval');
+  assert.equal(mcpSession.pendingApprovals.size, 1, 'MCP requests await a native user response');
+  await adapter.respond(mcpSession, 'codex-9', { optionId: 'decline' });
+  assert.deepEqual(await mcpApproval, { action: 'decline', content: null });
 
   const compactSession = fakeSession();
   const compactEvents = [];

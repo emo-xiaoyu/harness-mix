@@ -21,6 +21,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核：通过�
 - 在 Codex Desktop 原生输入框中选择 Harness 并发起会话。
 - 流式呈现回答、思考、命令执行、工具调用、文件变更和上下文压缩。
 - 调用每个 Harness 原生提供的模型、权限、上下文用量和快捷指令。
+- 会话中原地切换 Harness（`/switch <Harness 名> [备注]` 或 `codexhost/thread/harness/switch`）：会话历史与文件现场保留在 Host 线程上，切换后首轮自动携带一次性上下文信封；切回旧 Harness 时按其原生机制（Pi `--session` / Claude `resume`）恢复原会话。
 - 原生 Diff、审批与提问组件直接渲染，审批路由回原生 Harness，不代替用户作出权限决定。
 - 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
 
@@ -35,8 +36,17 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核：通过�
 | Antigravity | `agy` CLI (`stream-json` / PreToolUse Hook) | 流式输出、Gemini 模型目录与思考档位、Desktop 审批与提问桥接、文件变更、配额查询与 Fork |
 | Codex | `codex app-server --stdio` | Thread / Turn / Item、流式事件、审批、Usage、Resume、Fork、Compact |
 | Pi | `pi --mode rpc` | 会话恢复、模型目录、Usage、原生命令、Fork |
+| Oh My Pi | `omp --mode rpc`（Pi 家族协议，见 `pi-family.js`） | 与 Pi 同源：会话、模型、思考档位、权限、Fork、Usage |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` 的 `query()` | 持久会话、流式消息、工具、权限、模型与 Resume |
 | DeepSeek Harness | `npm run dsh -- web` | Web Remote、Typert RPC、WebSocket 事件、会话与模型控制 |
+| OpenCode | `opencode serve`（原生 HTTP / SSE，见 `opencode.js`） | 会话、模型目录、权限模式、图片、Fork |
+| Grok | `grok agent stdio`（独立适配 ACP 基础消息与 `_x.ai/*` 厂商扩展，见 `grok.js`） | 会话、模型、思考档位、原生命令目录、Token Usage、原生 Fork |
+| OpenClaw | 本机 Gateway loopback WebSocket（`openclaw-gateway.js` + `openclaw.js`） | 会话与恢复、流式增量、工具与命令输出、exec/plugin 审批回路由、模型与思考档位逐轮覆盖 |
+| Hermes | `hermes acp`（ACP over stdio，共享 `acp.js` 工厂） | 会话持久化/恢复/Fork、流式回答与思考、工具、审批、模型选择 |
+| Qoder | `qoder acp`（阿里 Qoder CLI，共享 `acp.js` 工厂） | 会话、流式回答与思考、工具、审批、模型选择 |
+| Workbuddy | `codebuddy acp`（腾讯 Workbuddy / CodeBuddy CLI，共享 `acp.js` 工厂） | 会话、流式回答与思考、工具、审批、模型选择 |
+| ZCode | `zcode acp`（智谱 AI ZCode CLI，共享 `acp.js` 工厂） | 会话、流式回答与思考、工具、审批、GLM 模型识别 |
+| Trae | `traecli acp serve`（字节跳动 Trae CLI Agent，共享 `acp.js` 工厂） | 会话、流式回答与思考、工具、审批、模型选择 |
 
 能力只在 Adapter 的 `manifest` 中声明。界面根据真实能力显示入口，不靠 Harness 名称猜测功能；厂商特有字段会保留在原生引用和载荷中。
 
@@ -53,8 +63,17 @@ flowchart TB
   Registry --> Antigravity[Antigravity CLI]
   Registry --> Codex[Codex app-server]
   Registry --> Pi[Pi RPC]
+  Registry --> OMP[Oh My Pi RPC]
   Registry --> Claude[Claude Agent SDK]
   Registry --> DSH[DSH Web Remote]
+  Registry --> OpenCode[OpenCode Server HTTP / SSE]
+  Registry --> Grok[Grok native stdio + vendor extensions]
+  Registry --> OpenClaw[OpenClaw Gateway loopback WS]
+  Registry --> Hermes[Hermes ACP stdio]
+  Registry --> Qoder[Qoder ACP stdio]
+  Registry --> Workbuddy[Workbuddy ACP stdio]
+  Registry --> ZCode[ZCode ACP stdio]
+  Registry --> Trae[Trae ACP stdio]
 ```
 
 ```text

@@ -50,6 +50,7 @@ class ReviewStore {
   }
   summary(record) {
     return { id: record.id, at: record.at, endedAt: record.endedAt, live: !record.endedAt, skipped: record.skipped,
+      ...(record.concurrent ? { concurrent: true, ...(record.note ? { note: record.note } : {}) } : {}),
       files: record.changes.map(c => ({ path: c.path, added: c.added, removed: c.removed, undone: c.undone, kind: !c.before ? 'added' : !c.after ? 'deleted' : 'modified' })) };
   }
   async detail(id, file) {

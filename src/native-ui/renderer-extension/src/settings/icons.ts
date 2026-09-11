@@ -123,8 +123,10 @@ export function createRendererSettingsIcon(name: RendererSettingsIconName, size 
   return icon;
 }
 
-export function createRendererSettingsBrandIcon(size = 22): HTMLImageElement {
-  const icon = document.createElement("img");
+export function createRendererSettingsBrandIcon(size = 22, ownerDocument?: Document): HTMLImageElement {
+  const doc = ownerDocument ?? (typeof document !== "undefined" ? document : undefined);
+  if (!doc) throw new Error("Document is required to create icon element");
+  const icon = doc.createElement("img");
   icon.src = codexLogoUrl;
   icon.alt = "";
   icon.width = size;

@@ -31,11 +31,11 @@ Pi / DSH 显示「已配置」而非「已登录」，目录存在不能证明�
 ## 验证
 
 ```powershell
-npm run test:management
-npm run smoke:management
-npm run e2e:management
+npm run test:native-ui
+npm run smoke:native-ui
+npm run e2e:native
 ```
 
-`test:management` 检查账号字段白名单、模型供应商身份、并发默认值保存和登录连接生命周期。`smoke:management` 使用真实 Electron / IPC 和模拟原生响应，检查页面切换、延迟响应、登录路由、筛选、重启恢复与小窗口布局。
+`test:native-ui` 覆盖账号字段白名单、模型供应商身份、并发默认值保存、登录连接生命周期和设置页渲染逻辑。`smoke:native-ui` 使用 Electron 与模拟原生响应，检查 Renderer 注入及设置界面的关键交互。
 
-`e2e:management` 是只读真实验收：读取四家原生账号状态与模型目录，打开并重新打开认证后的 DSH 原生页面。不会执行登录/退出、修改凭据、调用模型；需要本机安装对应 Harness。测试报告和截图保存在 `output/playwright/`。
+`e2e:native` 是只读协议验收：读取可用 Harness 与模型目录，不执行登录/退出或修改凭据。完整账号管理和 DSH 原生页面重开仍需在真实 Codex Desktop 重启验收中人工确认，不能由这条命令代替。

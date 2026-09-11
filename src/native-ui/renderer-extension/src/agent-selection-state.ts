@@ -14,8 +14,31 @@ export const KNOWN_RENDERER_AGENTS = [
   "omp",
   "antigravity",
   "kiro-cli",
+  "openclaw",
+  "hermes",
+  "qoder",
+  "workbuddy",
+  "zcode",
+  "trae",
+  "codex-harness",
 ] as const;
-export const DEFAULT_RENDERER_AGENTS = ['codex', 'pi', 'claude-code', 'deepseek-harness', 'antigravity'] as const;
+export const DEFAULT_RENDERER_AGENTS = [
+  'codex',
+  'pi',
+  'omp',
+  'claude-code',
+  'deepseek-harness',
+  'antigravity',
+  'opencode',
+  'grok',
+  'openclaw',
+  'hermes',
+  'qoder',
+  'workbuddy',
+  'zcode',
+  'trae',
+  'codex-harness',
+] as const;
 export type RendererAgent = (typeof KNOWN_RENDERER_AGENTS)[number];
 export type ExternalRendererAgent = Exclude<RendererAgent, "codex">;
 export type RendererAgentAvailability =
@@ -42,6 +65,20 @@ export interface DraftComposerState {
   antigravityThinkingOptionId?: HarnessThinkingOptionId;
   kiroCliModel?: HarnessModelRef;
   kiroCliThinkingOptionId?: HarnessThinkingOptionId;
+  openclawModel?: HarnessModelRef;
+  openclawThinkingOptionId?: HarnessThinkingOptionId;
+  hermesModel?: HarnessModelRef;
+  hermesThinkingOptionId?: HarnessThinkingOptionId;
+  qoderModel?: HarnessModelRef;
+  qoderThinkingOptionId?: HarnessThinkingOptionId;
+  workbuddyModel?: HarnessModelRef;
+  workbuddyThinkingOptionId?: HarnessThinkingOptionId;
+  zcodeModel?: HarnessModelRef;
+  zcodeThinkingOptionId?: HarnessThinkingOptionId;
+  traeModel?: HarnessModelRef;
+  traeThinkingOptionId?: HarnessThinkingOptionId;
+  codexHarnessModel?: HarnessModelRef;
+  codexHarnessThinkingOptionId?: HarnessThinkingOptionId;
   permissionModeByAgent?: Partial<Record<ExternalRendererAgent, HarnessPermissionModeId>>;
 }
 
@@ -210,6 +247,13 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "omp" && model) state.ompModel = model;
     if (agent === "antigravity" && model) state.antigravityModel = model;
     if (agent === "kiro-cli" && model) state.kiroCliModel = model;
+    if (agent === "openclaw" && model) state.openclawModel = model;
+    if (agent === "hermes" && model) state.hermesModel = model;
+    if (agent === "qoder" && model) state.qoderModel = model;
+    if (agent === "workbuddy" && model) state.workbuddyModel = model;
+    if (agent === "zcode" && model) state.zcodeModel = model;
+    if (agent === "trae" && model) state.traeModel = model;
+    if (agent === "codex-harness" && model) state.codexHarnessModel = model;
     if (agent === "pi" && thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
     else if (agent === "pi") delete state.piThinkingOptionId;
     if (agent === "claude-code" && thinkingOptionId) {
@@ -228,6 +272,26 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "kiro-cli" && thinkingOptionId) {
       state.kiroCliThinkingOptionId = thinkingOptionId;
     } else if (agent === "kiro-cli") delete state.kiroCliThinkingOptionId;
+    if (agent === "openclaw" && thinkingOptionId) {
+      state.openclawThinkingOptionId = thinkingOptionId;
+    } else if (agent === "openclaw") delete state.openclawThinkingOptionId;
+    if (agent === "hermes" && thinkingOptionId) {
+      state.hermesThinkingOptionId = thinkingOptionId;
+    } else if (agent === "hermes") delete state.hermesThinkingOptionId;
+    if (agent === "qoder" && thinkingOptionId) {
+      state.qoderThinkingOptionId = thinkingOptionId;
+    } else if (agent === "qoder") delete state.qoderThinkingOptionId;
+    if (agent === "workbuddy" && thinkingOptionId) {
+      state.workbuddyThinkingOptionId = thinkingOptionId;
+    } else if (agent === "workbuddy") delete state.workbuddyThinkingOptionId;
+    if (agent === "zcode" && thinkingOptionId) {
+      state.zcodeThinkingOptionId = thinkingOptionId;
+    } else if (agent === "zcode") delete state.zcodeThinkingOptionId;
+    if (agent === "trae" && thinkingOptionId) {
+      state.traeThinkingOptionId = thinkingOptionId;
+    } else if (agent === "trae") delete state.traeThinkingOptionId;
+    if (agent === 'codex-harness' && thinkingOptionId) state.codexHarnessThinkingOptionId = thinkingOptionId;
+    else if (agent === 'codex-harness') delete state.codexHarnessThinkingOptionId;
     if (agent !== "codex") {
       const permissionModeByAgent: NonNullable<DraftComposerState["permissionModeByAgent"]> = {};
       for (const candidate of [
@@ -239,6 +303,13 @@ export class DraftAgentController<Composer extends object> {
         "omp",
         "antigravity",
         "kiro-cli",
+        "openclaw",
+        "hermes",
+        "qoder",
+        "workbuddy",
+        "zcode",
+        "trae",
+        "codex-harness",
       ] as const) {
         const current = state.permissionModeByAgent?.[candidate];
         if (candidate !== agent && current) permissionModeByAgent[candidate] = current;
@@ -263,6 +334,13 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "omp") return state.ompModel;
     if (agent === "antigravity") return state.antigravityModel;
     if (agent === "kiro-cli") return state.kiroCliModel;
+    if (agent === "openclaw") return state.openclawModel;
+    if (agent === "hermes") return state.hermesModel;
+    if (agent === "qoder") return state.qoderModel;
+    if (agent === "workbuddy") return state.workbuddyModel;
+    if (agent === "zcode") return state.zcodeModel;
+    if (agent === "trae") return state.traeModel;
+    if (agent === 'codex-harness') return state.codexHarnessModel;
     return undefined;
   }
 
@@ -278,6 +356,13 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "omp") return state.ompThinkingOptionId;
     if (agent === "antigravity") return state.antigravityThinkingOptionId;
     if (agent === "kiro-cli") return state.kiroCliThinkingOptionId;
+    if (agent === "openclaw") return state.openclawThinkingOptionId;
+    if (agent === "hermes") return state.hermesThinkingOptionId;
+    if (agent === "qoder") return state.qoderThinkingOptionId;
+    if (agent === "workbuddy") return state.workbuddyThinkingOptionId;
+    if (agent === "zcode") return state.zcodeThinkingOptionId;
+    if (agent === "trae") return state.traeThinkingOptionId;
+    if (agent === 'codex-harness') return state.codexHarnessThinkingOptionId;
     return undefined;
   }
 
@@ -315,6 +400,13 @@ export class DraftAgentController<Composer extends object> {
     else if (agent === "omp") state.ompModel = model;
     else if (agent === "antigravity") state.antigravityModel = model;
     else if (agent === "kiro-cli") state.kiroCliModel = model;
+    else if (agent === "openclaw") state.openclawModel = model;
+    else if (agent === "hermes") state.hermesModel = model;
+    else if (agent === "qoder") state.qoderModel = model;
+    else if (agent === "workbuddy") state.workbuddyModel = model;
+    else if (agent === "zcode") state.zcodeModel = model;
+    else if (agent === "trae") state.traeModel = model;
+    else if (agent === 'codex-harness') state.codexHarnessModel = model;
     return state;
   }
 
@@ -366,6 +458,34 @@ export class DraftAgentController<Composer extends object> {
       state.kiroCliThinkingOptionId = thinkingOptionId;
     } else if (agent === "kiro-cli") {
       delete state.kiroCliThinkingOptionId;
+    } else if (agent === "openclaw" && thinkingOptionId) {
+      state.openclawThinkingOptionId = thinkingOptionId;
+    } else if (agent === "openclaw") {
+      delete state.openclawThinkingOptionId;
+    } else if (agent === "hermes" && thinkingOptionId) {
+      state.hermesThinkingOptionId = thinkingOptionId;
+    } else if (agent === "hermes") {
+      delete state.hermesThinkingOptionId;
+    } else if (agent === "qoder" && thinkingOptionId) {
+      state.qoderThinkingOptionId = thinkingOptionId;
+    } else if (agent === "qoder") {
+      delete state.qoderThinkingOptionId;
+    } else if (agent === "workbuddy" && thinkingOptionId) {
+      state.workbuddyThinkingOptionId = thinkingOptionId;
+    } else if (agent === "workbuddy") {
+      delete state.workbuddyThinkingOptionId;
+    } else if (agent === "zcode" && thinkingOptionId) {
+      state.zcodeThinkingOptionId = thinkingOptionId;
+    } else if (agent === "zcode") {
+      delete state.zcodeThinkingOptionId;
+    } else if (agent === "trae" && thinkingOptionId) {
+      state.traeThinkingOptionId = thinkingOptionId;
+    } else if (agent === "trae") {
+      delete state.traeThinkingOptionId;
+    } else if (agent === 'codex-harness' && thinkingOptionId) {
+      state.codexHarnessThinkingOptionId = thinkingOptionId;
+    } else if (agent === 'codex-harness') {
+      delete state.codexHarnessThinkingOptionId;
     }
     return state;
   }

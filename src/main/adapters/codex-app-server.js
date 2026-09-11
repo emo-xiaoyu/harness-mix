@@ -14,7 +14,9 @@ class CodexAppServer {
     this.notifications = new Set();
     this.diagnostics = new Set(diagnostic ? [diagnostic] : []);
     this.closed = false;
-    const { command, args } = cliSpawn('codex', ['app-server', '--stdio']);
+    // The Desktop-bundled CLI and the PATH CLI can be different versions.
+    const executable = process.env.HARNESS_MIX_CODEX_EXECUTABLE || process.env.CODEXHOST_STOCK_CODEX_PATH;
+    const { command, args } = executable ? { command: executable, args: ['app-server', '--listen', 'stdio://'] } : cliSpawn('codex', ['app-server', '--stdio']);
     this.process = new JsonlProcess(command, args, {}, {
       onEvent: (message) => this.#notification(message),
       onRequest: (message) => this.#request(message),

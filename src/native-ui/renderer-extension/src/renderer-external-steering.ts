@@ -235,11 +235,15 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
       !Array.isArray(input) ||
       input.length === 0 ||
       input.some(
-        (item) => !isRecord(item) || item.type !== "text" || typeof item.text !== "string",
+        (item) => !isRecord(item) || !(
+          item.type === "text" && typeof item.text === "string" ||
+          item.type === "localImage" && typeof item.path === "string" && item.path.length > 0 ||
+          item.type === "image" && typeof item.url === "string" && item.url.startsWith("data:image/")
+        ),
       ) ||
-      !input.some((item) => isRecord(item) && typeof item.text === "string" && item.text.trim())
+      !input.some((item) => isRecord(item) && (item.type !== "text" || typeof item.text === "string" && item.text.trim()))
     ) {
-      throw new Error("External steering requires non-empty text input");
+      throw new Error("External steering requires non-empty text input or images");
     }
     if (toolOutput != null) throw new Error("External steering cannot replace a tool response");
     if (!isRecord(restoreMessage) || !isRecord(restoreMessage.context)) {

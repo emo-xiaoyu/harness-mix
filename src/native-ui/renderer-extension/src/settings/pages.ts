@@ -154,7 +154,7 @@ function formatUpdateBytes(value: number): string {
   return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${unit}`;
 }
 
-function aboutPage(messages: RendererSettingsMessages): RendererSettingsPageDefinition {
+export function aboutPage(messages: RendererSettingsMessages): RendererSettingsPageDefinition {
   return Object.freeze({
     id: "about",
     label: messages.pageLabels.about,

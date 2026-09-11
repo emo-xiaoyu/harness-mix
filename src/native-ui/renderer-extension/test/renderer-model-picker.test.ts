@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   rendererModelPickerMainMenuPlacement,
-  rendererModelPickerModelMenuPlacement,
-  rendererModelPickerStandaloneModelMenuPlacement,
+  rendererModelPickerMenuWidth,
+  RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH,
+  RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH,
 } from "../src/renderer-model-picker-positioning.js";
 
 import {
@@ -47,7 +48,7 @@ describe("Renderer combined Model and Thinking picker presentation", () => {
         { width: 1200, height: 900 },
         180,
       ),
-    ).toEqual({ left: 720, width: 180, bottom: 88 });
+    ).toEqual({ left: 720, width: 180, bottom: 88, maxHeight: 360 });
   });
 
   it("keeps the main menu inside the viewport when the trigger is near an edge", () => {
@@ -60,31 +61,22 @@ describe("Renderer combined Model and Thinking picker presentation", () => {
     ).toBe(8);
   });
 
-  it("opens the model-only picker directly above the model trigger", () => {
+  it("caps the menu height by the space above the trigger", () => {
     expect(
-      rendererModelPickerStandaloneModelMenuPlacement(
-        { left: 700, right: 900, top: 820 },
+      rendererModelPickerMainMenuPlacement(
+        { left: 700, right: 900, top: 200 },
         { width: 1200, height: 900 },
-      ),
-    ).toEqual({ left: 620, width: 280, maxHeight: 360, bottom: 88 });
+        180,
+      ).maxHeight,
+    ).toBe(184);
   });
 
-  it("keeps the model submenu top-aligned with the main menu while flipping left", () => {
-    expect(
-      rendererModelPickerModelMenuPlacement(
-        { left: 700, right: 1120, top: 100 },
-        { width: 1200, height: 900 },
-      ),
-    ).toEqual({ left: 416, top: 100, width: 280, maxHeight: 360 });
-  });
-
-  it("keeps the model submenu on the right when there is enough space", () => {
-    expect(
-      rendererModelPickerModelMenuPlacement(
-        { left: 100, right: 280, top: 100 },
-        { width: 1200, height: 900 },
-      ),
-    ).toEqual({ left: 284, top: 100, width: 280, maxHeight: 360 });
+  it("widens into two columns when Thinking options are available", () => {
+    const single = rendererModelPickerMenuWidth(false, 1200);
+    const dual = rendererModelPickerMenuWidth(true, 1200);
+    expect(single).toBe(RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH);
+    expect(dual).toBe(RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH + RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH);
+    expect(rendererModelPickerMenuWidth(true, 300)).toBe(284);
   });
 
   it("does not rewrite an unchanged Thinking label", () => {

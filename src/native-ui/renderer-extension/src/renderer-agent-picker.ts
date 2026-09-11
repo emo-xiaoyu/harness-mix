@@ -77,6 +77,13 @@ export const RENDERER_AGENT_INSTALL_URLS: Readonly<Record<ExternalRendererAgent,
   omp: "https://github.com/can1357/oh-my-pi",
   antigravity: "https://antigravity.google/product/antigravity-cli",
   "kiro-cli": "https://kiro.dev/docs/cli/",
+  openclaw: "https://docs.openclaw.ai/",
+  hermes: "https://hermes-agent.nousresearch.com/",
+  qoder: "https://qoder.com/",
+  workbuddy: "https://workbuddy.ai/",
+  zcode: "https://zcode.z.ai/",
+  trae: "https://www.trae.ai/",
+  'codex-harness': 'https://developers.openai.com/codex/',
 };
 
 type AgentAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;

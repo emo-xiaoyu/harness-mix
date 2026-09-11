@@ -8,10 +8,9 @@ import type {
 
 import {
   rendererModelPickerMainMenuPlacement,
-  rendererModelPickerModelMenuPlacement,
-  rendererModelPickerStandaloneModelMenuPlacement,
+  rendererModelPickerMenuWidth,
   RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH,
-  RENDERER_MODEL_PICKER_MODEL_MENU_MAX_HEIGHT,
+  RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH,
 } from "./renderer-model-picker-positioning.js";
 import {
   ensureRendererTriggerChipStyle,
@@ -67,13 +66,12 @@ export interface RendererModelPickerControl {
   label: HTMLElement;
   thinkingLabel: HTMLElement;
   menu: HTMLElement;
-  modelMenu: HTMLElement;
-  modelButton: HTMLButtonElement;
   searchInput: HTMLInputElement;
   searchHeader: HTMLElement;
   searchEmpty: HTMLElement;
   options: Map<string, ModelOptionControl>;
   thinkingOptions: Map<string, ThinkingOptionControl>;
+  thinkingExpanded: boolean;
   close(): void;
   dispose(): void;
 }
@@ -107,7 +105,6 @@ function ensureModelScrollbarStyle(ownerDocument: Document): void {
     }
     [data-codexhost-model-scrollable]::-webkit-scrollbar-thumb:hover {
       background: rgba(255, 255, 255, 0.42);
-      background-clip: padding-box;
     }
     [data-codexhost-model-scrollable]::-webkit-scrollbar-button {
       display: none;
@@ -177,12 +174,17 @@ export function rendererModelPickerPresentation(
   };
 }
 
-function positionMainMenu(control: RendererModelPickerControl): void {
+function positionMenu(control: RendererModelPickerControl): void {
   const triggerRect = control.trigger.getBoundingClientRect();
+  const thinkingColumn = control.menu.querySelector<HTMLElement>("[data-codexhost-thinking-column]");
+  const twoColumn = control.thinkingExpanded && thinkingColumn !== null;
+  if (thinkingColumn) thinkingColumn.style.display = twoColumn ? "flex" : "none";
+  control.menu.dataset.twoColumn = String(twoColumn);
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
   const placement = rendererModelPickerMainMenuPlacement(
     triggerRect,
-    { width: window.innerWidth, height: window.innerHeight },
-    RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH,
+    viewport,
+    rendererModelPickerMenuWidth(twoColumn, viewport.width),
   );
   control.menu.style.setProperty("width", `${placement.width}px`, "important");
   control.menu.style.left = `${placement.left}px`;
@@ -190,34 +192,11 @@ function positionMainMenu(control: RendererModelPickerControl): void {
   control.menu.style.right = "auto";
   control.menu.style.top = "auto";
   control.menu.style.bottom = `${placement.bottom}px`;
-}
-
-function positionAdvancedMenus(control: RendererModelPickerControl): void {
-  positionMainMenu(control);
-  positionModelMenu(control);
-}
-
-function positionModelMenu(control: RendererModelPickerControl, standalone = false): void {
-  const anchorRect = standalone
-    ? control.trigger.getBoundingClientRect()
-    : control.menu.getBoundingClientRect();
-  const placement = standalone
-    ? rendererModelPickerStandaloneModelMenuPlacement(anchorRect, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      })
-    : rendererModelPickerModelMenuPlacement(anchorRect, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
-  control.modelMenu.style.setProperty("width", `${placement.width}px`, "important");
-  control.modelMenu.style.left = `${placement.left}px`;
-  control.modelMenu.style.maxWidth = `${placement.width}px`;
-  control.modelMenu.style.maxHeight = `${placement.maxHeight}px`;
-  control.modelMenu.style.right = "auto";
-  control.modelMenu.style.top = placement.top === undefined ? "auto" : `${placement.top}px`;
-  control.modelMenu.style.bottom =
-    placement.bottom === undefined ? "auto" : `${placement.bottom}px`;
+  // 列内部滚动：弹层本身不滚动，模型列表在给定最大高度内滚动
+  const listMaxHeight = placement.maxHeight ?? 320;
+  for (const column of control.menu.querySelectorAll<HTMLElement>("[data-codexhost-model-scrollable]")) {
+    column.style.maxHeight = `${listMaxHeight}px`;
+  }
 }
 
 export function syncRendererModelTriggerClass(control: RendererModelPickerControl): void {
@@ -231,7 +210,7 @@ export function syncRendererModelTriggerClass(control: RendererModelPickerContro
 
 function createCheck(): HTMLElement {
   const check = document.createElement("span");
-  check.textContent = "\u2713";
+  check.textContent = "✓";
   check.setAttribute("aria-hidden", "true");
   check.className = "w-4 shrink-0 text-token-text-secondary";
   check.style.width = "16px";
@@ -308,47 +287,23 @@ export function mountRendererModelPicker(
 
   trigger.append(label, thinkingLabel);
 
+  // 单一弹层、双列主从布局：左列模型列表（带搜索），右列当前选中模型的思考强度。
+  // 之前是“Thinking 主弹层 + 悬停展开 Model 子弹层”的双浮层结构，层级倒置且错位。
   const menu = document.createElement("div");
   menu.id = `${composerId}-model-menu`;
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "Model and Thinking");
-  // The Model submenu is a separate top-layer popover appended to the document,
-  // so an `auto` popover here would light-dismiss whenever the search input or
-  // a model option inside that submenu receives a pointer. Dismissal is handled
-  // manually (onDocumentPointerDown / onDocumentKeyDown) instead.
+  // Dismissal is handled manually (onDocumentPointerDown / onDocumentKeyDown) so
+  // search keystrokes and option clicks never trigger light-dismiss surprises.
   menu.setAttribute("popover", "manual");
   menu.className = MENU_CLASSES;
+  ensureModelScrollbarStyle(document);
   menu.style.position = "fixed";
   menu.style.inset = "auto";
   menu.style.margin = "0";
   menu.style.padding = "4px";
   menu.style.border = "0";
   trigger.setAttribute("aria-controls", menu.id);
-
-  const modelButton = document.createElement("button");
-  modelButton.type = "button";
-  modelButton.dataset.openModelMenu = "true";
-  modelButton.setAttribute("role", "menuitem");
-  modelButton.setAttribute("aria-haspopup", "menu");
-  modelButton.setAttribute("aria-expanded", "false");
-  modelButton.className = OPTION_CLASSES;
-
-  const modelMenu = document.createElement("div");
-  modelMenu.id = `${composerId}-model-submenu`;
-  modelMenu.setAttribute("role", "menu");
-  modelMenu.setAttribute("aria-label", "Model");
-  modelMenu.setAttribute("popover", "manual");
-  modelMenu.className = MENU_CLASSES;
-  modelMenu.dataset.codexhostModelScrollable = "true";
-  ensureModelScrollbarStyle(document);
-  modelMenu.style.position = "fixed";
-  modelMenu.style.inset = "auto";
-  modelMenu.style.margin = "0";
-  modelMenu.style.padding = "4px";
-  modelMenu.style.border = "0";
-  modelMenu.style.maxHeight = `min(${RENDERER_MODEL_PICKER_MODEL_MENU_MAX_HEIGHT}px, 60vh)`;
-  modelMenu.style.overflowY = "auto";
-  modelButton.setAttribute("aria-controls", modelMenu.id);
 
   const options = new Map<string, ModelOptionControl>();
   const thinkingOptions = new Map<string, ThinkingOptionControl>();
@@ -396,9 +351,9 @@ export function mountRendererModelPicker(
   }
   // Safety net: if the harness still manages to steal focus to the composer
   // (e.g. via an earlier capture-phase listener), pull the cursor back into the
-  // search box as long as the submenu remains open.
+  // search box as long as the menu remains open.
   const onSearchBlur = (): void => {
-    if (!popoverOpen(modelMenu)) return;
+    if (!popoverOpen(menu)) return;
     const active = document.activeElement;
     const movedToComposer =
       active === document.body ||
@@ -407,116 +362,88 @@ export function mountRendererModelPicker(
           active.closest('textarea, [contenteditable="true"], [role="textbox"]') !== null));
     if (!movedToComposer) return;
     requestAnimationFrame(() => {
-      if (popoverOpen(modelMenu) && searchInput.isConnected) searchInput.focus();
+      if (popoverOpen(menu) && searchInput.isConnected) searchInput.focus();
     });
   };
   searchInput.addEventListener("blur", onSearchBlur);
-  const closeModelMenu = (): void => {
-    if (popoverOpen(modelMenu)) modelMenu.hidePopover();
-    modelButton.setAttribute("aria-expanded", "false");
+  const close = (): void => {
+    if (popoverOpen(menu)) menu.hidePopover();
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("data-state", "closed");
+    control.thinkingExpanded = false;
     if (searchInput.value !== "") {
       searchInput.value = "";
       applyModelSearchFilter(control);
     }
   };
-  const pickerOpen = (): boolean => popoverOpen(menu) || popoverOpen(modelMenu);
-  const close = (): void => {
-    closeModelMenu();
-    if (popoverOpen(menu)) menu.hidePopover();
-  };
-  const openModelMenu = (standalone = false): void => {
-    if ((!standalone && !popoverOpen(menu)) || popoverOpen(modelMenu)) return;
-    modelMenu.showPopover();
-    positionModelMenu(control, standalone);
-    modelButton.setAttribute("aria-expanded", "true");
-  };
   const open = (): void => {
-    if (trigger.disabled || pickerOpen()) return;
-    if (control.thinkingOptions.size === 0) {
-      openModelMenu(true);
-      return;
-    }
+    if (trigger.disabled || popoverOpen(menu)) return;
     menu.showPopover();
-    positionAdvancedMenus(control);
+    positionMenu(control);
+    trigger.setAttribute("aria-expanded", "true");
+    trigger.setAttribute("data-state", "open");
+    control.searchInput.focus();
   };
   const onTriggerClick = (): void => {
-    if (pickerOpen()) close();
+    if (popoverOpen(menu)) close();
     else open();
   };
   const onToggle = (): void => {
     const openState = popoverOpen(menu);
-    trigger.setAttribute("aria-expanded", String(openState || popoverOpen(modelMenu)));
+    trigger.setAttribute("aria-expanded", String(openState));
     trigger.setAttribute("data-state", openState ? "open" : "closed");
-    if (!openState) closeModelMenu();
   };
-  const onModelToggle = (): void => {
-    const openState = popoverOpen(modelMenu);
-    modelButton.setAttribute("aria-expanded", String(openState));
-    trigger.setAttribute("aria-expanded", String(openState || popoverOpen(menu)));
-    trigger.setAttribute("data-state", openState || popoverOpen(menu) ? "open" : "closed");
-  };
-  const onRootClick = (event: MouseEvent): void => {
+  const onMenuClick = (event: MouseEvent): void => {
     const target =
       event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button") : null;
-    if (target?.dataset.openModelMenu) {
-      openModelMenu();
-      control.searchInput.focus();
-      return;
-    }
-    if (target?.dataset.thinkingOptionId) {
+    if (!target || target.disabled) return;
+    if (target.dataset.thinkingOptionId) {
       close();
       trigger.focus();
       onSelectThinking(target.dataset.thinkingOptionId);
+      return;
+    }
+    // Keep the model list open until the selected model's native catalog arrives.
+    // The previous model's options cannot decide whether the next one supports thinking.
+    if (target?.dataset.modelId) {
+      const modelId = target.dataset.modelId;
+      control.thinkingExpanded = true;
+      onSelectModel(modelId);
+      positionMenu(control);
     }
   };
-  const onModelMenuClick = (event: MouseEvent): void => {
-    const target =
-      event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("button[data-model-id]")
-        : null;
-    if (!target?.dataset.modelId) return;
-    close();
-    trigger.focus();
-    onSelectModel(target.dataset.modelId);
-  };
-  const onModelHover = (): void => openModelMenu();
   const onDocumentPointerDown = (event: PointerEvent): void => {
-    if (!popoverOpen(menu) && !popoverOpen(modelMenu)) return;
+    if (!popoverOpen(menu)) return;
     const target = event.target instanceof Node ? event.target : null;
-    if (target && (root.contains(target) || menu.contains(target) || modelMenu.contains(target))) {
+    if (target && (root.contains(target) || menu.contains(target))) {
       return;
     }
     close();
   };
   const onDocumentKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Escape") return;
-    if (!popoverOpen(menu) && !popoverOpen(modelMenu)) return;
+    if (!popoverOpen(menu)) return;
     event.preventDefault();
     close();
     trigger.focus();
   };
   const onViewportChange = (): void => {
-    if (popoverOpen(menu)) positionAdvancedMenus(control);
-    else if (popoverOpen(modelMenu)) positionModelMenu(control, true);
+    if (popoverOpen(menu)) positionMenu(control);
   };
   trigger.addEventListener("click", onTriggerClick);
   menu.addEventListener("toggle", onToggle);
-  modelMenu.addEventListener("toggle", onModelToggle);
-  modelButton.addEventListener("mouseenter", onModelHover);
-  menu.addEventListener("click", onRootClick);
-  modelMenu.addEventListener("click", onModelMenuClick);
+  menu.addEventListener("click", onMenuClick);
   document.addEventListener("pointerdown", onDocumentPointerDown, true);
   document.addEventListener("keydown", onDocumentKeyDown, true);
   window.addEventListener("resize", onViewportChange);
   window.addEventListener("scroll", onViewportChange, true);
-  // Keep both popovers in the document viewport's coordinate space. The native
+  // Keep the popover in the document viewport's coordinate space. The native
   // composer toolbar can be affected by browser zoom or a transformed ancestor;
-  // portaling the menus prevents fixed-position coordinates from being resolved
+  // portaling the menu prevents fixed-position coordinates from being resolved
   // in that local coordinate space.
   root.append(trigger);
-  document.body.append(menu, modelMenu);
+  document.body.append(menu);
   searchHeader.append(searchInput);
-  modelMenu.append(searchHeader, searchEmpty);
 
   const control: RendererModelPickerControl = {
     root,
@@ -524,22 +451,18 @@ export function mountRendererModelPicker(
     label,
     thinkingLabel,
     menu,
-    modelMenu,
-    modelButton,
     searchInput,
     searchHeader,
     searchEmpty,
     options,
     thinkingOptions,
+    thinkingExpanded: false,
     close,
     dispose() {
       close();
       trigger.removeEventListener("click", onTriggerClick);
       menu.removeEventListener("toggle", onToggle);
-      modelMenu.removeEventListener("toggle", onModelToggle);
-      modelButton.removeEventListener("mouseenter", onModelHover);
-      menu.removeEventListener("click", onRootClick);
-      modelMenu.removeEventListener("click", onModelMenuClick);
+      menu.removeEventListener("click", onMenuClick);
       searchInput.removeEventListener("input", onSearchInput);
       for (const type of silencedEventTypes) {
         searchInput.removeEventListener(type, silenceForHarness);
@@ -550,7 +473,6 @@ export function mountRendererModelPicker(
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("scroll", onViewportChange, true);
       menu.remove();
-      modelMenu.remove();
       root.remove();
     },
   };
@@ -562,46 +484,21 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   const presentation = rendererModelPickerPresentation(view);
   control.options.clear();
   control.thinkingOptions.clear();
+  control.menu.dataset.twoColumn = String(presentation.showThinkingSection);
   control.menu.replaceChildren();
-  control.modelMenu.replaceChildren(
-    createHeading("Model"),
-    control.searchHeader,
-    control.searchEmpty,
-  );
 
-  if (presentation.showThinkingSection) {
-    control.menu.append(createHeading("Thinking"));
-    for (const option of presentation.thinkingOptions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.thinkingOptionId = option.id;
-      button.setAttribute("role", "menuitemradio");
-      button.className = OPTION_CLASSES;
-
-      const text = document.createElement("span");
-      text.textContent = option.label;
-      text.className = "min-w-0 flex-1 truncate";
-      const check = createCheck();
-      button.append(text, check);
-      control.thinkingOptions.set(option.id, { button, check });
-      control.menu.append(button);
-    }
-    const divider = document.createElement("div");
-    divider.setAttribute("role", "separator");
-    divider.className = "my-1 h-px bg-token-border";
-    control.menu.append(divider);
-  }
-
-  const modelText = document.createElement("span");
-  modelText.textContent = presentation.modelLabel;
-  modelText.className = "min-w-0 flex-1 truncate";
-  modelText.title = presentation.modelLabel;
-  const modelChevron = document.createElement("span");
-  modelChevron.textContent = "\u203a";
-  modelChevron.setAttribute("aria-hidden", "true");
-  modelChevron.className = "shrink-0 text-token-text-tertiary";
-  control.modelButton.replaceChildren(modelText, modelChevron);
-  control.menu.append(control.modelButton);
+  // 左列：模型（搜索 + 列表，列表内部滚动）
+  const modelColumn = document.createElement("div");
+  modelColumn.className = "flex min-w-0 flex-col";
+  modelColumn.style.display = "flex";
+  modelColumn.style.flexDirection = "column";
+  modelColumn.style.width = `${RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH}px`;
+  modelColumn.style.minWidth = "0";
+  const modelList = document.createElement("div");
+  modelList.setAttribute("data-codexhost-model-scrollable", "true");
+  modelList.style.overflowY = "auto";
+  modelList.style.minHeight = "0";
+  modelColumn.append(createHeading("Model"), control.searchHeader, control.searchEmpty, modelList);
 
   for (const model of view.catalog?.models ?? []) {
     const button = document.createElement("button");
@@ -621,13 +518,56 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
       check,
       searchText: `${model.label} ${model.ref.id}`.toLowerCase(),
     });
-    control.modelMenu.append(button);
+    modelList.append(button);
   }
+
+  const columns = document.createElement("div");
+  columns.className = "flex items-stretch";
+  columns.style.display = "flex";
+  columns.style.alignItems = "stretch";
+  columns.append(modelColumn);
+
+  // 右列：当前选中模型适用的思考强度档位
+  if (presentation.showThinkingSection) {
+    const thinkingColumn = document.createElement("div");
+    thinkingColumn.dataset.codexhostThinkingColumn = "true";
+    thinkingColumn.className = "flex min-w-0 flex-col";
+    thinkingColumn.style.display = control.thinkingExpanded ? "flex" : "none";
+    thinkingColumn.style.flexDirection = "column";
+    thinkingColumn.style.width = `${RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH}px`;
+    thinkingColumn.style.borderLeft = "1px solid var(--border-token-border, rgba(128, 128, 128, 0.25))";
+    thinkingColumn.style.marginLeft = "4px";
+    thinkingColumn.style.paddingLeft = "4px";
+    thinkingColumn.append(createHeading("Thinking"));
+    const thinkingList = document.createElement("div");
+    thinkingList.setAttribute("data-codexhost-model-scrollable", "true");
+    thinkingList.style.overflowY = "auto";
+    thinkingList.style.minHeight = "0";
+    for (const option of presentation.thinkingOptions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.thinkingOptionId = option.id;
+      button.setAttribute("role", "menuitemradio");
+      button.className = OPTION_CLASSES;
+
+      const text = document.createElement("span");
+      text.textContent = option.label;
+      text.className = "min-w-0 flex-1 truncate";
+      const check = createCheck();
+      button.append(text, check);
+      control.thinkingOptions.set(option.id, { button, check });
+      thinkingList.append(button);
+    }
+    thinkingColumn.append(thinkingList);
+    columns.append(thinkingColumn);
+  }
+
+  control.menu.append(columns);
   applyModelSearchFilter(control);
-  // rebuildOptions replaced the submenu children above, which moves the focused
+  // rebuildOptions replaced the menu children above, which moves the focused
   // search input out and back in and therefore drops focus; restore it while
-  // the submenu stays open.
-  if (popoverOpen(control.modelMenu)) control.searchInput.focus();
+  // the menu stays open.
+  if (popoverOpen(control.menu)) control.searchInput.focus();
 }
 
 export function renderRendererModelPicker(
@@ -660,6 +600,7 @@ export function renderRendererModelPicker(
   if (control.root.dataset.catalogSignature !== catalogSignature && !keepOpenMenu) {
     rebuildOptions(control, view);
     control.root.dataset.catalogSignature = catalogSignature;
+    if (popoverOpen(control.menu)) positionMenu(control);
   }
 
   syncRendererLabelText(control.label, presentation.modelLabel);
@@ -678,7 +619,6 @@ export function renderRendererModelPicker(
   );
   control.trigger.disabled = isRendererModelPickerDisabled(view);
   if (shouldCloseRendererModelPicker(view) && !keepOpenMenu) control.close();
-  control.modelButton.disabled = control.trigger.disabled;
   // The search input must not mirror the trigger's disabled state: disabling a
   // focused element blurs it, which would drop the cursor out of the box during
   // transient states (e.g. "selecting"). Filtering is client-side and safe.

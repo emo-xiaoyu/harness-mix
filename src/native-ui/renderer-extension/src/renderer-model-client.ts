@@ -38,6 +38,11 @@ import {
   threadCommandExecuteParamsSchema,
   threadCommandExecuteResultSchema,
   threadCommandsInspectParamsSchema,
+  threadDelegateParamsSchema,
+  threadDelegationResultSchema,
+  threadHarnessSwitchParamsSchema,
+  threadHarnessSwitchResultSchema,
+  threadMessageParamsSchema,
   threadModelSelectParamsSchema,
   threadPermissionModeSelectParamsSchema,
   threadThinkingSelectParamsSchema,
@@ -74,6 +79,11 @@ import {
   type ThreadCommandExecuteParams,
   type ThreadCommandExecuteResult,
   type ThreadCommandsInspectParams,
+  type ThreadDelegateParams,
+  type ThreadDelegationResult,
+  type ThreadHarnessSwitchParams,
+  type ThreadHarnessSwitchResult,
+  type ThreadMessageParams,
   type ThreadModelSelectParams,
   type ThreadPermissionModeSelectParams,
   type ThreadThinkingSelectParams,
@@ -96,13 +106,17 @@ import {
 } from "./renderer-session-import-client.js";
 
 export const HARNESS_INSPECT_METHOD = "codexhost/harness/inspect";
+export const HARNESS_INSTALL_METHOD = "codexhost/harness/install";
 export const HARNESS_PLUGIN_LIST_METHOD = "codexhost/harness/plugins/list";
 export const HARNESS_WEB_UI_OPEN_METHOD = "codexhost/harness/web-ui/open";
 export const THREAD_FORK_METHOD = "codexhost/thread/fork";
+export const THREAD_HARNESS_SWITCH_METHOD = "codexhost/thread/harness/switch";
 export const THREAD_INSPECT_METHOD = "codexhost/thread/inspect";
 export const HARNESS_COMMANDS_INSPECT_METHOD = "codexhost/harness/commands/inspect";
 export const THREAD_COMMANDS_INSPECT_METHOD = "codexhost/thread/commands/inspect";
 export const THREAD_COMMAND_EXECUTE_METHOD = "codexhost/thread/command/execute";
+export const THREAD_DELEGATE_METHOD = "codexhost/thread/delegate";
+export const THREAD_MESSAGE_METHOD = "codexhost/thread/message";
 export const THREAD_MODEL_SELECT_METHOD = "codexhost/thread/model/select";
 export const THREAD_THINKING_SELECT_METHOD = "codexhost/thread/thinking/select";
 export const THREAD_PERMISSION_MODE_SELECT_METHOD = "codexhost/thread/permission-mode/select";
@@ -158,11 +172,14 @@ function notificationTarget(manager: RequestManagerCandidate): RequestManagerCan
 }
 
 export interface RendererModelClient extends Partial<RendererSessionImportClient> {
+  listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>>;
   currentHostId?(): string | null;
   listHarnessPlugins?(): Promise<HarnessPluginListResult>;
   clientForHost?(hostId: string): RendererModelClient | null;
   forkThread(input: ExternalThreadForkParams): Promise<ExternalThreadForkResult>;
+  switchHarness(input: ThreadHarnessSwitchParams): Promise<ThreadHarnessSwitchResult>;
   inspectHarness(input: HarnessInspectParams): Promise<HarnessInspection>;
+  installHarness?(input: { harnessId: string }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
   openHarnessWebUi?(input: HarnessWebUiOpenParams): Promise<void>;
   inspectThread(input: ThreadInspectionParams): Promise<ThreadInspection>;
   inspectHarnessCommands(input: HarnessCommandsInspectParams): Promise<HarnessCommandCatalog>;
@@ -308,6 +325,11 @@ export function createRendererModelClient(
   };
 
   return Object.freeze({
+    async listCollaborationAgents(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>> {
+      const result = await manager.sendRequest('codexhost/collaboration/agents', {});
+      if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');
+      return result;
+    },
     ...createRendererSessionImportClient(async (method, params) =>
       manager.sendRequest(method, params),
     ),
@@ -316,7 +338,28 @@ export function createRendererModelClient(
       const result = await manager.sendRequest(THREAD_FORK_METHOD, params);
       return externalThreadForkResultSchema.parse(result);
     },
+    // 原地切换 Harness：历史保留在 Host 线程上，切换后首轮由 Host 附带一次性上下文信封
+    async switchHarness(input: ThreadHarnessSwitchParams): Promise<ThreadHarnessSwitchResult> {
+      const params = threadHarnessSwitchParamsSchema.parse(input);
+      const result = await manager.sendRequest(THREAD_HARNESS_SWITCH_METHOD, params);
+      return threadHarnessSwitchResultSchema.parse(result);
+    },
+    // 跨 Harness 协作：委派新子任务 / 跟进既有子任务；等待链由父线程协作 Turn 承载
+    async delegateThread(input: ThreadDelegateParams): Promise<ThreadDelegationResult> {
+      const params = threadDelegateParamsSchema.parse(input);
+      const result = await manager.sendRequest(THREAD_DELEGATE_METHOD, params);
+      return threadDelegationResultSchema.parse(result);
+    },
+    async messageThread(input: ThreadMessageParams): Promise<ThreadDelegationResult> {
+      const params = threadMessageParamsSchema.parse(input);
+      const result = await manager.sendRequest(THREAD_MESSAGE_METHOD, params);
+      return threadDelegationResultSchema.parse(result);
+    },
     inspectHarness,
+    async installHarness(input: { harnessId: string }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }> {
+      const result = await manager.sendRequest(HARNESS_INSTALL_METHOD, input);
+      return result as { success: boolean; command?: string; stdout?: string; stderr?: string; error?: string };
+    },
     async listHarnessPlugins(): Promise<HarnessPluginListResult> {
       return harnessPluginListResultSchema.parse(
         await manager.sendRequest(HARNESS_PLUGIN_LIST_METHOD, {}),

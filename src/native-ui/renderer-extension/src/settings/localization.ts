@@ -157,6 +157,26 @@ export interface RendererSettingsMessages {
   readonly connectionIssueDescription: string;
   readonly connectionReadyDescription: string;
   readonly connectionUnavailableDescription: string;
+  readonly modelConfigurationTitle: string;
+  readonly modelConfigurationDescription: string;
+  readonly modelSelectLabel: string;
+  readonly thinkingSelectLabel: string;
+  readonly thinkingOptionDefault: string;
+  readonly saveModelPreference: string;
+  readonly resetModelPreference: string;
+  readonly preferenceSaved: string;
+  readonly preferenceReset: string;
+  readonly loadingModels: string;
+  readonly noModelsAvailable: string;
+  readonly oneClickInstall: string;
+  readonly oneClickInstalling: string;
+  readonly oneClickInstallSuccess: string;
+  readonly oneClickInstallFailed: string;
+  readonly installCommandLabel: string;
+  readonly copyInstallCommand: string;
+  readonly installCommandCopied: string;
+  readonly officialDownload: string;
+  readonly refreshDetection: string;
   readonly connectionGroupMoreLabel: string;
   readonly connectionGroupMoreHintTitle: string;
   readonly connectionGroupMoreHintBody: string;
@@ -365,6 +385,27 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   connectionReadyDescription: "This component is available on the selected Host.",
   connectionUnavailableDescription:
     "This component is not currently available on the selected Host.",
+  modelConfigurationTitle: "Model & Thinking Configuration",
+  modelConfigurationDescription:
+    "Configure the default model and reasoning effort for new threads with this Harness.",
+  modelSelectLabel: "Default Model",
+  thinkingSelectLabel: "Reasoning Effort",
+  thinkingOptionDefault: "Default (Harness configured)",
+  saveModelPreference: "Save as Default for New Threads",
+  resetModelPreference: "Reset to Harness Default",
+  preferenceSaved: "Saved as default configuration for new threads!",
+  preferenceReset: "Reset to default configuration.",
+  loadingModels: "Detecting available models...",
+  noModelsAvailable: "No models detected for this Harness.",
+  oneClickInstall: "One-Click Install",
+  oneClickInstalling: "Installing Harness in background...",
+  oneClickInstallSuccess: "Installed successfully! Status refreshed.",
+  oneClickInstallFailed: "Installation failed. Please try running the command manually.",
+  installCommandLabel: "Install Command",
+  copyInstallCommand: "Copy Command",
+  installCommandCopied: "Command Copied",
+  officialDownload: "Official Website / Download",
+  refreshDetection: "Refresh & Detect",
   connectionGroupMoreLabel: "More",
   connectionGroupMoreHintTitle: "Drag Agents here to collapse the ones you rarely use",
   connectionGroupMoreHintBody: "They fold into the picker's “More Agents” group",
@@ -579,6 +620,26 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   connectionIssueDescription: "提交前请复制错误日志，并在 Issue 中说明当前 Host 与复现步骤。",
   connectionReadyDescription: "该组件在当前 Host 上可用。",
   connectionUnavailableDescription: "该组件当前无法在所选 Host 上使用。",
+  modelConfigurationTitle: "模型与思考档位配置",
+  modelConfigurationDescription: "配置此 Harness 新建会话时默认使用的模型与思考档位。",
+  modelSelectLabel: "默认模型",
+  thinkingSelectLabel: "思考档位",
+  thinkingOptionDefault: "跟随 Harness 默认",
+  saveModelPreference: "设为新会话默认",
+  resetModelPreference: "恢复 Harness 默认",
+  preferenceSaved: "已保存为默认配置！新建该 Harness 会话时将默认生效。",
+  preferenceReset: "已恢复为 Harness 原生默认。",
+  loadingModels: "正在探测可用模型……",
+  noModelsAvailable: "未探测到可用模型。",
+  oneClickInstall: "一键安装",
+  oneClickInstalling: "正在后台安装 Harness……",
+  oneClickInstallSuccess: "安装成功！状态已自动刷新。",
+  oneClickInstallFailed: "安装失败，请尝试复制下方命令在终端手动运行。",
+  installCommandLabel: "推荐安装命令",
+  copyInstallCommand: "复制安装命令",
+  installCommandCopied: "已复制命令",
+  officialDownload: "前往官网 / 下载安装包",
+  refreshDetection: "刷新检测",
   connectionGroupMoreLabel: "更多",
   connectionGroupMoreHintTitle: "拖到这里可以收起不常用的 Agent",
   connectionGroupMoreHintBody: "它们会折叠进选择器的「更多」分组",

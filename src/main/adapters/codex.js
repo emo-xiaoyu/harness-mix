@@ -7,12 +7,14 @@ const manifest = {
   id: 'codex',
   name: 'Codex',
   icon: 'codex-color.svg',
+  aliases: ['codex', 'codex-harness'],
   capabilities: {
     plan: true, streaming: true, thinking: true, tools: true,
     approvals: true, questions: true, models: true, thinkingLevels: true,
     permissionModes: true, resume: true, fork: true, forkFromMessage: true,
     compaction: true, nativeDiff: true, nativePatch: true,
     usage: true, contextUsage: true, cost: false, attachments: true,
+    collaborationTools: true,
   },
 };
 
@@ -89,15 +91,12 @@ function toolOutput(item, session) {
   return session?.state?.toolOutput.get(item?.id);
 }
 
-function nativeChanges(item) {
+function nativeChanges(item, complete = false) {
   return (item?.changes ?? []).map((change) => ({
     path: change.path,
     patch: change.diff,
     changeType: change.kind?.type ?? change.kind ?? 'modified',
-    // app-server exposes a native unified diff, not full before/after text.
-    // Keep it live and incomplete so the reversible workspace snapshot can
-    // replace it with authoritative file contents when the turn settles.
-    complete: false,
+    complete,
     nativeRef: { toolCallId: item.id },
   }));
 }
@@ -178,7 +177,7 @@ function projectNotification(message, session, emit) {
         if (!session.state.reasoningItems.has(item.id)) emit({ kind: 'thinking-delta', text: item.summary.join('\n'), nativeRef });
       } else if (item?.type === 'fileChange') {
         emitTool(item, session, emit, toolState(item));
-        emit({ kind: 'file-change', source: 'native', changes: nativeChanges(item), nativeRef });
+        emit({ kind: 'file-change', source: 'native', changes: nativeChanges(item, true), nativeRef });
       } else if (item?.type === 'contextCompaction') {
         emit({ kind: 'status', text: '上下文已压缩', nativeRef });
         session.state.compaction?.resolve();
@@ -250,6 +249,17 @@ function approvalOptions(method, params) {
 
 function queueRequest(message, session, emit) {
   const { method, params = {}, id } = message;
+  if (method === 'mcpServer/elicitation/request') {
+    const requestId = `codex-${id}`;
+    return new Promise(resolve => {
+      session.pendingApprovals.set(requestId, { method, resolve, params });
+      const form = params.mode === 'form' && Object.keys(params.requestedSchema?.properties ?? {}).length > 0;
+      emit({ kind: 'approval', requestId, method: form ? 'input' : 'select',
+        title: `Codex MCP · ${params.serverName}`, message: [params.message, params.url, form ? JSON.stringify(params.requestedSchema) : ''].filter(Boolean).join('\n'),
+        ...(form ? { placeholder: '按原生请求填写 JSON；取消可拒绝' } : { options: [{ id: 'accept', label: '允许' }, { id: 'decline', label: '拒绝', kind: 'reject' }] }),
+        nativeRef: { sessionId: session.nativeSessionId, turnId: params.turnId ?? undefined, interactionId: String(id) } });
+    });
+  }
   if (method === 'item/tool/requestUserInput') {
     const questions = params.questions ?? [];
     return new Promise((resolve) => {
@@ -305,7 +315,7 @@ function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort,
       session.state.turn = null;
       session.state.compaction?.reject(error);
       session.state.compaction = null;
-      for (const pending of session.pendingApprovals.values()) pending.resolve?.({ decision: 'cancel' });
+      for (const pending of session.pendingApprovals.values()) pending.resolve?.(pending.method === 'mcpServer/elicitation/request' ? { action: 'cancel', content: null } : { decision: 'cancel' });
       session.pendingApprovals.clear();
     },
   });
@@ -334,14 +344,16 @@ function create() {
         : { available: true, detail: String(result.stdout).trim() };
     },
 
-    async open({ thread, emit, diagnostic }) {
+    async open({ thread, emit, diagnostic, collaboration }) {
       const host = await CodexAppServer.acquire(diagnostic);
       try {
+        const options = { ...threadOptions(thread), ...(collaboration ? { config: { 'mcp_servers.harness-mix': collaboration } } : {}) };
         const result = thread.restore
-          ? await host.request('thread/resume', { threadId: thread.nativeSessionId, ...threadOptions(thread) })
-          : await host.request('thread/start', threadOptions(thread));
+          ? await host.request('thread/resume', { threadId: thread.nativeSessionId, ...options })
+          : await host.request('thread/start', options);
         const model = { id: result.model, name: result.model, provider: result.modelProvider ?? 'openai' };
         const session = attachSession(host, result.thread.id, { emit, diagnostic, model, effort: result.reasoningEffort, cwd: thread.cwd });
+        session.collaborationEnabled = !!collaboration;
         emit({ kind: 'session', nativeSessionId: result.thread.id, model });
         return session;
       } catch (error) {
@@ -383,6 +395,18 @@ function create() {
     async respond(session, requestId, response) {
       const pending = session.pendingApprovals.get(requestId);
       if (!pending) throw new Error('Codex 原生请求已经结束');
+      if (pending.method === 'mcpServer/elicitation/request') {
+        const action = response?.cancelled ? 'cancel' : response?.optionId ?? (response?.confirmed === false ? 'decline' : 'accept');
+        if (!['accept', 'decline', 'cancel'].includes(action)) throw new Error('Invalid MCP elicitation response');
+        let content = null;
+        if (action === 'accept' && pending.params.mode === 'form') {
+          content = response?.value ? JSON.parse(response.value) : {};
+          require('zod').z.fromJSONSchema(pending.params.requestedSchema).parse(content);
+        }
+        session.pendingApprovals.delete(requestId);
+        pending.resolve({ action, content });
+        return;
+      }
       session.pendingApprovals.delete(requestId);
       if (pending.group) {
         const answer = response?.cancelled ? [] : [String(response?.optionId ?? response?.value ?? '')];
@@ -508,6 +532,7 @@ function create() {
       }
       for (const pending of session.pendingApprovals.values()) {
         if (pending.group) pending.group.resolve({ answers: pending.group.answers });
+        else if (pending.method === 'mcpServer/elicitation/request') pending.resolve({ action: 'cancel', content: null });
         else if (pending.method === 'item/permissions/requestApproval') pending.resolve({ permissions: {}, scope: 'turn' });
         else pending.resolve({ decision: 'cancel' });
       }

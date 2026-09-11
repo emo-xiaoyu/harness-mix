@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "contractVersions": {
+    "rendererBinding": 1,
+    "controllerReadiness": 2,
+    "protocolFixture": 1
+  },
+  "blockedDesktopVersions": [],
+  "evidence": [
+    {
+      "desktopVersion": "26.721.4979.0",
+      "level": "protocol-fixture",
+      "checkedAt": "2026-07-25",
+      "notes": "Sanitized official app-server envelope capture; not a full Desktop UI acceptance."
+    },
+    {
+      "desktopVersion": "26.901.2854.0",
+      "level": "protocol-and-smoke",
+      "checkedAt": "2026-09-11",
+      "notes": "Install inspection, protocol suite, native build and offscreen Electron smoke passed; full restarted Desktop acceptance remains pending."
+    }
+  ]
+}
