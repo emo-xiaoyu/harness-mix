@@ -1,9 +1,49 @@
 {
   "name": "harness-mix",
   "version": "0.1.0",
-  "private": true,
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge — local HostRuntime/ProtocolCore kernel driving Pi, Claude Code, DeepSeek Harness, Antigravity and Codex inside the official Codex Desktop.",
+  "keywords": [
+    "codex",
+    "codex-desktop",
+    "coding-agent",
+    "harness",
+    "pi",
+    "claude-code",
+    "deepseek",
+    "antigravity",
+    "ai"
+  ],
+  "homepage": "https://github.com/emo-xiaoyu/harness-mix#readme",
+  "bugs": "https://github.com/emo-xiaoyu/harness-mix/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emo-xiaoyu/harness-mix.git"
+  },
+  "bin": {
+    "harness-mix": "scripts/launch-codex.cjs"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "config",
+    "docs",
+    "licenses",
+    "NOTICE",
+    "Start-Codex.cmd",
+    "output/native-build/harness-mix-shim.exe",
+    "output/native-build/harness-mix-appx.exe",
+    "output/native-build/desktop-controller.mjs",
+    "output/native-build/renderer-extension.js",
+    "!src/main/native/rs/target",
+    "!**/*.log"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "workspaces": [
     "src/native-ui/shared-contracts",
     "src/native-ui/desktop-control",
@@ -28,6 +68,7 @@
     "test:native-sidebar": "node scripts/native-sidebar-test.cjs",
     "smoke:native-ui": "electron scripts/native-ui-smoke.cjs",
     "start": "node scripts/launch-codex.cjs",
+    "prepublishOnly": "npm run check && npm run test:core-all && npm run build:native",
     "check:native": "node scripts/launch-codex.cjs --check",
     "test:native-config": "node scripts/native-config-test.cjs",
     "test:native-compatibility": "node scripts/native-compatibility-test.cjs",
