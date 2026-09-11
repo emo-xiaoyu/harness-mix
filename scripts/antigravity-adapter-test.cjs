@@ -5,7 +5,7 @@ const path = require('node:path');
 const antigravity = require('../src/main/adapters/antigravity');
 
 (async () => {
-  const { manifest, create, parseModelsOutput, parseUsage, formatPrompt, ANTIGRAVITY_PERMISSION_MODES } = antigravity;
+  const { manifest, create, parseModelsOutput, parseUsage, formatPrompt, prepareImageAttachments, ANTIGRAVITY_PERMISSION_MODES } = antigravity;
 
   // 1. Manifest
   assert.equal(manifest.id, 'antigravity');
@@ -21,6 +21,7 @@ const antigravity = require('../src/main/adapters/antigravity');
   assert.equal(manifest.capabilities.permissionModes, true);
   assert.equal(manifest.capabilities.resume, true);
   assert.equal(manifest.capabilities.fork, true);
+  assert.equal(manifest.capabilities.attachments, true);
 
   // 2. parseModelsOutput
   const sampleModelsOutput = `
@@ -148,10 +149,25 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.equal(forked.session.nativeSessionId, forked.nativeSessionId);
   assert.ok(forkEvents.some(e => e.kind === 'session' && e.nativeSessionId === forked.nativeSessionId));
 
-  // 11. Close session
+  // 11. Image attachments
+  const tmpRoot = path.join(os.tmpdir(), `agy-attach-test-${Date.now()}`);
+  await fs.promises.mkdir(tmpRoot, { recursive: true });
+  const localImg = path.join(tmpRoot, 'test.png');
+  await fs.promises.writeFile(localImg, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+  const prepared = await prepareImageAttachments([
+    { name: 'test.png', path: localImg },
+    { name: 'inline.png', mime: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' },
+  ], tmpRoot);
+  assert.equal(prepared.imageEntries.length, 2);
+  assert.equal(prepared.imageEntries[0].name, 'test.png');
+  assert.equal(prepared.imageEntries[0].path, localImg.replace(/\\/g, '/'));
+  assert.ok(fs.existsSync(prepared.imageEntries[1].path));
+  await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+
+  // 12. Close session
   await adapter.close(session);
 
-  console.log('antigravity adapter: manifest, models catalog, usage projection, prompt formatting, session lifecycle, model switching, describe and fork passed');
+  console.log('antigravity adapter: manifest, models catalog, usage projection, prompt formatting, image attachments, session lifecycle, model switching, describe and fork passed');
 })().catch((err) => {
   console.error(err);
   process.exitCode = 1;

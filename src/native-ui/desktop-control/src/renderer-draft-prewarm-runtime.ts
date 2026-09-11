@@ -531,7 +531,11 @@ export function installDraftPrewarmPolicyBridge(
     return shouldUseBridge(method, routedParameters) ? sendBridged() : sendDirect();
   };
   const routedPrewarm = (parameters: unknown, options?: unknown): unknown => {
-    const routedParameters = routeThreadStart(parameters);
+    const routed = routeThreadStart(parameters);
+    // External prewarming must not publish a second persistent sidebar thread.
+    const routedParameters = isRecord(routed) && typeof routed.model === "string" && routed.model.startsWith("codexhost/")
+      ? { ...routed, ephemeral: true }
+      : routed;
     if (shouldUseBridge("thread/start", routedParameters)) {
       return routedSend("thread/start", routedParameters, options);
     }

@@ -5,8 +5,27 @@ const crypto = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
 const { nativePaths, nativeEnvironment, saveNativeSettings } = require('./config');
 const { autoUpdate, defaultHooks } = require('./updater');
+const {
+  evaluateDesktopCompatibility,
+  enforceDesktopCompatibility,
+} = require('./compatibility');
 
-const REPO_ROOT = path.resolve(__dirname, '../..');
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+function cacheCodexRuntime(resources, cache) {
+  fs.mkdirSync(cache, { recursive: true });
+  // The CLI resolves helper executables next to itself, including code mode.
+  // Repair existing caches as well as preparing a new version.
+  for (const entry of fs.readdirSync(resources, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^(?:codex(?:-.+)?|rg)\.exe$/i.test(entry.name)) continue;
+    const source = path.join(resources, entry.name);
+    const destination = path.join(cache, entry.name);
+    if (!fs.existsSync(destination) || fs.statSync(destination).size !== fs.statSync(source).size) {
+      fs.copyFileSync(source, destination);
+    }
+  }
+  return path.join(cache, 'codex.exe');
+}
 
 function powershell(source) {
   return execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', source], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
@@ -19,9 +38,7 @@ function inspect() {
   // An executable outside WindowsApps avoids package ACL/activation constraints.
   const digest = crypto.createHash('sha256').update(fs.readFileSync(packaged)).digest('hex').slice(0, 16);
   const cache = path.join(process.env.LOCALAPPDATA, 'Harness Mix/codex', digest);
-  fs.mkdirSync(cache, { recursive: true });
-  const stock = path.join(cache, 'codex.exe');
-  if (!fs.existsSync(stock)) fs.copyFileSync(packaged, stock);
+  const stock = cacheCodexRuntime(path.dirname(packaged), cache);
   return { ...installation, stock, executable: path.join(installation.root, 'app/ChatGPT.exe') };
 }
 async function freePort() {
@@ -45,11 +62,16 @@ async function launch(args = []) {
     await autoUpdate({ root, hooks: defaultHooks(root) });
   }
   const installation = inspect();
+  const compatibility = evaluateDesktopCompatibility(installation.version);
   const paths = nativePaths();
   for (const file of Object.values(paths)) if (!fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);
   if (flags.has('--check')) {
-    console.log(`desktop_version=${installation.version}\nexecutable_codex_cli=${installation.stock}\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
+    console.log(`desktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
     return;
+  }
+  enforceDesktopCompatibility(compatibility);
+  if (compatibility.state !== 'verified') {
+    console.warn(`[Harness Mix] Codex Desktop ${installation.version} compatibility is ${compatibility.state}; protocol checks continue, but full restarted Desktop acceptance is not recorded.`);
   }
   const env = nativeEnvironment();
   saveNativeSettings(env);
@@ -75,4 +97,4 @@ async function launch(args = []) {
   controller.on('exit', code => { process.exitCode = code || 0; });
   return controller;
 }
-module.exports = { inspect, launch };
+module.exports = { inspect, launch, cacheCodexRuntime };

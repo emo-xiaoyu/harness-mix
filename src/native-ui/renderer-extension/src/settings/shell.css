@@ -2006,3 +2006,144 @@ button {
     transition-duration: 0s !important;
   }
 }
+
+/* Harness Mix: Model Configuration & One-click Install */
+.settings-model-config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  margin-top: 14px;
+  border-radius: 8px;
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+}
+
+.settings-model-config-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-model-config-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--settings-text);
+}
+
+.settings-model-config-description {
+  font-size: 11px;
+  color: var(--settings-muted);
+  margin: 0;
+}
+
+.settings-model-config-loading,
+.settings-model-config-empty {
+  font-size: 12px;
+  color: var(--settings-muted);
+  padding: 8px 0;
+}
+
+.settings-model-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.settings-model-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-model-config-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--settings-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-model-config-select {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--settings-border);
+  background: var(--settings-panel);
+  color: var(--settings-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.settings-model-config-select:focus {
+  border-color: var(--settings-primary);
+}
+
+.settings-model-config-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.settings-model-config-feedback {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-feedback-success {
+  color: var(--settings-success);
+}
+
+.settings-feedback-error {
+  color: var(--settings-danger);
+}
+
+.settings-feedback-info {
+  color: var(--settings-primary);
+}
+
+.settings-install-command-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.settings-install-command-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--settings-muted);
+}
+
+.settings-install-command-row {
+  display: flex;
+  align-items: center;
+  background: var(--settings-inset);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--settings-border);
+}
+
+.settings-install-command-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--settings-text);
+  user-select: all;
+}
+
+.settings-install-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.settings-install-feedback {
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 6px;
+}

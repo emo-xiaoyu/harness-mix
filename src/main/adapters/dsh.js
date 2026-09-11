@@ -8,6 +8,7 @@ const manifest = {
   id: "dsh",
   name: "DeepSeek Harness",
   icon: "deepseek-color.svg",
+  aliases: ["dsh", "deepseek-harness"],
   // 完整接入（对齐 codex-host）：官方 Web Remote 协议（Typert RPC + remote.mux 流），
   // 审批/提问走 $events waterfall 原生应答；ACP 自动化面（无 fork/提问/plan）已弃用。
   capabilities: { plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },

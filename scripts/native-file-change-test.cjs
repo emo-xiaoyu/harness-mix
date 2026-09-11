@@ -67,6 +67,14 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
     files = (await rt.readReview(thread, message)).files;
     assert.equal(files.filter(file => file.path === 'nested/c.txt').length, 1);
     assert.equal(files.find(file => file.path === 'nested/c.txt').source, 'native');
+    // Antigravity 式：原生事件只携带路径、不携带内容（complete: false，与 codex.js 同一约定），
+    // 必须由工作区快照接管，否则回合结算后仍无增删统计（UI 显示 +0 -0）。
+    await fs.writeFile(path.join(root, 'd.txt'), 'disk\n');
+    emit({ kind: 'file-change', source: 'native', changes: [{ path: path.join(root, 'd.txt'), changeType: 'added', complete: false }] });
+    files = (await rt.readReview(thread, message)).files;
+    const incomplete = files.find(file => file.path === 'd.txt');
+    assert.equal(incomplete.source, 'snapshot', 'contentless native hint must not block the workspace snapshot');
+    assert.equal(incomplete.after, 'disk\n');
     emit({ kind: 'completed', finalAnswer: true });
     for (let i = 0; i < 200 && thread.reviewPending; i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(thread.reviewPending, false);

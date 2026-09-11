@@ -6,6 +6,7 @@ const { createNativeRef, validateNativeRef } = require('./native-ref');
 const EVENT_TYPES = [
   'thread.created',
   'thread.updated',
+  'thread.rolledBack',
   'turn.started',
   'turn.waiting',
   'turn.resumed',

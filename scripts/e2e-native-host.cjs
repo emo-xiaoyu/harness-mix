@@ -54,6 +54,27 @@ async function main() {
     const officialModels = await request('model/list', {});
     assert.ok(Array.isArray(officialModels.data), 'Official model/list passes through');
     report.checks.push('official model/list passthrough');
+    // Real Host + stock-server section catalog, with test threads isolated in output/.
+    const sidebarThread = await request('thread/start', { cwd: directory, model: 'codexhost/pi-native' });
+    const sidebarId = sidebarThread.thread.id;
+    assert.equal(sidebarThread.thread.sessionId, sidebarId);
+    const descendants = await request('thread/list', { ancestorThreadId: sidebarId, sourceKinds: ['subAgentThreadSpawn'] });
+    assert.equal(descendants.data.some(thread => thread.id === sidebarId), false);
+    const sections = await request('threadSection/list', { limit: 100 });
+    const section = sections.data[0];
+    assert.ok(section, 'Desktop has a section available for pin/unpin verification');
+    const inSection = async () => (await request('thread/list', { sectionId: section.id, sortKey: 'section_position' })).data.filter(thread => thread.id === sidebarId);
+    assert.equal((await inSection()).length, 0, 'New external thread is not auto-pinned');
+    await request('thread/section/move', { threadId: sidebarId, sectionId: section.id });
+    assert.equal((await inSection()).length, 1, 'Pinned external thread appears exactly once');
+    await request('thread/section/move', { threadId: sidebarId, sectionId: null });
+    assert.equal((await inSection()).length, 0, 'Unpin stays removed on the next list query');
+    const resumed = await request('thread/resume', { threadId: sidebarId });
+    assert.equal(resumed.model, 'codexhost/pi-native');
+    const inspected = await request('codexhost/thread/inspect', { threadId: sidebarId });
+    assert.equal(inspected.harnessId, 'pi');
+    assert.equal(inspected.transportModelId, resumed.model);
+    report.checks.push('external identity, no self-descendants, pin/unpin and resume ownership');
     if (process.argv.includes('--live')) {
       const harnessId = process.argv.find(arg => arg.startsWith('--harness='))?.split('=')[1] || 'pi';
       const started = await request('thread/start', { cwd: directory, model: `codexhost/${harnessId}-native` });

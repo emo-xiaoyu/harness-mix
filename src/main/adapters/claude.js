@@ -7,9 +7,10 @@ const manifest = {
   id: "claude",
   name: "Claude Code",
   icon: "claude-color.svg",
+  aliases: ['claude', 'claude-code'],
   // 完整接入（对齐 codex-host）：官方 Agent SDK query() 常驻双向 stream-json 会话，
   // 审批/提问经 canUseTool 桥接回 Host，中断/模型/权限模式走原生控制协议。
-  capabilities: { streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: false, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
+  capabilities: { collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
 /** Claude Code 原生权限模式（SDK PermissionMode 全集），与其 TUI/Desktop 一致 */
@@ -41,7 +42,7 @@ function projectEvent(event) {
     for (const block of event.message.content) {
       if (block.type === "thinking" && block.thinking) out.push({ kind: "thinking-delta", text: block.thinking, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
       if (block.type === "text" && block.text) out.push({ kind: "text-delta", text: block.text, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
-      if (block.type === "tool_use") out.push({ kind: "tool", toolCallId: block.id, title: block.name || "工具", state: "done", detail: summarizeInput(block.input) });
+      if (block.type === "tool_use") out.push({ kind: "tool", toolCallId: block.id, title: block.name || "工具", state: "running", detail: summarizeInput(block.input), input: JSON.stringify(block.input ?? {}) });
     }
   } else if (event.type === "user" && Array.isArray(event.message?.content)) {
     const result = event.tool_use_result;
@@ -56,6 +57,8 @@ function projectEvent(event) {
     for (const block of event.message.content) {
       if (block?.type !== "tool_result") continue;
       const parts = Array.isArray(block.content) ? block.content : [];
+      out.push({ kind: 'tool', toolCallId: block.tool_use_id, state: block.is_error ? 'error' : 'done',
+        output: typeof block.content === 'string' ? block.content : parts.filter(part => part?.type === 'text').map(part => part.text).join('\n') });
       parts.forEach((part, i) => {
         if (part?.type === "image" && part.source?.type === "base64" && typeof part.source.data === "string") {
           out.push({ kind: "artifact", artifact: { id: `${block.tool_use_id ?? "claude"}-img-${i}`, type: "image", name: "图片", mime: part.source.media_type || "image/png", data: part.source.data.length <= 5_000_000 ? part.source.data : undefined } });
@@ -159,11 +162,12 @@ async function loadSdk() {
 }
 
 /** 建立一个常驻 SDK 会话（open 与 fork 共用）：构造 query、启动事件泵 */
-function spawnSession(sdk, { cwd, resumeId, permissionMode, modelId, emit }) {
+function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration }) {
   const input = new MessageQueue();
   const session = {
-    nativeSessionId: resumeId,
+    nativeSessionId: resumeId || newSessionId,
     cwd,
+    collaborationEnabled: !!collaboration,
     permissionMode,
     model: undefined,
     input,
@@ -178,7 +182,10 @@ function spawnSession(sdk, { cwd, resumeId, permissionMode, modelId, emit }) {
     prompt: input,
     options: {
       cwd,
+      ...(collaboration ? { mcpServers: { 'harness-mix': collaboration } } : {}),
       ...(resumeId ? { resume: resumeId } : {}),
+      ...(!resumeId && newSessionId ? { sessionId: newSessionId } : {}),
+      ...(effort ? { effort } : {}),
       ...(permissionMode ? { permissionMode } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(process.env.HARNESS_MIX_CLAUDE_EXECUTABLE ? { pathToClaudeCodeExecutable: process.env.HARNESS_MIX_CLAUDE_EXECUTABLE } : {}),
@@ -255,14 +262,17 @@ function create() {
         : { available: true, detail: "Agent SDK 就绪（内置原生 CLI；未检测到独立 claude 命令）" };
     },
 
-    async open({ thread, emit }) {
+    async open({ thread, emit, collaboration }) {
       const sdk = await loadSdk();
       return spawnSession(sdk, {
         cwd: thread.cwd,
         resumeId: thread.restore ? thread.nativeSessionId : undefined,
+        newSessionId: thread.restore ? undefined : thread.nativeSessionId,
+        effort: thread.options?.thinking,
         permissionMode: thread.options?.permissionMode,
         modelId: thread.options?.model?.id,
         emit,
+        collaboration,
       });
     },
 
@@ -337,7 +347,7 @@ function create() {
       if (!session?.query) return null;
       try {
         const models = await session.query.supportedModels();
-        session.models = models.map((m) => ({ id: m.value, name: m.displayName || m.value, description: m.description, resolved: m.resolvedModel }));
+        session.models = models.map((m) => ({ id: m.value, name: m.displayName || m.value, description: m.description, resolved: m.resolvedModel, efforts: m.supportedEffortLevels || [] }));
         return session.models;
       } catch { return null; }
     },
@@ -350,13 +360,20 @@ function create() {
       session.permissionMode = mode;
       await session.query?.setPermissionMode(mode);
     },
+    async setThinkingLevel(session, level) {
+      const models = await this.listModelsFor(session);
+      const current = models?.find(m => m.id === session.model?.id || m.resolved === session.model?.id);
+      if (!current?.efforts.includes(level)) throw new Error('当前 Claude 模型未声明该思考档位');
+      await session.query.applyFlagSettings({ effortLevel: level });
+    },
     async describe() {
       // 目录探测需常驻会话；模型目录在会话打开后经 listModelsFor 获取，这里只声明权限模式
       return { models: null, thinkingLevels: null, permissionModes: CLAUDE_PERMISSION_MODES };
     },
     async describeFor(session) {
       const models = await this.listModelsFor(session);
-      return { models, thinkingLevels: null, permissionModes: CLAUDE_PERMISSION_MODES };
+      const current = models?.find(m => m.id === session.model?.id || m.resolved === session.model?.id) || models?.[0];
+      return { models, thinkingLevels: (current?.efforts || []).map(id => ({ id, label: id })), permissionModes: CLAUDE_PERMISSION_MODES };
     },
 
     async getContextUsage(session) { return session.state?.lastUsage; },

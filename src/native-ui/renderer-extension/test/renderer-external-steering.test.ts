@@ -169,7 +169,7 @@ describe("external direction changes use normal Desktop start presentation", () 
     {
       input: [
         { type: "text", text: "new input" },
-        { type: "localImage", path: "/image.png" },
+        { type: "localImage", path: "" },
       ],
     },
   ])("rejects unsupported input before cancel or creating a placeholder: %j", async ({ input }) => {

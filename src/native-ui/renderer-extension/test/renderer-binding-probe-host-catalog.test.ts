@@ -88,7 +88,11 @@ vi.mock("../src/renderer-sidebar-agent-icons.js", () => ({
   installRendererSidebarAgentIcons: () => ({ refresh: vi.fn(), dispose: vi.fn() }),
 }));
 
-vi.mock("../src/renderer-settings-lifecycle.js", () => ({
+vi.mock("../src/renderer-harness-mentions.js", () => ({
+  installHarnessMentions: () => ({ dispose: vi.fn() }),
+}));
+
+vi.mock("../src/harness-mix-settings.js", () => ({
   installRendererSettingsLifecycle: (
     _window: unknown,
     options: {

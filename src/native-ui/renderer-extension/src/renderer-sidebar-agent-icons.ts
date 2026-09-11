@@ -113,7 +113,7 @@ export interface SidebarAgentIconRow {
   hostId(): string | null;
   threadId(): string | null;
   draftId(): string | null;
-  render(agent: Exclude<RendererAgent, "codex">): void;
+  render(agent: RendererAgent): void;
   clear(): void;
 }
 
@@ -130,8 +130,8 @@ export interface RendererSidebarAgentIcons {
 
 export function rendererAgentForThreadOwnership(
   ownership: ThreadOwnership,
-): Exclude<RendererAgent, "codex"> | null {
-  if (ownership.owner === "codex") return null;
+): RendererAgent | null {
+  if (ownership.owner === "codex") return "codex";
   if (ownership.harnessId === "pi") return "pi";
   if (ownership.harnessId === "claude-code") return "claude-code";
   if (ownership.harnessId === "deepseek-harness") return "deepseek-harness";
@@ -140,6 +140,13 @@ export function rendererAgentForThreadOwnership(
   if (ownership.harnessId === "omp") return "omp";
   if (ownership.harnessId === "antigravity") return "antigravity";
   if (ownership.harnessId === "kiro-cli") return "kiro-cli";
+  if (ownership.harnessId === "openclaw") return "openclaw";
+  if (ownership.harnessId === "hermes") return "hermes";
+  if (ownership.harnessId === "qoder") return "qoder";
+  if (ownership.harnessId === "workbuddy") return "workbuddy";
+  if (ownership.harnessId === "zcode") return "zcode";
+  if (ownership.harnessId === "trae") return "trae";
+  if (ownership.harnessId === 'codex-harness') return 'codex-harness';
   return null;
 }
 
@@ -162,7 +169,7 @@ class BrowserSidebarAgentIconRow implements SidebarAgentIconRow {
     return draftIdFromSidebarRowElement(this.element);
   }
 
-  render(agent: Exclude<RendererAgent, "codex">): void {
+  render(agent: RendererAgent): void {
     const titleTrigger = this.element.querySelector<HTMLElement>("[data-thread-title-trigger]");
     const title = titleTrigger?.querySelector<HTMLElement>("[data-thread-title]");
     if (!titleTrigger || !title) {
@@ -255,10 +262,11 @@ export function installRendererSidebarAgentIcons(options: {
   dom?: SidebarAgentIconDom;
 }): RendererSidebarAgentIcons {
   const dom = options.dom ?? new BrowserSidebarAgentIconDom(document);
-  const ownershipByThread = new Map<string, Exclude<RendererAgent, "codex"> | null>();
+  const ownershipByThread = new Map<string, RendererAgent | null>();
   const pending = new Set<string>();
   const failed = new Set<string>();
   const provisionalCodex = new Set<string>();
+  const stale = new Set<string>();
   const ownershipRetryAttempts = new Map<string, number>();
   const ownershipRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let disposed = false;
@@ -300,7 +308,7 @@ export function installRendererSidebarAgentIcons(options: {
       ownershipRetryTimers.delete(key);
       if (disposed) return;
       failed.delete(key);
-      ownershipByThread.delete(key);
+      stale.add(key);
       scheduleScan();
     }, delay);
     ownershipRetryTimers.set(key, timer);
@@ -311,7 +319,11 @@ export function installRendererSidebarAgentIcons(options: {
     threadIds: ReturnType<typeof hostThreadIdSchema.parse>[],
     client: RendererModelClient,
   ): void => {
-    for (const threadId of threadIds) pending.add(ownershipKey(hostId, threadId));
+    for (const threadId of threadIds) {
+      const key = ownershipKey(hostId, threadId);
+      pending.add(key);
+      stale.delete(key);
+    }
     let succeeded = false;
     let retryable = true;
     void Promise.resolve()
@@ -368,11 +380,10 @@ export function installRendererSidebarAgentIcons(options: {
       if (localAgent !== null && localAgent !== undefined) {
         if (threadId.success) {
           const key = ownershipKey(hostId, threadId.data);
-          ownershipByThread.set(key, localAgent === "codex" ? null : localAgent);
+          ownershipByThread.set(key, localAgent);
           clearOwnershipRetry(key);
         }
-        if (localAgent === "codex") row.clear();
-        else row.render(localAgent);
+        row.render(localAgent);
         continue;
       }
       if (!threadId.success) {
@@ -384,9 +395,9 @@ export function installRendererSidebarAgentIcons(options: {
         const agent = ownershipByThread.get(key);
         if (agent) row.render(agent);
         else row.clear();
-        continue;
+        if (!stale.has(key)) continue;
       }
-      row.clear();
+      if (!ownershipByThread.has(key)) row.clear();
       if (!pending.has(key) && !failed.has(key)) {
         let unresolved = unresolvedByHost.get(hostId);
         if (!unresolved) {
@@ -423,11 +434,8 @@ export function installRendererSidebarAgentIcons(options: {
   return {
     refresh() {
       failed.clear();
-      for (const timer of ownershipRetryTimers.values()) clearTimeout(timer);
-      ownershipRetryTimers.clear();
-      ownershipRetryAttempts.clear();
-      for (const key of provisionalCodex) ownershipByThread.delete(key);
-      provisionalCodex.clear();
+      // Revalidate in the background without tearing down a known icon.
+      for (const key of provisionalCodex) stale.add(key);
       scheduleScan();
     },
     dispose() {
@@ -439,6 +447,7 @@ export function installRendererSidebarAgentIcons(options: {
       pending.clear();
       failed.clear();
       provisionalCodex.clear();
+      stale.clear();
       for (const timer of ownershipRetryTimers.values()) clearTimeout(timer);
       ownershipRetryTimers.clear();
       ownershipRetryAttempts.clear();

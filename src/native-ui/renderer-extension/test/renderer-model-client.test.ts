@@ -22,6 +22,7 @@ import {
   HARNESS_PLUGIN_LIST_METHOD,
   HARNESS_WEB_UI_OPEN_METHOD,
   THREAD_FORK_METHOD,
+  THREAD_HARNESS_SWITCH_METHOD,
   THREAD_INSPECT_METHOD,
   THREAD_MODEL_SELECT_METHOD,
   THREAD_PERMISSION_MODE_SELECT_METHOD,
@@ -276,7 +277,8 @@ describe("Renderer fixed Model request client", () => {
           error: null,
         },
       })
-      .mockResolvedValueOnce({ status: null });
+      .mockResolvedValueOnce({ status: null })
+      .mockResolvedValueOnce({ threadId: "thread-1" });
     const client = createRendererModelClient([{ addNotificationCallback, sendRequest }]);
     if (!client) throw new Error("Synthetic Model client was not created");
     expect(Object.keys(client).sort()).toEqual([
@@ -285,6 +287,7 @@ describe("Renderer fixed Model request client", () => {
       "checkUpdate",
       "consumeCodexAccountResetCredit",
       "createCodexAccount",
+      "delegateThread",
       "deleteCodexAccount",
       "executeThreadCommand",
       "forkThread",
@@ -295,12 +298,15 @@ describe("Renderer fixed Model request client", () => {
       "inspectThread",
       "inspectThreadCommands",
       "inspectThreadUsage",
+      "installHarness",
       "listCodexAccounts",
+      "listCollaborationAgents",
       "listHarnessAccounts",
       "listHarnessPlugins",
       "listHarnessSessions",
       "listSessionImportSources",
       "listThreadOwnership",
+      "messageThread",
       "openHarnessWebUi",
       "readUpdateStatus",
       "refreshCodexAccounts",
@@ -311,6 +317,7 @@ describe("Renderer fixed Model request client", () => {
       "startUpdate",
       "subscribeCodexAccountLogin",
       "subscribeThreadUsage",
+      "switchHarness",
     ]);
 
     await expect(client.inspectHarness({ harnessId: piHarnessId, refresh: true })).resolves.toEqual(
@@ -430,6 +437,18 @@ describe("Renderer fixed Model request client", () => {
     expect(sendRequest).toHaveBeenNthCalledWith(10, UPDATE_CHECK_METHOD, {});
     expect(sendRequest).toHaveBeenNthCalledWith(11, UPDATE_START_METHOD, {});
     expect(sendRequest).toHaveBeenNthCalledWith(12, UPDATE_STATUS_METHOD, {});
+    await expect(
+      client.switchHarness({
+        threadId: hostThreadIdSchema.parse("thread-1"),
+        harnessId: "claude-code",
+        note: "继续补测试",
+      }),
+    ).resolves.toEqual({ threadId: "thread-1" });
+    expect(sendRequest).toHaveBeenNthCalledWith(13, THREAD_HARNESS_SWITCH_METHOD, {
+      threadId: "thread-1",
+      harnessId: "claude-code",
+      note: "继续补测试",
+    });
   });
 
   it("uses fixed generic Session import methods and never accepts a browser-supplied locator", async () => {

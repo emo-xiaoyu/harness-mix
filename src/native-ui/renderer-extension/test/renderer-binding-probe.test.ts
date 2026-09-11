@@ -1139,8 +1139,24 @@ describe("Renderer Composer DOM behavior", () => {
     ).toBe("max");
     expect(
       draftThinkingOptionForModel(catalog, plainModel, harnessThinkingOptionIdSchema.parse("max")),
-    ).toBe("off");
+    ).toBeUndefined();
     expect(draftThinkingOptionForModel(catalog, reasoningModel, undefined)).toBe("high");
+  });
+
+  it("does not impose the first Thinking option when nothing is requested or declared default", () => {
+    const modelRef = harnessModelRefSchema.parse({ id: "pi-model-v1.any" });
+    const catalog = harnessModelCatalogSchema.parse({
+      models: [
+        { ref: modelRef, label: "Any", supportedThinkingOptionIds: ["off", "high"] },
+      ],
+      defaultModel: modelRef,
+      thinkingOptions: [
+        { id: "off", label: "Off" },
+        { id: "high", label: "High" },
+      ],
+    });
+    // 目录首档（off）不得静默强加：让原生会话自身的默认档生效
+    expect(draftThinkingOptionForModel(catalog, modelRef, undefined)).toBeUndefined();
   });
 
   it("falls back draft Permission Mode but fails closed for a stale locked carrier", () => {

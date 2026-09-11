@@ -1,4 +1,4 @@
-import type { CodexhostError } from "@codexhost/shared-contracts";
+import type { CodexhostError, HarnessInspection } from "@codexhost/shared-contracts";
 
 import {
   getSharedAgentGroupPreferenceStore,
@@ -6,6 +6,10 @@ import {
   type AgentGroupSection,
 } from "../agent-group-preference.js";
 import type { ExternalRendererAgent, RendererAgentAvailability } from "../agent-selection-state.js";
+import {
+  readNewThreadExternalConfigurationPreference,
+  writeNewThreadExternalConfigurationPreference,
+} from "../renderer-new-thread-preference.js";
 import { createRendererAgentIcon, RENDERER_AGENT_LABELS } from "../renderer-agent-icon.js";
 import type { RendererAdapterStatus } from "../versioned-renderer-adapter.js";
 import type { RendererSettingsPageDefinition, RendererSettingsPageMountContext } from "./core.js";
@@ -14,6 +18,25 @@ import type { RendererSettingsMessages } from "./localization.js";
 
 export const CODEXHOST_GITHUB_ISSUES_NEW_URL =
   "https://github.com/BytePioneer-AI/codex-host/issues/new";
+
+export const HARNESS_INSTALL_COMMANDS: Readonly<Record<ExternalRendererAgent, { command: string }>> = Object.freeze({
+  qoder: { command: "npm install -g @qoder-ai/qodercli" },
+  workbuddy: { command: "npm install -g @tencent/codebuddy" },
+  zcode: { command: "pip install zcode-cli" },
+  trae: { command: "npm install -g traecli" },
+  codex: { command: "npm install -g @openai/codex" },
+  pi: { command: "npm install -g @mariozechner/pi-coding-agent" },
+  "claude-code": { command: "npm install -g @anthropic-ai/claude-code" },
+  "deepseek-harness": { command: "pip install deepseek-harness" },
+  opencode: { command: "npm install -g opencode-ai" },
+  grok: { command: "npm install -g @xai/grok-cli" },
+  omp: { command: "npm install -g @oh-my-prompt/omp" },
+  antigravity: { command: "npm install -g @google/antigravity-cli" },
+  "kiro-cli": { command: "npm install -g kiro-cli" },
+  openclaw: { command: "npm install -g openclaw" },
+  hermes: { command: "pip install hermes-agent" },
+  "codex-harness": { command: "npm install -g @openai/codex" },
+});
 
 const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Object.freeze({
   pi: "https://pi.dev/",
@@ -24,6 +47,13 @@ const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Ob
   omp: "https://github.com/can1357/oh-my-pi",
   antigravity: "https://antigravity.google/product/antigravity-cli",
   "kiro-cli": "https://kiro.dev/docs/cli/",
+  openclaw: "https://docs.openclaw.ai/",
+  hermes: "https://hermes-agent.nousresearch.com/",
+  qoder: "https://qoder.com/",
+  workbuddy: "https://workbuddy.ai/",
+  zcode: "https://zcode.z.ai/",
+  trae: "https://www.trae.ai/",
+  'codex-harness': 'https://developers.openai.com/codex/',
 });
 
 export interface RendererConnectionAgentSnapshot {
@@ -48,6 +78,8 @@ export interface RendererConnectionDiagnostics {
   snapshot(): RendererConnectionSnapshot;
   refresh(): Promise<void>;
   openWebUi?(hostId: string, agent: ExternalRendererAgent): Promise<void>;
+  inspectHarness?(hostId: string, agent: ExternalRendererAgent): Promise<HarnessInspection>;
+  installHarness?(hostId: string, agent: ExternalRendererAgent): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -391,40 +423,334 @@ function createInspectorHeader(
   return header;
 }
 
+function renderOneClickInstallSection(
+  document: Document,
+  container: HTMLElement,
+  agent: ExternalRendererAgent,
+  name: string,
+  hostId: string,
+  messages: RendererSettingsMessages,
+  diagnostics: RendererConnectionDiagnostics | null,
+): void {
+  const section = document.createElement("div");
+  section.className = "settings-connection-install-callout";
+
+  const head = document.createElement("div");
+  head.className = "settings-connection-install-head";
+  const icon = document.createElement("span");
+  icon.className = "settings-connection-install-callout__icon";
+  icon.append(createRendererSettingsIcon("download", 18));
+  const copy = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = `${messages.connectionInstall} ${name}`;
+  const description = document.createElement("p");
+  description.textContent = messages.connectionInstallDescription;
+  copy.append(title, description);
+  head.append(icon, copy);
+
+  const commandInfo = HARNESS_INSTALL_COMMANDS[agent];
+  const commandBox = document.createElement("div");
+  commandBox.className = "settings-install-command-box";
+  const commandLabel = document.createElement("span");
+  commandLabel.className = "settings-install-command-label";
+  commandLabel.textContent = messages.installCommandLabel;
+  const commandRow = document.createElement("div");
+  commandRow.className = "settings-install-command-row";
+  const code = document.createElement("code");
+  code.textContent = commandInfo?.command ?? `npm install -g ${agent}`;
+  commandRow.append(code);
+  commandBox.append(commandLabel, commandRow);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-install-actions";
+
+  const installBtn = document.createElement("button");
+  installBtn.type = "button";
+  installBtn.className = "settings-command-button";
+  installBtn.append(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "settings-command-button settings-command-button--secondary";
+  copyBtn.append(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
+
+  const downloadLink = document.createElement("a");
+  downloadLink.className = "settings-command-button settings-command-button--secondary";
+  downloadLink.href = HARNESS_INSTALL_URLS[agent];
+  downloadLink.target = "_blank";
+  downloadLink.rel = "noopener noreferrer";
+  downloadLink.append(createRendererSettingsIcon("external-link", 15), messages.officialDownload);
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "settings-command-button settings-command-button--secondary";
+  refreshBtn.append(createRendererSettingsIcon("diagnose", 15), messages.refreshDetection);
+
+  const feedback = document.createElement("div");
+  feedback.className = "settings-install-feedback";
+
+  copyBtn.addEventListener("click", () => {
+    const text = commandInfo?.command ?? `npm install -g ${agent}`;
+    const clipboard = document.defaultView?.navigator?.clipboard;
+    if (clipboard) {
+      void clipboard.writeText(text).then(() => {
+        copyBtn.textContent = messages.installCommandCopied;
+        document.defaultView?.setTimeout(() => {
+          copyBtn.replaceChildren(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
+        }, 2000);
+      });
+    }
+  });
+
+  refreshBtn.addEventListener("click", () => {
+    void diagnostics?.refresh();
+  });
+
+  installBtn.addEventListener("click", () => {
+    if (installBtn.disabled) return;
+    installBtn.disabled = true;
+    installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstalling);
+    feedback.textContent = "";
+    feedback.className = "settings-install-feedback";
+
+    const run = async () => {
+      if (!diagnostics?.installHarness) {
+        const text = commandInfo?.command ?? `npm install -g ${agent}`;
+        await document.defaultView?.navigator?.clipboard?.writeText(text);
+        feedback.className = "settings-install-feedback settings-feedback-warning";
+        feedback.textContent = messages.oneClickInstallFailed;
+        installBtn.disabled = false;
+        installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+        return;
+      }
+      try {
+        const result = await diagnostics.installHarness(hostId, agent);
+        if (result.success) {
+          feedback.className = "settings-install-feedback settings-feedback-success";
+          feedback.textContent = messages.oneClickInstallSuccess;
+          installBtn.replaceChildren(createRendererSettingsIcon("check", 15), messages.oneClickInstallSuccess);
+          document.defaultView?.setTimeout(() => {
+            void diagnostics.refresh();
+          }, 1000);
+        } else {
+          feedback.className = "settings-install-feedback settings-feedback-error";
+          feedback.textContent = `${messages.oneClickInstallFailed} ${result.error ?? ""}`;
+          installBtn.disabled = false;
+          installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+        }
+      } catch (err: unknown) {
+        feedback.className = "settings-install-feedback settings-feedback-error";
+        feedback.textContent = `${messages.oneClickInstallFailed} ${err instanceof Error ? err.message : String(err)}`;
+        installBtn.disabled = false;
+        installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+      }
+    };
+    void run();
+  });
+
+  actions.append(installBtn, copyBtn, downloadLink, refreshBtn);
+  section.append(head, commandBox, actions, feedback);
+  container.append(section);
+}
+
+function renderModelConfigurationSection(
+  document: Document,
+  container: HTMLElement,
+  agent: ExternalRendererAgent,
+  hostId: string,
+  messages: RendererSettingsMessages,
+  diagnostics: RendererConnectionDiagnostics | null,
+): void {
+  const card = document.createElement("div");
+  card.className = "settings-model-config-panel";
+
+  const cardHead = document.createElement("div");
+  cardHead.className = "settings-model-config-head";
+  const title = document.createElement("strong");
+  title.className = "settings-model-config-title";
+  title.textContent = messages.modelConfigurationTitle;
+  const description = document.createElement("p");
+  description.className = "settings-model-config-description";
+  description.textContent = messages.modelConfigurationDescription;
+  cardHead.append(title, description);
+  card.append(cardHead);
+
+  const loading = document.createElement("div");
+  loading.className = "settings-model-config-loading";
+  loading.textContent = messages.loadingModels;
+  card.append(loading);
+  container.append(card);
+
+  if (!diagnostics?.inspectHarness) {
+    loading.textContent = messages.notAvailable;
+    return;
+  }
+
+  void diagnostics.inspectHarness(hostId, agent).then(
+    (inspection) => {
+      loading.remove();
+      if (inspection.status !== "ready") {
+        const empty = document.createElement("div");
+        empty.className = "settings-model-config-empty";
+        empty.textContent = inspection.error?.message ?? messages.noModelsAvailable;
+        card.append(empty);
+        return;
+      }
+      const catalog = inspection.catalog;
+      if (!catalog || !catalog.models || catalog.models.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "settings-model-config-empty";
+        empty.textContent = messages.noModelsAvailable;
+        card.append(empty);
+        return;
+      }
+
+      const pref = readNewThreadExternalConfigurationPreference(
+        agent,
+        catalog,
+        inspection.permissionModes,
+      );
+
+      const form = document.createElement("div");
+      form.className = "settings-model-config-form";
+
+      // Model Select
+      const modelField = document.createElement("div");
+      modelField.className = "settings-model-config-field";
+      const modelLabel = document.createElement("label");
+      modelLabel.className = "settings-model-config-label";
+      modelLabel.textContent = messages.modelSelectLabel;
+      const modelSelect = document.createElement("select");
+      modelSelect.className = "settings-model-config-select";
+
+      const initialModelId = pref?.model.id ?? catalog.defaultModel?.id ?? catalog.models[0]?.ref.id;
+      for (const m of catalog.models) {
+        const option = document.createElement("option");
+        option.value = m.ref.id;
+        option.textContent = m.label || m.ref.id;
+        if (m.ref.id === initialModelId) option.selected = true;
+        modelSelect.append(option);
+      }
+      modelField.append(modelLabel, modelSelect);
+      form.append(modelField);
+
+      // Thinking Select (if supported)
+      const thinkingField = document.createElement("div");
+      thinkingField.className = "settings-model-config-field";
+      const thinkingLabel = document.createElement("label");
+      thinkingLabel.className = "settings-model-config-label";
+      thinkingLabel.textContent = messages.thinkingSelectLabel;
+      const thinkingSelect = document.createElement("select");
+      thinkingSelect.className = "settings-model-config-select";
+      thinkingField.append(thinkingLabel, thinkingSelect);
+
+      const updateThinkingOptions = () => {
+        const currentModel = catalog.models.find((m) => m.ref.id === modelSelect.value);
+        const supportedIds = currentModel?.supportedThinkingOptionIds ?? catalog.thinkingOptions?.map((o) => o.id) ?? [];
+        thinkingSelect.replaceChildren();
+
+        const defaultOption = document.createElement("option");
+        defaultOption.value = "";
+        defaultOption.textContent = messages.thinkingOptionDefault;
+        thinkingSelect.append(defaultOption);
+
+        const availableThinking = (catalog.thinkingOptions ?? []).filter((o) => supportedIds.includes(o.id));
+        if (availableThinking.length === 0) {
+          thinkingField.style.display = "none";
+          return;
+        }
+        thinkingField.style.display = "flex";
+        for (const opt of availableThinking) {
+          const option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.label || opt.id;
+          if (opt.id === (pref?.thinkingOptionId ?? catalog.defaultThinkingOptionId)) {
+            option.selected = true;
+          }
+          thinkingSelect.append(option);
+        }
+      };
+
+      updateThinkingOptions();
+      modelSelect.addEventListener("change", updateThinkingOptions);
+      form.append(thinkingField);
+
+      // Buttons & Feedback
+      const actions = document.createElement("div");
+      actions.className = "settings-model-config-actions";
+
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "settings-command-button";
+      saveBtn.append(createRendererSettingsIcon("check", 15), messages.saveModelPreference);
+
+      const resetBtn = document.createElement("button");
+      resetBtn.type = "button";
+      resetBtn.className = "settings-command-button settings-command-button--secondary";
+      resetBtn.append(createRendererSettingsIcon("undo", 15), messages.resetModelPreference);
+
+      const feedback = document.createElement("span");
+      feedback.className = "settings-model-config-feedback";
+
+      saveBtn.addEventListener("click", () => {
+        const targetModel = catalog.models.find((m) => m.ref.id === modelSelect.value);
+        if (!targetModel) return;
+        const thinkingOpt = catalog.thinkingOptions?.find((o) => o.id === thinkingSelect.value);
+        const thinkingVal = thinkingOpt?.id;
+        writeNewThreadExternalConfigurationPreference(agent, targetModel.ref, thinkingVal);
+        feedback.className = "settings-model-config-feedback settings-feedback-success";
+        feedback.textContent = messages.preferenceSaved;
+        document.defaultView?.setTimeout(() => {
+          feedback.textContent = "";
+        }, 3500);
+      });
+
+      resetBtn.addEventListener("click", () => {
+        const defaultRef = catalog.defaultModel ?? catalog.models[0]?.ref;
+        if (!defaultRef) return;
+        writeNewThreadExternalConfigurationPreference(agent, defaultRef, catalog.defaultThinkingOptionId);
+        modelSelect.value = defaultRef.id;
+        updateThinkingOptions();
+        if (catalog.defaultThinkingOptionId) thinkingSelect.value = catalog.defaultThinkingOptionId;
+        feedback.className = "settings-model-config-feedback settings-feedback-info";
+        feedback.textContent = messages.preferenceReset;
+        document.defaultView?.setTimeout(() => {
+          feedback.textContent = "";
+        }, 3500);
+      });
+
+      actions.append(saveBtn, resetBtn, feedback);
+      form.append(actions);
+      card.append(form);
+    },
+    (err: unknown) => {
+      loading.textContent = `${messages.connectionErrorTitle}: ${err instanceof Error ? err.message : String(err)}`;
+    },
+  );
+}
+
 function renderConnectionInspector(
   document: Document,
   inspector: HTMLElement,
   item: ConnectionListItem,
   hostId: string,
   messages: RendererSettingsMessages,
+  diagnostics: RendererConnectionDiagnostics | null = null,
 ): void {
   inspector.replaceChildren(createInspectorHeader(document, item, messages));
   const body = document.createElement("div");
   body.className = "settings-connection-inspector__body";
 
-  if (item.agentSnapshot?.availability === "notInstalled") {
-    const callout = document.createElement("div");
-    callout.className = "settings-connection-install-callout";
-    const icon = document.createElement("span");
-    icon.className = "settings-connection-install-callout__icon";
-    icon.append(createRendererSettingsIcon("download", 18));
-    const copy = document.createElement("div");
-    const title = document.createElement("strong");
-    title.textContent = `${messages.connectionInstall} ${item.name}`;
-    const description = document.createElement("p");
-    description.textContent = messages.connectionInstallDescription;
-    copy.append(title, description);
-    callout.append(icon, copy);
-    const install = document.createElement("a");
-    install.className = "settings-command-button settings-connection-install-button";
-    install.href = HARNESS_INSTALL_URLS[item.agentSnapshot.agent];
-    install.target = "_blank";
-    install.rel = "noopener noreferrer";
-    install.append(
-      messages.connectionOpenInstallation,
-      createRendererSettingsIcon("external-link", 14),
+  if (item.agentSnapshot && (item.agentSnapshot.availability === "notInstalled" || item.agentSnapshot.availability === "unavailable")) {
+    renderOneClickInstallSection(
+      document,
+      body,
+      item.agentSnapshot.agent,
+      item.name,
+      hostId,
+      messages,
+      diagnostics,
     );
-    body.append(callout, install);
   } else if (item.error) {
     const summary = document.createElement("div");
     summary.className = "settings-connection-error-summary";
@@ -494,6 +820,7 @@ function renderConnectionInspector(
         : messages.connectionUnavailableDescription;
     status.append(title, description);
     body.append(status);
+
     if (item.openWebUi) {
       const open = document.createElement("button");
       open.type = "button";
@@ -514,6 +841,17 @@ function renderConnectionInspector(
           });
       });
       body.append(open);
+    }
+
+    if (item.agentSnapshot && item.availability === "ready") {
+      renderModelConfigurationSection(
+        document,
+        body,
+        item.agentSnapshot.agent,
+        hostId,
+        messages,
+        diagnostics,
+      );
     }
   }
 
@@ -795,7 +1133,7 @@ export function createConnectionsSettingsPage(
             row.dataset.connectionSelected = String(selected);
             row.tabIndex = selected ? 0 : -1;
           }
-          renderConnectionInspector(document, inspector, item, selectedHost.hostId, messages);
+          renderConnectionInspector(document, inspector, item, selectedHost.hostId, messages, diagnostics);
         };
 
         const pinnedItem = items.find((item) => item.key === "renderer-adapter");

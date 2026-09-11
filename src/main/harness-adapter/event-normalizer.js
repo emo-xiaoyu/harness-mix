@@ -19,7 +19,7 @@ class EventNormalizer {
   }
 
   /** Turn 开始：先产出 user_message（已完成），后续 delta 归入本 Turn */
-  beginTurn(turnId, userText) {
+  beginTurn(turnId, userText, attachments = []) {
     this.turnId = turnId;
     this.currentNativeRef = undefined;
     this.turnActive = true;
@@ -31,7 +31,7 @@ class EventNormalizer {
     this.segmentSequence = 0;
     const itemId = `item_user_${turnId}`;
     return [
-      this.#event({ type: 'item.started', itemId, payload: { type: 'user_message', content: userText } }),
+      this.#event({ type: 'item.started', itemId, payload: { type: 'user_message', content: userText, ...(attachments.length ? { attachments } : {}) } }),
       this.#event({ type: 'item.completed', itemId }),
     ];
   }
@@ -159,11 +159,16 @@ class EventNormalizer {
         type: 'item.started',
         itemId,
         nativeRef: legacy.toolCallId ? { toolCallId: String(legacy.toolCallId) } : undefined,
-        payload: { type: 'tool_call', title: legacy.title ?? '工具', state },
+        payload: { type: 'tool_call', title: legacy.title ?? '工具', state,
+          ...(legacy.collaboration ? { collaboration: legacy.collaboration } : {}) },
       }));
     }
     const patch = {};
-    for (const k of ['detail', 'input', 'output']) if (typeof legacy[k] === 'string') patch[k] = legacy[k];
+    if (legacy.collaboration) patch.collaboration = legacy.collaboration;
+    for (const k of ['detail', 'input', 'output']) {
+      if (typeof legacy[k] === 'string') patch[k] = legacy[k];
+      else if (legacy[k] != null) patch[k] = JSON.stringify(legacy[k]);
+    }
     if (legacy.title) patch.title = legacy.title;
     patch.state = state;
     events.push(this.#event({ type: 'item.updated', itemId, payload: patch }));

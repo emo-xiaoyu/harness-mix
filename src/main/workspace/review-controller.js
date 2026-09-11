@@ -18,9 +18,25 @@ class ReviewController {
     if (monitor) { monitor.closed = true; clearInterval(monitor.timer); this.reviewMonitors.delete(thread.id); }
     thread.reviewPending = true;
     try {
-      if (message?.reviewId) message.review = await this.reviews.finish(message.reviewId);
+      if (message?.reviewId) {
+        if (message.concurrent) {
+          const loaded = await this.reviews.load(message.reviewId);
+          loaded.concurrent = true;
+          loaded.note = '此轮执行期间存在同项目并发任务，文件变更可能包含其他任务的修改。';
+          await this.reviews.save(loaded);
+        }
+        message.review = await this.reviews.finish(message.reviewId);
+        if (message.concurrent && message.review) {
+          message.review.concurrent = true;
+          message.review.note = '此轮执行期间存在同项目并发任务，文件变更可能包含其他任务的修改。';
+        }
+      }
       if (message?.review) {
-        const summary = await projectReview(this.runtime, thread, message, await this.reviews.load(message.reviewId));
+        const record = await this.reviews.load(message.reviewId);
+        if (message.concurrent) record.concurrent = true;
+        const summary = await projectReview(this.runtime, thread, message, record);
+        if (message.concurrent) summary.concurrent = true;
+        message.review = summary;
         this.emitReviewUpdate(thread, message, summary);
       }
     } catch (e) { if (message) message.reviewError = '文件审查暂不可用：' + e.message; }
@@ -51,7 +67,9 @@ class ReviewController {
         const fileRevision = thread.fileRevision;
         const record = await this.reviews.preview(message.reviewId);
         if (!monitor.closed && message.streaming && fileRevision === thread.fileRevision) {
+          if (message.concurrent) record.concurrent = true;
           const review = await projectReview(this.runtime, thread, message, record);
+          if (message.concurrent) review.concurrent = true;
           message.liveReview = review;
           this.emitReviewUpdate(thread, message, review);
         }
@@ -71,9 +89,9 @@ class ReviewController {
 
   async undoFile(threadId, messageId, file) {
     const { thread, message } = this.reviewMessage(threadId, messageId);
+    if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && (this.runtime.execution.isRunning(t.id) || t.status === 'working' || t.reviewPending))) throw Error('项目任务执行或结算中，暂不能撤回');
     const record = await this.reviews.load(message.review.id);
     if ((await fs.realpath(thread.cwd)).toLowerCase() !== record.root.toLowerCase()) throw Error('任务目录已移动，禁止从新目录撤回旧项目文件');
-    if (this.threads.some(t => t.cwd.toLowerCase() === thread.cwd.toLowerCase() && t.status === 'working')) throw Error('项目任务执行中，不能撤回');
     message.review = await this.reviews.undo(message.review.id, file);
     await projectReview(this.runtime, thread, message, await this.reviews.load(message.review.id));
     await this.save(); this.broadcast();

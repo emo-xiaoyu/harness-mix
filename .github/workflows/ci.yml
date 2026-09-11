@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    name: Kernel (Node ${{ matrix.node }})
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.0.0]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:ci
+
+  native-build:
+    name: Native Windows build and smoke
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - run: rustup show
+      - run: npm run build:native
+      - run: npm run smoke:native-ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-windows-evidence
+          path: |
+            output/native-build/
+            output/native-ui-smoke/
+          if-no-files-found: warn

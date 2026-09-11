@@ -1,5 +1,7 @@
 # ChatGPT 网页侧边对话
 
+> 历史设计记录：当前 Harness Mix 原生模式不包含下文所述的 `side-chat` / `web-chat` 实现，相关源码和 `smoke:web-chat` 入口已不在当前仓库中。本文仅保留方案边界，不能作为当前功能或可执行验收说明。
+
 ## 官方实现参考
 
 2026-09-09 核对 `openai/codex` main（`9ba1d9eb5bbbd87ba2fc528d91ad239eea975ee9`）的完整目录树、README、`codex-rs/chatgpt` 与桌面启动器后，未发现截图中 Quick chat 面板的前端与聊天历史同步实现。
@@ -22,4 +24,4 @@
 
 实现：`src/main/side-chat/web.js`、`src/renderer/web-chat.js`、`src/renderer/web-chat.css`。原 app-server 侧边模块保留在源码中，但生产入口和 preload 已停止接入它。
 
-验证：`npm run smoke:web-chat` 使用隔离网页夹具验证文本导入、选择、关闭重开、缩放、刷新和资源释放。`npm run smoke:web-chat -- --live` 只验证真实网站加载，不发送消息。真实登录与登录后的回复需要用户完成登录后验证。
+历史版本曾使用 `smoke:web-chat` 验证隔离网页夹具；当前版本没有该命令。若未来恢复此能力，必须同时恢复隔离、安全边界测试以及真实登录后的人工验收。

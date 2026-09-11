@@ -17,6 +17,7 @@ import {
   type ThreadInspectionParams,
   type ThreadModelSelectParams,
   type ThreadPermissionModeSelectParams,
+  type ThreadHarnessSwitchParams,
   type ThreadThinkingSelectParams,
   type ThreadOwnershipListParams,
   type ThreadUsageInspection,
@@ -136,6 +137,8 @@ declare global {
 }
 
 const KIRO_CLI_HARNESS_ID = harnessIdSchema.parse("kiro-cli");
+const OPENCLAW_HARNESS_ID = harnessIdSchema.parse("openclaw");
+const HERMES_HARNESS_ID = harnessIdSchema.parse("hermes");
 
 function transportModelIdForAgent(agent: RendererAgent): string | null {
   if (agent === "pi") return PI_TRANSPORT_MODEL_ID;
@@ -146,6 +149,13 @@ function transportModelIdForAgent(agent: RendererAgent): string | null {
   if (agent === "omp") return OMP_TRANSPORT_MODEL_ID;
   if (agent === "antigravity") return ANTIGRAVITY_TRANSPORT_MODEL_ID;
   if (agent === "kiro-cli") return encodeHarnessPluginRoute({ harnessId: KIRO_CLI_HARNESS_ID });
+  if (agent === "openclaw") return encodeHarnessPluginRoute({ harnessId: OPENCLAW_HARNESS_ID });
+  if (agent === "hermes") return encodeHarnessPluginRoute({ harnessId: HERMES_HARNESS_ID });
+  if (agent === "qoder") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("qoder") });
+  if (agent === "workbuddy") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("workbuddy") });
+  if (agent === "zcode") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("zcode") });
+  if (agent === "trae") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("trae") });
+  if (agent === 'codex-harness') return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse(agent) });
   return null;
 }
 
@@ -934,7 +944,14 @@ export function modelSelectionForAgent(
                         ...(thinkingOptionId ? { thinkingOptionId } : {}),
                         ...(permissionModeId ? { permissionModeId } : {}),
                       })
-                    : transportModelIdForAgent(agent);
+                    : agent === "openclaw" || agent === "hermes" || agent === 'codex-harness' || agent === 'qoder' || agent === 'workbuddy' || agent === 'zcode' || agent === 'trae'
+                      ? encodeHarnessPluginRoute({
+                          harnessId: harnessIdSchema.parse(agent),
+                          ...(model ? { model } : {}),
+                          ...(thinkingOptionId ? { thinkingOptionId } : {}),
+                          ...(permissionModeId ? { permissionModeId } : {}),
+                        })
+                      : transportModelIdForAgent(agent);
   return transportModelId ? { model: transportModelId, reasoningEffort } : officialSelection;
 }
 
@@ -1042,6 +1059,7 @@ export function installCurrentRendererAdapter(): {
       return client.listHarnessPlugins();
     },
     forkThread: (input: ExternalThreadForkParams) => currentModelClient().forkThread(input),
+    switchHarness: (input: ThreadHarnessSwitchParams) => currentModelClient().switchHarness(input),
     inspectHarness: (input: HarnessInspectParams) => currentModelClient().inspectHarness(input),
     inspectThread: (input: ThreadInspectionParams) => currentModelClient().inspectThread(input),
     inspectHarnessCommands: (input: HarnessCommandsInspectParams) =>

@@ -11,6 +11,7 @@ const manifest = {
   id: 'antigravity',
   name: 'Antigravity',
   icon: 'antigravity-color.svg',
+  aliases: ['agy', 'antigravity'],
   capabilities: {
     streaming: true,
     thinking: true,
@@ -130,6 +131,36 @@ function formatPrompt(text) {
   if (!text) return '';
   if (text.startsWith('/') || text.includes('ArtifactMetadata')) return text;
   return `${ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION}${text}`;
+}
+
+async function prepareImageAttachments(images, cwd) {
+  if (!Array.isArray(images) || !images.length) return { imageEntries: [], extraDirs: [] };
+  const imageEntries = [];
+  const extraDirs = [];
+  for (const img of images) {
+    if (!img) continue;
+    let filePath = img.path;
+    if (!filePath || !fs.existsSync(filePath)) {
+      const ext = path.extname(img.name || '') || (img.mime === 'image/jpeg' ? '.jpg' : img.mime === 'image/gif' ? '.gif' : img.mime === 'image/webp' ? '.webp' : img.mime === 'image/svg+xml' ? '.svg' : '.png');
+      const safeBase = path.basename(img.name || 'image', ext).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_') || 'image';
+      const fileName = `${Date.now()}-${randomUUID().slice(0, 6)}-${safeBase}${ext}`;
+      let targetDir = path.join(cwd, '.gemini', 'attachments');
+      try {
+        await fs.promises.mkdir(targetDir, { recursive: true });
+      } catch {
+        targetDir = path.join(os.tmpdir(), 'harness-mix-antigravity-attachments');
+        await fs.promises.mkdir(targetDir, { recursive: true });
+        if (!extraDirs.includes(targetDir)) extraDirs.push(targetDir);
+      }
+      filePath = path.join(targetDir, fileName);
+      if (img.data) {
+        await fs.promises.writeFile(filePath, Buffer.from(img.data, 'base64'));
+      }
+    }
+    const normalizedPath = path.resolve(filePath).replace(/\\/g, '/');
+    imageEntries.push({ name: img.name || path.basename(filePath), path: normalizedPath });
+  }
+  return { imageEntries, extraDirs };
 }
 
 function toolTitle(name) {
@@ -530,6 +561,18 @@ function create(emit) {
       });
       session.bridge = bridge;
 
+      let effectivePrompt = prompt ?? '';
+      const { imageEntries, extraDirs } = await prepareImageAttachments(attachments?.images, session.cwd);
+      if (imageEntries.length) {
+        const imageNotice = [
+          '[用户上传了图片附件]',
+          ...imageEntries.map(e => `- [${e.name}](file:///${e.path}): 请使用 view_file 工具查看并分析该图片。`),
+        ].join('\n');
+        effectivePrompt = effectivePrompt.trim()
+          ? `${imageNotice}\n\n${effectivePrompt}`
+          : `${imageNotice}\n\n请查看并分析上述图片附件。`;
+      }
+
       const logPath = path.join(os.tmpdir(), `harness-mix-antigravity-${randomUUID()}.log`);
       const args = [
         '--input-format', 'stream-json',
@@ -550,6 +593,9 @@ function create(emit) {
       }
       args.push('--add-dir', session.cwd);
       args.push('--add-dir', bridge.directory);
+      for (const dir of extraDirs) {
+        args.push('--add-dir', dir);
+      }
       args.push('--log-file', logPath);
 
       const child = spawn(bin, args, {
@@ -565,8 +611,19 @@ function create(emit) {
         turnReject = reject;
       });
 
-      session.activeTurn = { child, resolve: turnResolve, reject: turnReject, logPath };
+      const turn = { child, resolve: turnResolve, reject: turnReject, logPath, resultSeen: false, killTimer: null };
+      session.activeTurn = turn;
       let sawTextDelta = false;
+
+      // agy 在 stream-json 模式下产出 result 后进程仍常驻（实测 25s+ 不自行退出），
+      // 不主动收尾会让 session.activeTurn 永远悬挂，下一回合 send 被“当前回合尚未结束”拒绝。
+      // 结束 stdin 可让 agy 干净退出（实测 ~1.5s，code 0），kill 兜底；close 处理器做最终清理。
+      const finishTurn = () => {
+        if (session.activeTurn === turn) session.activeTurn = null;
+        try { child.stdin.end(); } catch {}
+        turn.killTimer = setTimeout(() => { try { child.kill(); } catch {} }, 10000);
+        turn.killTimer.unref?.();
+      };
 
       const rl = readline.createInterface({ input: child.stdout });
       rl.on('line', (line) => {
@@ -621,15 +678,20 @@ function create(emit) {
             // Native file mutations
             if (s.state === 'DONE' && (toolName === 'write_to_file' || toolName === 'replace_file_content')) {
               const params = s.tool_info?.parameters || {};
-              if (params.TargetFile) {
+              // agy stream-json 工具事件只携带 TargetFile，不携带文件内容（实测 ACTIVE/DONE 均如此）。
+              // 保持 complete: false（与 codex.js 同一约定）：仅作实时提示，回合结算时由
+              // 工作区快照（ReviewStore）用权威 before/after 覆盖，UI 才能显示真实增删统计。
+              const target = typeof params.TargetFile === 'string' ? params.TargetFile : null;
+              const relative = target ? path.relative(session.cwd, path.resolve(session.cwd, target)).replace(/\\/g, '/') : '';
+              // 只投影工作区内的变更；脑目录等 --add-dir 目录不属于本轮文件审查
+              if (relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative)) {
                 emitEvent({
                   kind: 'file-change',
                   source: 'native',
                   changes: [{
-                    path: params.TargetFile,
-                    after: params.CodeContent ?? params.ReplacementContent,
+                    path: target,
                     changeType: toolName === 'write_to_file' ? (params.Overwrite ? 'modified' : 'added') : 'modified',
-                    complete: true,
+                    complete: false,
                     nativeRef: stepRef,
                   }],
                   nativeRef: stepRef,
@@ -663,6 +725,7 @@ function create(emit) {
           if (res.response && !sawTextDelta) {
             emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
           }
+          turn.resultSeen = true;
           emitEvent({
             kind: 'completed',
             finalAnswer: res.status === 'SUCCESS',
@@ -670,31 +733,40 @@ function create(emit) {
             nativeRef,
           });
           turnResolve?.();
+          finishTurn();
         }
       });
 
       child.on('error', (err) => {
+        if (turn.killTimer) clearTimeout(turn.killTimer);
+        if (session.activeTurn === turn) session.activeTurn = null;
+        void fs.promises.unlink(logPath).catch(() => {});
+        void bridge.dispose();
+        if (session.bridge === bridge) session.bridge = null;
         emitEvent({ kind: 'error', message: `Antigravity 进程错误: ${err.message}` });
         turnReject?.(err);
       });
 
       child.on('close', (code) => {
+        if (turn.killTimer) clearTimeout(turn.killTimer);
         void fs.promises.unlink(logPath).catch(() => {});
         void bridge.dispose();
-        session.bridge = null;
-        session.activeTurn = null;
-        if (code !== 0 && code !== null) {
-          emitEvent({ kind: 'completed', finalAnswer: false, stopReason: 'error' });
+        if (session.bridge === bridge) session.bridge = null;
+        if (session.activeTurn === turn) session.activeTurn = null;
+        if (!turn.resultSeen) {
+          // 进程未产出 result 即退出（崩溃或协议中断）：保证 Turn 结算，不悬挂
+          emitEvent({ kind: 'completed', finalAnswer: false, stopReason: code === 0 ? 'completed' : 'error' });
         }
         turnResolve?.();
       });
 
       try {
-        const fullPrompt = formatPrompt(prompt);
+        const fullPrompt = formatPrompt(effectivePrompt);
         if (child.stdin.writable) {
           child.stdin.write(JSON.stringify({ event: 'user', message: { content: fullPrompt } }) + '\n');
         }
       } catch (err) {
+        if (session.activeTurn === turn) session.activeTurn = null;
         child.kill();
         turnReject?.(err);
       }
@@ -763,7 +835,9 @@ function create(emit) {
       return {
         models,
         thinkingLevels: [
-          { id: 'high', label: 'High' },
+          // default: true 是 adapter 的显式声明：该 Harness 的思考档位可在 UI 选择，
+          // 且默认档与 open() 的回退值（'high'）一致——协议层据此下发可选集合。
+          { id: 'high', label: 'High', default: true },
           { id: 'medium', label: 'Medium' },
           { id: 'low', label: 'Low' },
         ],
@@ -815,6 +889,7 @@ module.exports = {
   parseModelsOutput,
   parseUsage,
   formatPrompt,
+  prepareImageAttachments,
   ANTIGRAVITY_PERMISSION_MODES,
   ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION,
 };

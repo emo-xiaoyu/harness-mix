@@ -81,7 +81,7 @@ export function mountRendererSettingsShell(
   brand.className = "settings-brand";
   const brandMark = ownerDocument.createElement("span");
   brandMark.className = "settings-brand__mark";
-  brandMark.append(createRendererSettingsBrandIcon(32));
+  brandMark.append(createRendererSettingsBrandIcon(32, ownerDocument));
   const brandCopy = ownerDocument.createElement("span");
   brandCopy.className = "settings-brand__copy";
   const brandName = ownerDocument.createElement("span");
@@ -310,14 +310,18 @@ export function installRendererSettingsShell(
   const registry = definitions
     ? createRendererSettingsPageRegistry(definitions)
     : createDefaultRendererSettingsRegistry(messages);
-  const ownerWindow = ownerDocument.defaultView ?? window;
-  ownerWindow.__codexhostSettingsShellV1?.dispose();
+  const ownerWindow = ownerDocument.defaultView ?? (typeof window !== "undefined" ? window : undefined);
+  if (ownerWindow) {
+    ownerWindow.__codexhostSettingsShellV1?.dispose();
+  }
   const shell = mountRendererSettingsShell(registry, ownerDocument, messages);
-  ownerWindow.__codexhostSettingsShellV1 = shell;
+  if (ownerWindow) {
+    ownerWindow.__codexhostSettingsShellV1 = shell;
+  }
   const dispose = shell.dispose.bind(shell);
   shell.dispose = () => {
     dispose();
-    if (ownerWindow.__codexhostSettingsShellV1 === shell) {
+    if (ownerWindow && ownerWindow.__codexhostSettingsShellV1 === shell) {
       delete ownerWindow.__codexhostSettingsShellV1;
     }
   };

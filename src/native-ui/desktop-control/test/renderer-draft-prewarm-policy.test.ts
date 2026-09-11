@@ -480,6 +480,7 @@ describe("Renderer draft prewarm policy", () => {
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(1, {
       cwd: "/tmp/project",
       model: "codexhost/pi-native",
+      ephemeral: true,
     });
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(2, {
       ephemeral: true,

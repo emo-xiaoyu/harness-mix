@@ -47,7 +47,10 @@ class JsonlProcess {
     // Agent → Client 请求（JSON-RPC，带 method 和 id），需要回复
     if (value.method !== undefined && value.id !== undefined) {
       Promise.resolve()
-        .then(() => this.hooks.onRequest?.(value))
+        .then(() => {
+          if (!this.hooks.onRequest) throw new Error(`Unsupported native client request: ${value.method}`);
+          return this.hooks.onRequest(value);
+        })
         .then((result) => this.#write({ jsonrpc: "2.0", id: value.id, result: result ?? {} }))
         .catch((error) => this.#write({ jsonrpc: "2.0", id: value.id, error: { code: -32603, message: error.message } }));
       return;

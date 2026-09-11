@@ -32,6 +32,8 @@ npm run check:native  # 只检查安装，不重启桌面
 npm start
 ```
 
+`check:native` 同时输出当前 Codex Desktop 的兼容状态：`verified` 表示该精确版本已完成重启桌面 E2E，`observed` 表示仅通过协议/构建/离屏 smoke，`unverified` 表示版本尚未进入证据矩阵。明确列入阻止名单的版本拒绝启动；设置 `HARNESS_MIX_STRICT_COMPATIBILITY=1` 时，只有 `verified` 版本可以启动。矩阵位于 `config/codex-desktop-compatibility.json`，不得把单元测试或离屏 smoke 记录成完整桌面验收。
+
 **启动器会重启当前 Codex Desktop。** 保存正在进行的工作后再启动，包括当前 Codex 对话所在的桌面。不要同时运行旧版 `launch-codex.cjs` 后台进程。
 
 ## 自动更新
@@ -60,7 +62,7 @@ DSH 默认使用本项目安装的 `0.1.2-rc.1`，不会修改 `E:\dsh\deepseek-
 
 ```powershell
 npm run check
-npm run smoke
+npm run smoke:native-ui
 npm run e2e:native
 npm run e2e:native:pi
 npm run e2e:native:dsh

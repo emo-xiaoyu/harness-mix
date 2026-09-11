@@ -29,7 +29,7 @@ class CoreSession {
     this.lastTurns.set(thread.id, turn.id);
     const normalizer = this.normalizer(thread);
     this.core.dispatch({ threadId: thread.id, turnId: turn.id, type: 'turn.started', timestamp });
-    for (const event of normalizer.beginTurn(turn.id, text)) this.core.dispatch({ ...event, timestamp });
+    for (const event of normalizer.beginTurn(turn.id, text, thread.messages.at(-1)?.attachments)) this.core.dispatch({ ...event, timestamp });
     thread.messages.push({ id: turn.id, role: 'assistant', coreTurnId: turn.id });
     this.sync(thread);
     return turn;

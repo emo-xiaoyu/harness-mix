@@ -18,6 +18,22 @@ class Projector {
     if (existingTurn && TERMINAL_TURN_STATUS.includes(existingTurn.status) && event.type.startsWith('item.')) return {};
     if (existingTurn && typeof event.sequence === 'number') existingTurn.lastSequence = Math.max(existingTurn.lastSequence, event.sequence);
     switch (event.type) {
+      case 'thread.rolledBack': {
+        const turns = this.turns.turnsForThread(event.threadId);
+        const count = event.payload.numTurns;
+        if (!Number.isSafeInteger(count) || count < 1 || count > turns.length || turns.some(t => !TERMINAL_TURN_STATUS.includes(t.status))) throw new Error('Invalid rollback boundary');
+        const removed = new Set(turns.slice(-count).map(t => t.id));
+        for (const id of removed) this.turns.turns.delete(id);
+        for (const [id, item] of this.items) if (removed.has(item.turnId)) this.items.delete(id);
+        const thread = this.threads.get(event.threadId);
+        thread.usage = {};
+        for (const turn of turns.slice(0, -count)) {
+          turn.nativeTurnRef = { ...turn.nativeTurnRef, sessionId: event.payload.sessionId };
+          const map = event.payload.checkpointMap;
+          if (map && turn.nativeTurnRef.checkpointId) turn.nativeTurnRef.checkpointId = map[turn.nativeTurnRef.checkpointId];
+        }
+        return { thread: this.threads.update(event.threadId, { status: 'idle', activeTurnId: null, nativeSessionRef: { sessionId: event.payload.sessionId } }, event.timestamp) };
+      }
       case 'thread.created': {
         const thread = this.threads.create({ id: event.threadId, ...event.payload }, event.timestamp);
         return { thread };
