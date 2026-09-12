@@ -143,9 +143,10 @@ export function rendererAgentForThreadOwnership(
   if (ownership.harnessId === "openclaw") return "openclaw";
   if (ownership.harnessId === "hermes") return "hermes";
   if (ownership.harnessId === "qoder") return "qoder";
-  if (ownership.harnessId === "workbuddy") return "workbuddy";
+  if (ownership.harnessId === "codebuddy") return "codebuddy";
   if (ownership.harnessId === "zcode") return "zcode";
   if (ownership.harnessId === "trae") return "trae";
+  if (ownership.harnessId === "cursor-cli") return "cursor-cli";
   if (ownership.harnessId === 'codex-harness') return 'codex-harness';
   return null;
 }

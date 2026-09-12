@@ -1,8 +1,8 @@
 {
   "name": "harness-mix",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Apache-2.0",
-  "description": "Harness Mix native Codex UI bridge — local HostRuntime/ProtocolCore kernel driving Pi, Claude Code, DeepSeek Harness, Antigravity and Codex inside the official Codex Desktop.",
+  "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
     "codex",
     "codex-desktop",
@@ -12,6 +12,12 @@
     "claude-code",
     "deepseek",
     "antigravity",
+    "codebuddy",
+    "kiro",
+    "cursor",
+    "qoder",
+    "zcode",
+    "trae",
     "ai"
   ],
   "homepage": "https://github.com/emo-xiaoyu/harness-mix#readme",
@@ -24,6 +30,7 @@
     "harness-mix": "scripts/launch-codex.cjs"
   },
   "files": [
+    "CHANGELOG.md",
     "src",
     "scripts",
     "config",
@@ -53,6 +60,12 @@
     "node": ">=22.19.0 <23 || >=24 <25"
   },
   "scripts": {
+    "health:harnesses": "node scripts/harness-health-check.cjs",
+    "test:dsh-collaboration-acp": "node scripts/dsh-collaboration-acp-test.cjs",
+    "test:codebuddy-migration": "node scripts/codebuddy-migration-test.cjs",
+    "e2e:native-acp": "node scripts/e2e-native-acp.cjs --live",
+    "test:native-acp-depth": "node scripts/native-acp-depth-test.cjs",
+    "test:kiro-cursor": "node scripts/kiro-cursor-adapters-test.cjs",
     "test:docs": "node scripts/docs-command-test.cjs",
     "typecheck:native-ui": "tsc -b src/native-ui/shared-contracts/tsconfig.json src/native-ui/desktop-control/tsconfig.json src/native-ui/renderer-extension/tsconfig.json --pretty false",
     "test:native-ui": "vitest run --config vitest.config.mjs",
@@ -92,7 +105,7 @@
     "test:openclaw-adapter": "node scripts/openclaw-adapter-test.cjs",
     "test:core-concurrency": "node scripts/core-concurrency-test.cjs",
     "test:concurrency-layers": "node scripts/concurrency-layers-test.cjs",
-    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/switch-harness-test.cjs",
+    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
     "test:git": "node scripts/git-test.cjs",

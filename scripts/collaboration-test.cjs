@@ -23,6 +23,7 @@ async function main() {
   rt.adapters.set('lead', lead); rt.status.lead = { available: true };
   rt.adapters.set('worker', worker); rt.status.worker = { available: true };
   const parent = await rt.createThread({ harnessId: 'lead', cwd: root });
+  rt.collaboration.jobs.set('interrupted-fixture', { id: 'interrupted-fixture', owner: parent.id, agent: 'worker', childId: 'old-child', status: 'interrupted' });
   const ownerConnection = connection;
   const transport = new JsonlProcess(connection.command, connection.args, { env: { ...process.env, ...connection.env } }, {});
   const call = (name, args) => rt.collaboration.call(parent.id, name, args);
@@ -34,6 +35,9 @@ async function main() {
     await rt.send(parent.id, '@worker review files @[Old session](harness-mix://session/c2Vzc2lvbg)');
     assert.ok(rt.execution.isRunning(parent.id));
     assert.match(leadPrompt, /untrusted historical data[\s\S]*prior answer/);
+    assert.match(leadPrompt, /Recovery checkpoint:[\s\S]*interrupted-fixture \(worker\)[\s\S]*call list_delegations now/);
+    assert.equal(rt.collaboration.jobs.get('interrupted-fixture').status, 'interrupted', 'Prompt injection never auto-resumes interrupted work');
+    rt.collaboration.jobs.delete('interrupted-fixture');
     assert.ok(!JSON.stringify(rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id)).includes('[Harness Mix collaboration]'), 'Routing guidance stays out of displayed user text');
     const init = await transport.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     assert.ok(init.capabilities.tools);
@@ -88,7 +92,9 @@ async function main() {
     const denied = await fetch(ownerConnection.env.HARNESS_MIX_COLLAB_URL, { method: 'POST', headers: { Authorization: 'Bearer invalid' }, body: '{}' });
     assert.equal(denied.status, 403);
     const outsider = await rt.createThread({ harnessId: 'worker', cwd: root });
-    await assert.rejects(rt.send(outsider.id, 'unrelated'), /同一项目/);
+    await rt.send(outsider.id, 'unrelated');
+    assert.equal(outsider.messages.at(-1).concurrent, true, 'Independent same-workspace turns are marked concurrent');
+    await rt.cancel(outsider.id); await wait(() => !pending.has(outsider.id));
     for (let i = 0; i < 4; i++) await call('delegate_to_agent', { agent_type: 'worker', task: 'cancel me', isolation: 'shared' });
     await wait(() => pending.size === 4);
     await assert.rejects(call('delegate_to_agent', { agent_type: 'worker', task: 'too many' }), /four concurrent/);

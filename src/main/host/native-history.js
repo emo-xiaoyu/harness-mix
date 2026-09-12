@@ -35,6 +35,7 @@ async function piRows(directory) {
 }
 
 async function listNative(harnessId) {
+  if (harnessId === 'codebuddy') return require('../adapters/codebuddy-history').listCodeBuddyHistory();
   if (harnessId === 'pi') return piRows(path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'), 'sessions'));
   if (harnessId === 'claude') {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
@@ -56,6 +57,10 @@ async function listNative(harnessId) {
 }
 
 async function readNative(harnessId, candidate) {
+  if (harnessId === 'codebuddy') {
+    const history = require('../adapters/codebuddy-history');
+    return history.messages(await history.readCodeBuddyHistory(candidate.cwd, candidate.nativeSessionId));
+  }
   if (candidate.messages) return candidate.messages;
   if (harnessId === 'claude') {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');

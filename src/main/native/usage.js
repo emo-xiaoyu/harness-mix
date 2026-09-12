@@ -7,7 +7,7 @@ function projectUsage(source = {}) {
     inputTokens: ['inputTokens', 'input'], outputTokens: ['outputTokens', 'output'],
     cachedInputTokens: ['cachedInputTokens', 'cacheRead'], cacheWriteInputTokens: ['cacheWriteInputTokens', 'cacheWrite'],
     reasoningOutputTokens: ['reasoningOutputTokens'], totalTokens: ['totalTokens'],
-    totalCostUsd: ['totalCostUsd', 'cost'], contextUsagePercent: ['contextUsagePercent', 'contextPercent'],
+    totalCostUsd: ['totalCostUsd', 'cost'], totalCredits: ['totalCredits'], contextUsagePercent: ['contextUsagePercent', 'contextPercent'],
     cacheHitRatePercent: ['cacheHitRatePercent', 'cacheHitPercent'],
   };
   for (const [target, keys] of Object.entries(fields)) {

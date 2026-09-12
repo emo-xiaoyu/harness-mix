@@ -19,11 +19,8 @@ import type { RendererSettingsMessages } from "./localization.js";
 export const CODEXHOST_GITHUB_ISSUES_NEW_URL =
   "https://github.com/BytePioneer-AI/codex-host/issues/new";
 
-export const HARNESS_INSTALL_COMMANDS: Readonly<Record<ExternalRendererAgent, { command: string }>> = Object.freeze({
+export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererAgent, { command: string }>>> = Object.freeze({
   qoder: { command: "npm install -g @qoder-ai/qodercli" },
-  workbuddy: { command: "npm install -g @tencent/codebuddy" },
-  zcode: { command: "pip install zcode-cli" },
-  trae: { command: "npm install -g traecli" },
   codex: { command: "npm install -g @openai/codex" },
   pi: { command: "npm install -g @mariozechner/pi-coding-agent" },
   "claude-code": { command: "npm install -g @anthropic-ai/claude-code" },
@@ -32,7 +29,6 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<ExternalRendererAgent, { 
   grok: { command: "npm install -g @xai/grok-cli" },
   omp: { command: "npm install -g @oh-my-prompt/omp" },
   antigravity: { command: "npm install -g @google/antigravity-cli" },
-  "kiro-cli": { command: "npm install -g kiro-cli" },
   openclaw: { command: "npm install -g openclaw" },
   hermes: { command: "pip install hermes-agent" },
   "codex-harness": { command: "npm install -g @openai/codex" },
@@ -50,9 +46,10 @@ const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Ob
   openclaw: "https://docs.openclaw.ai/",
   hermes: "https://hermes-agent.nousresearch.com/",
   qoder: "https://qoder.com/",
-  workbuddy: "https://workbuddy.ai/",
+  codebuddy: "https://www.codebuddy.ai/docs/cli/overview",
   zcode: "https://zcode.z.ai/",
   trae: "https://www.trae.ai/",
+  'cursor-cli': "https://cursor.com/docs/cli/installation",
   'codex-harness': 'https://developers.openai.com/codex/',
 });
 
@@ -451,6 +448,7 @@ function renderOneClickInstallSection(
   const commandInfo = HARNESS_INSTALL_COMMANDS[agent];
   const commandBox = document.createElement("div");
   commandBox.className = "settings-install-command-box";
+  commandBox.hidden = !commandInfo;
   const commandLabel = document.createElement("span");
   commandLabel.className = "settings-install-command-label";
   commandLabel.textContent = messages.installCommandLabel;
@@ -466,11 +464,14 @@ function renderOneClickInstallSection(
 
   const installBtn = document.createElement("button");
   installBtn.type = "button";
+  installBtn.hidden = !commandInfo;
+  installBtn.disabled = !commandInfo;
   installBtn.className = "settings-command-button";
   installBtn.append(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
 
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
+  copyBtn.hidden = !commandInfo;
   copyBtn.className = "settings-command-button settings-command-button--secondary";
   copyBtn.append(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
 

@@ -56,7 +56,7 @@ function create() {
     async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
     async open({ thread, emit, collaboration }) {
       // L2 注入：OPENCODE_CONFIG_CONTENT 是最高优先级的运行时内联配置，合并而非覆盖用户配置，会话结束即失效，不污染任何配置文件
-      const overlay = collaboration ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { servers: { 'harness-mix': { type: 'local', command: [collaboration.command, ...collaboration.args], environment: collaboration.env } } } }) } } : undefined;
+      const overlay = collaboration ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { 'harness-mix': { type: 'local', command: [collaboration.command, ...collaboration.args], environment: collaboration.env } } }) } } : undefined;
       const host = await new OpenCodeServer(thread.cwd, overlay).start();
       try {
         // Read the model catalog, never provider credentials or auth files.

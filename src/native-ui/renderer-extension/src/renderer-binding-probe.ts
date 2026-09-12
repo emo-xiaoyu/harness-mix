@@ -100,9 +100,10 @@ const externalHarnessIds = {
   openclaw: harnessIdSchema.parse("openclaw"),
   hermes: harnessIdSchema.parse("hermes"),
   qoder: harnessIdSchema.parse("qoder"),
-  workbuddy: harnessIdSchema.parse("workbuddy"),
+  codebuddy: harnessIdSchema.parse("codebuddy"),
   zcode: harnessIdSchema.parse("zcode"),
   trae: harnessIdSchema.parse("trae"),
+  'cursor-cli': harnessIdSchema.parse("cursor-cli"),
   'codex-harness': harnessIdSchema.parse('codex-harness'),
 } as const;
 
@@ -118,9 +119,10 @@ const externalAgents: readonly ExternalRendererAgent[] = [
   "openclaw",
   "hermes",
   "qoder",
-  "workbuddy",
+  "codebuddy",
   "zcode",
   "trae",
+  "cursor-cli",
   'codex-harness',
 ];
 type HarnessAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
@@ -491,7 +493,7 @@ export function restoredThreadOwnership(inspection: ThreadInspection): RestoredT
       ...(permissionModeId ? { permissionModeId } : {}),
     };
   }
-  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'workbuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae') {
+  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'codebuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae' || inspection.harnessId === 'cursor-cli') {
     const harnessId = inspection.harnessId;
     const route = decodeHarnessPluginRoute(inspection.transportModelId);
     if (!route || route.harnessId !== harnessId) {
@@ -761,9 +763,10 @@ export function installRendererBindingProbe(
       openclaw: undefined,
       hermes: undefined,
       qoder: undefined,
-      workbuddy: undefined,
+      codebuddy: undefined,
       zcode: undefined,
       trae: undefined,
+      'cursor-cli': undefined,
       'codex-harness': undefined,
     },
     webUi: Object.fromEntries(

@@ -17,7 +17,7 @@
 
 借鉴 Codeg 的 [委派工具](https://github.com/xintaofei/codeg/blob/main/src-tauri/src/acp/delegation/tool_schema.json) 和 [Agent 引用路由](https://github.com/xintaofei/codeg/blob/main/src-tauri/src/acp/agent_mentions.rs)：
 
-1. Host 为主任务提供会话绑定的协作工具。Claude 通过 SDK 的 MCP 配置，Codex Adapter 通过 app-server 的线程 MCP 配置，Pi/OMP 通过原生扩展加载，Grok 通过原生 `session/new` 的 `mcpServers` 槽注入（L1），OpenCode 通过 `OPENCODE_CONFIG_CONTENT` 内联配置注入 `mcp.servers`（L2，运行时最高优先级、不写任何用户配置文件）。
+1. Host 为主任务提供会话绑定的协作工具。Claude 通过 SDK 的 MCP 配置，Codex Adapter 通过 app-server 的线程 MCP 配置，Pi/OMP 通过原生扩展加载，Grok 通过原生 `session/new` 的 `mcpServers` 槽注入（L1），OpenCode 通过 `OPENCODE_CONFIG_CONTENT` 内联配置注入 `mcp["harness-mix"]`（V2 schema，运行时最高优先级、不写任何用户配置文件），DSH 协作主任务通过官方 `dsh --profile acp` 的 session-scoped MCP 注入；DSH 普通任务仍走 Web Remote。
 2. 主模型调用 `delegate_to_agent(agent_type, task)`，立即取得 `task_id`，可以继续发起其他任务。
 3. Host 创建带 `parentThreadId` 的独立原生会话。任务中需要的上下文由主模型明确传递，不复制其他 Harness 的隐藏状态、账户或权限。
 4. `update_agent_plan(steps)` 发布开发、审查、返工和最终验收计划；步骤状态为 pending / in_progress / completed。`get_delegation_status(task_ids, wait_ms)` 收取状态和最终文本；单次等待不超过 60 秒。`message_agent` 在已结束的子会话中继续对话，`cancel_delegation` 取消子任务。
@@ -46,8 +46,8 @@
 | Oh My Pi 主任务 | 同 Pi 家族的扩展接线；本机未安装 OMP，真实验收未完成 |
 | Codex（协作）主任务 | 已接入选择器、模型/强度、恢复归属、@ 菜单；桌面使用配套 CLI。真实请求已到原生 MCP 审批，尚未完成需授权的闭环 |
 | Grok 主任务 | L1：`session/new`/`session/load` 原生 `mcpServers` 槽注入，恢复会话同样携带；真实模型闭环验收待跑 |
-| OpenCode 主任务 | L2：`OPENCODE_CONFIG_CONTENT` 内联配置注入 `mcp.servers`（V2 schema），会话结束即失效；真实模型闭环验收待跑 |
-| DSH 主任务 | 调研结论：DSH 自带 `@deepseek-ai/dsh-mcp-client`（stdio 配置：`transport/serverName/command/args/env`），门存在；host.call 会话通道的 MCP 注入点待上游确认，确认前保持 target-only |
+| OpenCode 主任务 | L2：`OPENCODE_CONFIG_CONTENT` 使用 `mcp["harness-mix"]`（V2 schema），会话结束即失效；本机真实请求已到官方 API，但被账户余额阻断 |
+| DSH 主任务 | 官方 `dsh --profile acp` 接收 session-scoped `harness-mix` MCP；DSH→CodeBuddy 两个 worktree 子任务和最终 `COLLAB_VERIFIED` 已通过真实模型回路。普通 DSH 任务继续使用 Web Remote |
 | 官方 Codex 桌面直通任务 | 保持官方直通，不展示 Host 的 @ 协作菜单；不要把 Adapter 接线等同于已支持这个入口 |
 | 其他 Harness 主任务（含 Antigravity） | Agents 页明确提示需要切换可编排的主 Agent，目标不可选；历史引用仍可用；可使用旧 /delegate |
 | 子任务目标 | 所有已注册且本机可用的 Adapter；不代表每一对组合都已实测 |
@@ -66,7 +66,7 @@ npm run build:native
 
 `test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、历史引用提示和共享快照策略。UI smoke 只检查原生输入框内的 Harness/历史会话选择、图标、标识、键盘选取和清理，截图位于 `output/collaboration-ui/mentions.png`。协作过程由 Native Protocol 的原生工具卡片测试覆盖。这不是完整 Codex Desktop 的交互验收；构建过程不会重启当前桌面。
 
-2026-09-10 验证：Pi→Claude 两个真实子任务分别在不同 worktree 运行，结果返回主模型并汇总通过。恢复测试覆盖持久化身份、原子会话续跑、不重复建任务；Git 测试覆盖脏目录起点、暂存区保留、过期预览拒绝、冲突时不部分应用。Native Protocol 覆盖父子任务归属与原生 MCP 工具卡片，Electron 仅覆盖原生输入框中的协作引用增强。
+2026-09-12 验证：Pi→Claude 两个真实子任务分别在不同 worktree 运行，DSH→CodeBuddy 两个真实子任务也在独立 worktree 完成并由 DSH 主会话汇总 `COLLAB_VERIFIED`。恢复测试覆盖持久化身份、原子会话续跑、不重复建任务；Git 测试覆盖脏目录起点、暂存区保留、过期预览拒绝、冲突时不部分应用。Native Protocol 覆盖父子任务归属与原生 MCP 工具卡片，Electron 仅覆盖原生输入框中的协作引用增强。Runtime 保持 Adapter `open()` 返回对象的同一身份，避免原生回调更新到浅拷贝而被活动回合闸门丢弃。
 
 ## 统一历史
 

@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const oc = require('../src/main/adapters/opencode');
 const grok = require('../src/main/adapters/grok');
+const pi = require('../src/main/adapters/pi');
 (async () => {
   const events = [], calls = [];
   const session = { nativeSessionId: 's', emit: e => events.push(e), state: { active: true, userMessages: new Set(), parts: new Map(), text: new Map(), permissions: new Map(), questions: new Map() } };
@@ -26,6 +27,8 @@ const grok = require('../src/main/adapters/grok');
   await adapter.respond(session, 'perm', { optionId: 'always' });
   assert.deepEqual(calls.at(-1)[2], { reply: 'always' });
   assert.deepEqual(grok.projectUsage({ input_tokens: 12, outputTokens: 3, signature: 'private', costUsdTicks: 5 }), { inputTokens: 12, outputTokens: 3 });
+  const piFailure = pi.project({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', stopReason: 'error', errorMessage: 'native quota exhausted' }] });
+  assert.equal(piFailure.kind, 'error'); assert.match(piFailure.message, /quota exhausted/);
   let answer;
   const gs = { pendingApprovals: new Map([['r', { options: [{ optionId: 'native-always', kind: 'allow_always' }], resolve: v => { answer = v; } }]]) };
   await assert.rejects(grok.create().respond(gs, 'r', { optionId: 'fake' }));

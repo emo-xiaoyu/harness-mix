@@ -4,6 +4,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { HostRuntime } = require('../src/main/host/runtime');
 const { git } = require('../src/main/host/collaboration-worktree');
+const recorder = require('../src/main/harness-adapter/fixture-recorder');
 const arg = (name, fallback) => process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
 async function main() {
   await fs.mkdir('output', { recursive: true });
@@ -18,6 +19,7 @@ async function main() {
   try {
     await rt.initialize();
     const lead = await rt.createThread({ harnessId: from, cwd: project, title: 'Native collaboration verification' });
+    if (process.argv.includes('--record')) recorder.startRecording(from, 'collaboration-lead', path.join(root, 'recording'));
     const prompt = cycle
       ? `这是一个协作流程验收夹具，所有文件只在当前测试目录内。你是协调者，禁止自己编写或修复文件。先用 update_agent_plan 建立计划。用 delegate_to_agent 委派 @${worker} 创建 answer.cjs，内容为 module.exports = 41;（这是故意准备的错误样本，供下一步审查）。等待完成后，另委派 @pi 作为独立只读审查者：读取 answer.cjs，检查导出值是否严格等于 42，不符合时回复 REVIEW_FAIL 和原因。两位协作者均使用默认共享工作目录，不要指定 isolation。收齐审查后通过 message_agent 把问题交回原开发者，要求修为 42。等待修复完成，再通过 message_agent 让原审查者重新读取并执行检查，正确时回复 REVIEW_PASS。必须复用原来的两个子会话。全部完成后更新计划，汇总结果，最终包含 COLLAB_CYCLE_VERIFIED。`
       : `使用 Harness Mix 的 delegate_to_agent，显式指定 isolation=worktree，委派两个独立任务给 @${worker}。任务一只回复 COLLAB_ALPHA，任务二只回复 COLLAB_BETA。不要执行 shell 或编辑文件。请使用 get_delegation_status 等待两个结果，然后你自己最终回复两条结果和 COLLAB_VERIFIED。`;
@@ -53,6 +55,6 @@ async function main() {
       assert.match(final, /COLLAB_ALPHA/); assert.match(final, /COLLAB_BETA/); assert.match(final, /COLLAB_VERIFIED/);
     }
     console.log('PASS: native lead called tools, spawned two native workers, collected results and synthesized its final answer');
-  } finally { await rt.close(); }
+  } finally { recorder.stopRecording(); await rt.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

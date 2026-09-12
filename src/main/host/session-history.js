@@ -1,10 +1,10 @@
 const { listNative, readNative } = require('./native-history');
 const external = id => ({ codex: 'codex-harness', claude: 'claude-code', dsh: 'deepseek-harness' }[id] || id);
-const local = id => ({ 'codex-harness': 'codex', 'claude-code': 'claude', 'deepseek-harness': 'dsh' }[id] || id);
+const local = id => ({ workbuddy: 'codebuddy', 'codex-harness': 'codex', 'claude-code': 'claude', 'deepseek-harness': 'dsh' }[id] || id);
 
 class SessionHistory {
   constructor(runtime, providers = { listNative, readNative }) { this.runtime = runtime; this.providers = providers; this.imports = new Map(); }
-  sources() { return { harnesses: [{ harnessId: 'all-harnesses', name: '全部历史' }, ...[...this.runtime.adapters.values()].map(a => ({ harnessId: external(a.manifest.id), name: a.manifest.name + (['pi', 'claude', 'codex'].includes(a.manifest.id) ? '' : '（Host 历史）') }))] }; }
+  sources() { return { harnesses: [{ harnessId: 'all-harnesses', name: '全部历史' }, ...[...this.runtime.adapters.values()].map(a => ({ harnessId: external(a.manifest.id), name: a.manifest.name + (['pi', 'claude', 'codex', 'codebuddy'].includes(a.manifest.id) ? '' : '（Host 历史）') }))] }; }
   async rows(id) {
     if (id === 'all-harnesses') return (await Promise.all([...this.runtime.adapters.keys()].map(key => this.rows(key)))).flat().map(row => ({ ...row, nativeSessionId: Buffer.from(JSON.stringify([row.harnessId, row.nativeSessionId])).toString('base64url'), title: `[${row.harnessId}] ${row.title || '未命名会话'}` }));
     id = local(id);

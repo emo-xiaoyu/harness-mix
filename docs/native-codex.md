@@ -9,7 +9,7 @@ Codex Desktop 原生输入框 / Harness 选择器
   → 本地编译的 Harness Mix CLI Shim (harness-mix-shim.exe)
   → Harness Mix 原生 Host 入口 (src/main/native/host.js)
   → Harness Mix 本地 HostRuntime (src/main/host/runtime.js) & ProtocolCore
-  → 本地 Harness 适配器 (Pi / Claude Code / DeepSeek / Antigravity / Codex)
+  → 本地 Harness 适配器（Pi / Claude Code / DeepSeek / Antigravity / Codex / CodeBuddy / Kiro / Cursor / Qoder）
   → Codex app-server 事件投影 (src/main/native/protocol.js)
   → Codex Desktop 原生流式文本、工具、审批和 Diff 组件
 ```
@@ -52,11 +52,15 @@ npm start
 本项目仅保存以下非凭据配置到该目录的 `harness-mix-settings.json`，以适配 Windows AppX 环境传递：
 
 - `HARNESS_MIX_DSH_ROOT`：可选 DSH 源码目录。
+- `HARNESS_MIX_CODEBUDDY_EXECUTABLE`、`HARNESS_MIX_KIRO_EXECUTABLE`、`HARNESS_MIX_CURSOR_EXECUTABLE`：可选原生 CLI 路径。CodeBuddy 兼容旧的 `HARNESS_MIX_WORKBUDDY_EXECUTABLE`，新变量优先。接口与验收见 [原生 ACP 深度适配](native-acp.md)。
 - `CODEXHOST_PI_COMMAND`、`CODEXHOST_CLAUDE_COMMAND`、`CODEXHOST_DEEPSEEK_HARNESS_COMMAND`、`CODEXHOST_ANTIGRAVITY_COMMAND`：可选原生命令路径。
 
 环境变量优先于该文件；删除文件中的对应字段即可恢复默认。账号认证使用各原生程序和上游配置机制，本项目不保存凭据。
 
-DSH 默认使用本项目安装的 `0.1.2-rc.1`，不会修改 `E:\dsh\deepseek-harness`。该源码目录当前 `0.1.2-alpha.5` 不满足上游适配器的版本要求。
+DSH Web Remote 与协作 ACP 默认使用 `HARNESS_MIX_DSH_ROOT`（未设置时为
+`E:\dsh\deepseek-harness`）中的原生源码；当前本机健康检查版本为
+`0.1.5-rc.2`。原生 Host 包装脚本在未设置该变量时才回退到项目安装的
+`@deepseek-ai/dsh@0.1.2-rc.1`。两条路径都不修改 DSH 源码或复制账号凭据。
 
 ## 验证
 

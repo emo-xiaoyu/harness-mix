@@ -20,9 +20,10 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   qoder: "Qoder",
-  workbuddy: "Workbuddy",
+  codebuddy: "CodeBuddy",
   zcode: "ZCode",
   trae: "Trae",
+  'cursor-cli': "Cursor CLI",
   'codex-harness': 'Codex（协作）',
 };
 

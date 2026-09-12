@@ -30,7 +30,10 @@ class OpenCodeServer {
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(this.address(route), { method, signal: controller.signal, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-      if (!response.ok) throw new Error(`OpenCode ${method} ${route}: HTTP ${response.status}`);
+      if (!response.ok) {
+        const detail = (await response.text()).trim().slice(0, 4000);
+        throw new Error(`OpenCode ${method} ${route}: HTTP ${response.status}${detail ? ` · ${detail}` : ''}`);
+      }
       return response.status === 204 ? null : await response.json();
     } finally { clearTimeout(timer); this.controllers.delete(controller); }
   }

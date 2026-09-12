@@ -66,8 +66,10 @@ function readPreference(storage: PreferenceStorage | null): NewThreadPreference 
     if (!raw) return undefined;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1) return undefined;
+    if (parsed.lastAgent === 'workbuddy') parsed.lastAgent = 'codebuddy';
     if (!KNOWN_RENDERER_AGENTS.some((agent) => agent === parsed.lastAgent)) return undefined;
     const externalByAgent = isRecord(parsed.externalByAgent) ? parsed.externalByAgent : {};
+    if (!externalByAgent.codebuddy && externalByAgent.workbuddy) externalByAgent.codebuddy = externalByAgent.workbuddy;
     const parsedExternal = Object.fromEntries(
       KNOWN_RENDERER_AGENTS.filter(
         (agent): agent is ExternalRendererAgent => agent !== "codex",
