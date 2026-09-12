@@ -18,6 +18,8 @@ const MODEL_FAMILIES = [
 ];
 
 const HARNESS_ICONS = [
+  { id: 'kiro-cli', file: 'kiro-cli-color.svg', label: 'Kiro CLI' },
+  { id: 'cursor-cli', file: 'cursor-cli-color.svg', label: 'Cursor CLI' },
   { id: 'antigravity', file: 'antigravity-color.svg', label: 'Antigravity' },
   { id: 'claude', file: 'claude-color.svg', label: 'Claude Code' },
   { id: 'codex', file: 'codex-harness.svg', label: 'Codex' },
@@ -29,7 +31,7 @@ const HARNESS_ICONS = [
   { id: 'openclaw', file: 'openclaw-color.svg', label: 'OpenClaw' },
   { id: 'hermes', file: 'hermes-color.svg', label: 'Hermes' },
   { id: 'qoder', file: 'qoder-color.svg', label: 'Qoder' },
-  { id: 'workbuddy', file: 'workbuddy-color.svg', label: 'Workbuddy' },
+  { id: 'codebuddy', file: 'codebuddy-color.svg', label: 'CodeBuddy' },
   { id: 'zcode', file: 'zcode-color.svg', label: 'ZCode' },
   { id: 'trae', file: 'trae-color.svg', label: 'Trae' },
 ];
@@ -67,7 +69,7 @@ function getModelSvg(modelOrName) {
 }
 
 function getHarnessSvg(harnessId) {
-  const item = HARNESS_ICONS.find(h => h.id === harnessId) || HARNESS_ICONS[2];
+  const item = HARNESS_ICONS.find(h => h.id === harnessId) || HARNESS_ICONS.find(h => h.id === 'codex');
   return readSvg(item.file);
 }
 

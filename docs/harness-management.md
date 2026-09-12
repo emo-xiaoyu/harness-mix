@@ -4,7 +4,9 @@
 
 ## 连接
 
-分别检查 Codex、Claude Code、Pi、DeepSeek Harness 的本机安装状态，显示原生接口、诊断信息和检查耗时。检测不会发送用户消息。程序可用不等于账号已登录。
+按当前适配器注册表检查本机安装状态，包括 CodeBuddy、Kiro CLI 和 Cursor CLI。检测不会发送用户消息；程序可用不等于账号已登录。Kiro/Cursor 提供官方安装链接与刷新检测，不猜测 npm 安装包。
+
+CodeBuddy 的旧名称 Workbuddy 自动兼容，已有原生会话 ID 不变。配置路径、专用协议和验证边界见 [原生 ACP 适配说明](native-acp.md)。
 
 ## 账号
 
@@ -14,6 +16,7 @@
 | Claude Code | 原生 `claude auth status --json` | 打开原生认证窗口执行 `claude auth login/logout`，完成后刷新 |
 | Pi | 原生 RPC 模型目录中的供应商 | 打开 Pi 原生交互终端，使用 `/login` 与 `/logout` |
 | DeepSeek Harness | 原生 Web Remote 模型目录中的供应商 | 在独立、安全隔离的应用窗口中打开 DSH 原生管理页面，进入设置管理供应商 |
+| CodeBuddy / Kiro CLI / Cursor CLI | 可执行文件版本检测；打开会话后读取原生目录 | 在各自 CLI 完成原生登录，再刷新检测；不读取或复制登录凭据 |
 
 Pi / DSH 显示「已配置」而非「已登录」，目录存在不能证明凭据通过在线验证。登录与配置仍使用原生程序自己的账号存储，Harness Mix 不复制账号密钥。当前使用各原生程序的本机账号环境，不提供独立多账号池。
 

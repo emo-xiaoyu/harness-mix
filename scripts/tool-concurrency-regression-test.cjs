@@ -52,11 +52,12 @@ async function main() {
   const protocol = new NativeProtocol(rt, event => notifications.push(event));
   await rt.store.load();
   const emitters = new Map();
+  const openedSessions = new Map();
   const sent = [];
   for (const id of ['mock-claude', 'mock-acp']) {
     rt.adapters.set(id, { manifest: { id, name: id, capabilities: {} },
-      async open({ thread, emit }) { emitters.set(thread.id, emit); return {}; },
-      async send(session) { sent.push(session.threadId); }, async close() {} });
+      async open({ thread, emit }) { const session = {}; emitters.set(thread.id, emit); openedSessions.set(thread.id, session); return session; },
+      async send(session) { assert.equal(session, openedSessions.get(session.threadId), 'Runtime must retain the adapter session object identity'); sent.push(session.threadId); }, async close() {} });
     rt.status[id] = { available: true };
   }
   try {

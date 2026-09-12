@@ -28,6 +28,9 @@ const session = { nativeSessionId: 'session-x', state: {} };
 const fromMessage = messageFrames.flatMap((f) => projectWireEvent(f, session));
 assert.ok(!fromMessage.some((e) => e.kind === 'text-delta'), 'assistant/message 不产生重复文本');
 assert.equal(session.state.checkpointSeq, messageFrames.at(-1).event.seq, '检查点 seq 记录');
+const fallbackSession = { nativeSessionId: 'session-fallback', state: { turn: { answer: '' } } };
+const fallback = messageFrames.flatMap((f) => projectWireEvent(f, fallbackSession));
+assert.equal(fallback.filter(e => e.kind === 'text-delta').map(e => e.text).join(''), '收到', '缺失 chunk 时从 committed assistant/message 补齐文本');
 const end = fixture('simple-message.jsonl').filter((f) => f.event?.type === 'turn/end').flatMap((f) => projectWireEvent(f, session));
 assert.equal(end.find((e) => e.kind === 'completed').nativeRef.checkpointId, String(session.state.checkpointSeq), 'completed 携带 fork 边界');
 

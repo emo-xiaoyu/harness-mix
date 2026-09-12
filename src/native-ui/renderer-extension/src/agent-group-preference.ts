@@ -66,7 +66,7 @@ function readStorage(storage: Pick<Storage, "getItem"> | null): StoredEntry[] | 
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    return parsed.filter(isStoredEntry);
+    return parsed.map(entry => entry && entry.agent === 'workbuddy' ? { ...entry, agent: 'codebuddy' } : entry).filter(isStoredEntry);
   } catch {
     return null;
   }

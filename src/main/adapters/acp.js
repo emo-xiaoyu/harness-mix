@@ -5,14 +5,15 @@ const { JsonlProcess, cliSpawn } = require('../host/jsonl');
 const textOf = content => Array.isArray(content) ? content.map(c => c.text ?? c.content?.text ?? '').filter(Boolean).join('\n') : content?.text || '';
 function catalog(session) {
   const options = session.state.configOptions || [];
-  const modelConfig = options.find(o => o.category === 'model');
+  const modelConfig = options.find(o => o.category === 'model' || o.id === 'model');
+  const effort = options.find(o => o.id === 'effortLevel' || o.category === 'thought_level');
   const modeConfig = options.find(o => o.category === 'mode');
   const nativeModels = session.state.models?.availableModels || [];
   const models = modelConfig ? (modelConfig.options || []).filter(o => o.value).map(o => ({ id: o.value, name: o.name, isDefault: o.value === modelConfig.currentValue }))
     : nativeModels.map(m => ({ id: m.modelId, name: m.name || m.modelId, isDefault: m.modelId === session.state.models?.currentModelId }));
   const current = nativeModels.find(m => m.modelId === session.state.models?.currentModelId);
   return { models,
-    thinkingLevels: (current?._meta?.reasoningEfforts || []).map(e => ({ id: e.id, label: e.label || e.id })),
+    thinkingLevels: effort && modelConfig?.currentValue !== 'auto' ? (effort.options || []).filter(e => e.value).map(e => ({ id: e.value, label: e.name || e.value })) : (current?._meta?.reasoningEfforts || []).map(e => ({ id: e.id, label: e.label || e.id })),
     permissionModes: modeConfig ? (modeConfig.options || []).map(o => ({ id: o.value, label: o.name, description: o.description, default: o.value === modeConfig.currentValue }))
       : (session.state.modes?.availableModes || []).map(m => ({ id: m.id, label: m.name, default: m.id === session.state.modes.currentModeId })),
   };
@@ -20,8 +21,8 @@ function catalog(session) {
 
 // 能力声明按 Harness 文档化支持面逐项传入；默认值保持 ACP 家族基线（事件只在原生端真正发出时才投影）。
 function acpAdapter({ id, name, bin, args, executable = false, images = false, fork = false, thinking = false, permissions = false,
-  questions = true, compaction = true, usage = true, contextUsage = true, resolveCommand, inspectCustom }) {
-  const manifest = { id, name, icon: `${id}-color.svg`, aliases: [id], capabilities: { streaming: true, thinking: true, tools: true, approvals: true,
+  questions = true, compaction = true, usage = true, contextUsage = true, resolveCommand, inspectCustom, requestTimeoutMs = 0 }) {
+  const manifest = { id, name, icon: `${id}-color.svg`, aliases: [id], capabilities: { collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true,
     questions, models: true, thinkingLevels: thinking, permissionModes: permissions, resume: true, fork, forkFromMessage: false,
     compaction, usage, contextUsage, attachments: images } };
   function command(argv) {
@@ -52,9 +53,12 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
         }
       },
       async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
-      async open({ thread, emit, diagnostic = () => {} }) {
+      async open({ thread, emit, diagnostic = () => {}, collaboration }) {
         const cli = command(args);
-        const session = { cwd: thread.cwd, nativeSessionId: null, state: { configOptions: [], models: null, modes: null, commands: [], usage: undefined, loading: true }, pendingApprovals: new Map(), tools: new Map(), emit };
+        const session = { cwd: thread.cwd, nativeSessionId: null, collaborationEnabled: !!collaboration,
+          mcpServers: collaboration ? [{ name: 'harness-mix', command: collaboration.command, args: collaboration.args,
+            env: Object.entries(collaboration.env).map(([name, value]) => ({ name, value })) }] : [],
+          state: { configOptions: [], models: null, modes: null, commands: [], usage: undefined, loading: true }, pendingApprovals: new Map(), tools: new Map(), emit };
         session.process = new JsonlProcess(cli.command, cli.args, { cwd: thread.cwd }, {
           onDiagnostic: diagnostic,
           onExit: error => { for (const pending of session.pendingApprovals.values()) pending.reject(error); session.pendingApprovals.clear(); },
@@ -93,11 +97,21 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
             }
           },
         });
+        if (requestTimeoutMs) {
+          const request = session.process.request.bind(session.process);
+          session.process.request = (method, params) => {
+            if (method === 'session/prompt') return request(method, params);
+            let timer;
+            return Promise.race([request(method, params), new Promise((_, reject) => {
+              timer = setTimeout(() => { reject(new Error(`${name} ${method} timed out`)); session.process.stop(); }, requestTimeoutMs);
+            })]).finally(() => clearTimeout(timer));
+          };
+        }
         try {
           const init = await session.process.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'harness-mix', version: '0.1.0' } });
           session.state.agentCapabilities = init.agentCapabilities;
           session.state.commands = init._meta?.availableCommands || [];
-          const result = await session.process.request(thread.restore ? 'session/load' : 'session/new', { cwd: thread.cwd, mcpServers: [], ...(thread.restore ? { sessionId: thread.nativeSessionId } : {}) });
+          const result = await session.process.request(thread.restore ? 'session/load' : 'session/new', { cwd: thread.cwd, mcpServers: session.mcpServers, ...(thread.restore ? { sessionId: thread.nativeSessionId } : {}) });
           session.nativeSessionId = result.sessionId || thread.nativeSessionId;
           session.state.configOptions = result.configOptions || [];
           session.state.models = result.models || init._meta?.modelState;
@@ -131,7 +145,7 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
         session.pendingApprovals.delete(requestId);
       },
       async setModel(session, model) {
-        const config = session.state.configOptions.find(c => c.category === 'model');
+        const config = session.state.configOptions.find(c => c.category === 'model' || c.id === 'model');
         if (config) {
           const result = await session.process.request('session/set_config_option', { sessionId: session.nativeSessionId, configId: config.id, value: model.id });
           session.state.configOptions = result.configOptions || session.state.configOptions;
@@ -141,6 +155,12 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
       },
       async setThinkingLevel(session, level) {
         if (!catalog(session).thinkingLevels.some(l => l.id === level)) throw new Error('Native reasoning level unavailable');
+        const config = session.state.configOptions.find(c => c.id === 'effortLevel' || c.category === 'thought_level');
+        if (config) {
+          const result = await session.process.request('session/set_config_option', { sessionId: session.nativeSessionId, configId: config.id, value: level });
+          session.state.configOptions = result.configOptions || session.state.configOptions;
+          return;
+        }
         await session.process.request('session/set_mode', { sessionId: session.nativeSessionId, modeId: level });
       },
       async setPermissionMode(session, mode) {

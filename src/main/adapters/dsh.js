@@ -3,6 +3,8 @@ const { promises: fs } = require("node:fs");
 const path = require("node:path");
 const { DshWebHost, DSH_ROOT } = require("./dsh-web-host");
 const { recordNative } = require("../harness-adapter/fixture-recorder");
+const { nativeAcp } = require('./native-acp');
+const { cliSpawn } = require('../host/jsonl');
 
 const manifest = {
   id: "dsh",
@@ -11,7 +13,7 @@ const manifest = {
   aliases: ["dsh", "deepseek-harness"],
   // 完整接入（对齐 codex-host）：官方 Web Remote 协议（Typert RPC + remote.mux 流），
   // 审批/提问走 $events waterfall 原生应答；ACP 自动化面（无 fork/提问/plan）已弃用。
-  capabilities: { plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
+  capabilities: { collaborationTools: true, plan: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
 const MAX_TOOL_TEXT = 24_000;
@@ -76,7 +78,10 @@ function projectWireEvent(frame, session) {
     case "assistant/chunk": {
       const chunk = data.chunk;
       if (!chunk) break;
-      if (chunk.type === "text-delta" && chunk.text) out.push({ kind: "text-delta", text: chunk.text });
+      if (chunk.type === "text-delta" && chunk.text) {
+        if (session?.state?.turn) session.state.turn.answer = (session.state.turn.answer || '') + chunk.text;
+        out.push({ kind: "text-delta", text: chunk.text });
+      }
       else if (chunk.type === "reasoning-delta" && chunk.text) out.push({ kind: "thinking-delta", text: chunk.text });
       else if (chunk.type === "usage" && chunk.usage) {
         const usage = usageFrom(chunk.usage, session?.state?.contextWindow);
@@ -84,9 +89,15 @@ function projectWireEvent(frame, session) {
       }
       break;
     }
-    // assistant/message 为已提交消息：文本/思考已经由 chunk 增量投影，这里只记录检查点与用量
+    // 正常情况下 chunk 已投影文本；若 Web Remote 丢失 chunk，则从已提交消息补齐未见后缀。
     case "assistant/message": {
       if (session) session.state.checkpointSeq = event.seq;
+      const answer = (Array.isArray(data.message?.content) ? data.message.content : [])
+        .filter(block => block?.type === 'text').map(block => block.text || '').join('\n');
+      const streamed = session?.state?.turn?.answer || '';
+      if (session?.state?.turn && answer && answer !== streamed) out.push({ kind: "text-delta", text: answer.startsWith(streamed) ? answer.slice(streamed.length) : answer });
+      if (session?.state?.turn && answer) session.state.turn.answer = answer;
+      if (data.message?.stopReason === 'error' || data.message?.errorMessage) out.push({ kind: 'error', message: data.message.errorMessage || 'DSH native model turn failed' });
       const usage = usageFrom(data.usage, session?.state?.contextWindow);
       if (usage) out.push({ kind: "usage", usage });
       break;
@@ -186,7 +197,7 @@ function projectQuestion(frame, sessionId) {
 
 /** DeepSeek Harness Adapter：dsh web（Web Remote）常驻宿主，会话/工具/权限全归原生 DSH */
 function create() {
-  return {
+  const web = {
     manifest,
 
     async inspect() {
@@ -298,7 +309,7 @@ function create() {
         ...(attachments?.images ?? []).map((a) => ({ type: "image", mediaType: a.mime, data: a.data, name: a.name })),
       ];
       await new Promise((resolve, reject) => {
-        session.state.turn = { resolve, reject };
+        session.state.turn = { resolve, reject, answer: '' };
         session.host.call("session/prompt", {
           request: { requestId: randomUUID(), sessionId: session.nativeSessionId, mode: "queue", content },
         }).catch((error) => {
@@ -410,6 +421,25 @@ function create() {
       await DshWebHost.release();
     },
   };
+  // Lead sessions use DSH's official ACP profile because it accepts session-scoped
+  // MCP declarations. Worker/direct sessions retain the richer Web Remote surface.
+  const acp = nativeAcp({
+    id: 'dsh', name: 'DeepSeek Harness', args: [],
+    command: argv => cliSpawn('npm', ['--prefix', DSH_ROOT, 'run', 'dsh', '--', '--profile', 'acp', ...argv]),
+    capabilities: { attachments: true, fork: false, compaction: false, permissionModes: false },
+  }).create();
+  const openWeb = web.open.bind(web);
+  web.open = async context => {
+    if (!context.collaboration) return openWeb(context);
+    const session = await acp.open(context);
+    session.dshAcpLead = true;
+    return session;
+  };
+  for (const method of ['describeFor', 'listModelsFor', 'send', 'cancel', 'listCommands', 'executeCommand', 'setModel', 'setThinkingLevel', 'getContextUsage', 'respond', 'close']) {
+    const original = web[method]?.bind(web);
+    web[method] = (session, ...args) => session?.dshAcpLead ? acp[method](session, ...args) : original(session, ...args);
+  }
+  return web;
 }
 
 module.exports = { manifest, create, projectWireEvent, flattenCatalog };

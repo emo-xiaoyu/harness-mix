@@ -80,9 +80,10 @@ export const RENDERER_AGENT_INSTALL_URLS: Readonly<Record<ExternalRendererAgent,
   openclaw: "https://docs.openclaw.ai/",
   hermes: "https://hermes-agent.nousresearch.com/",
   qoder: "https://qoder.com/",
-  workbuddy: "https://workbuddy.ai/",
+  codebuddy: "https://www.codebuddy.ai/docs/cli/overview",
   zcode: "https://zcode.z.ai/",
   trae: "https://www.trae.ai/",
+  'cursor-cli': "https://cursor.com/docs/cli/installation",
   'codex-harness': 'https://developers.openai.com/codex/',
 };
 

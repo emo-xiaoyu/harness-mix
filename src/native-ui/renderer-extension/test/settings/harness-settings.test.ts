@@ -17,14 +17,18 @@ import { KNOWN_RENDERER_AGENTS, type ExternalRendererAgent } from "../../src/age
 import { installRendererSettingsLifecycle } from "../../src/harness-mix-settings.js";
 
 describe("Harness Mix Settings & Model Configuration", () => {
-  it("provides install commands for all known external harnesses", () => {
+  it("provides known install commands without guessing npm packages for native CLIs", () => {
     const externalAgents = KNOWN_RENDERER_AGENTS.filter(
       (agent): agent is ExternalRendererAgent => agent !== "codex",
     );
     for (const agent of externalAgents) {
+      if (['kiro-cli', 'cursor-cli', 'codebuddy', 'zcode', 'trae'].includes(agent)) {
+        expect(HARNESS_INSTALL_COMMANDS[agent]).toBeUndefined();
+        continue;
+      }
       expect(HARNESS_INSTALL_COMMANDS[agent]).toBeDefined();
-      expect(typeof HARNESS_INSTALL_COMMANDS[agent].command).toBe("string");
-      expect(HARNESS_INSTALL_COMMANDS[agent].command.length).toBeGreaterThan(0);
+      expect(typeof HARNESS_INSTALL_COMMANDS[agent]?.command).toBe("string");
+      expect(HARNESS_INSTALL_COMMANDS[agent]?.command.length).toBeGreaterThan(0);
     }
   });
 

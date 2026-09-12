@@ -7,8 +7,8 @@ const { exec } = require('node:child_process');
 const os = require('node:os');
 const { randomUUID } = require('node:crypto');
 const { diff } = require('../workspace/diff');
-const ALIASES = { 'claude-code': 'claude', 'deepseek-harness': 'dsh', 'codex-harness': 'codex' };
-const externalId = id => ({ claude: 'claude-code', dsh: 'deepseek-harness', codex: 'codex-harness' }[id] || id);
+const ALIASES = { workbuddy: 'codebuddy', 'claude-code': 'claude', 'deepseek-harness': 'dsh', 'codex-harness': 'codex' };
+const externalId = id => ({ workbuddy: 'codebuddy', claude: 'claude-code', dsh: 'deepseek-harness', codex: 'codex-harness' }[id] || id);
 const modelRef = model => ({ id: Buffer.from(JSON.stringify({ id: model.id, provider: model.provider })).toString('base64url') });
 const routeModel = harnessId => ['pi', 'claude-code', 'deepseek-harness', 'antigravity', 'omp', 'opencode', 'grok'].includes(harnessId)
   ? `codexhost/${harnessId}-native`
@@ -18,9 +18,6 @@ const turnStatus = status => ({ cancelled: 'interrupted', error: 'failed', faile
 
 const HARNESS_INSTALL_COMMANDS = {
   qoder: { win32: 'npm install -g @qoder-ai/qodercli', default: 'npm install -g @qoder-ai/qodercli' },
-  workbuddy: { win32: 'npm install -g @tencent/codebuddy', default: 'npm install -g @tencent/codebuddy' },
-  zcode: { win32: 'pip install zcode-cli', default: 'pip3 install zcode-cli' },
-  trae: { win32: 'npm install -g traecli', default: 'npm install -g traecli' },
   codex: { win32: 'npm install -g @openai/codex', default: 'npm install -g @openai/codex' },
   'codex-harness': { win32: 'npm install -g @openai/codex', default: 'npm install -g @openai/codex' },
   pi: { win32: 'npm install -g @mariozechner/pi-coding-agent', default: 'npm install -g @mariozechner/pi-coding-agent' },
@@ -30,7 +27,6 @@ const HARNESS_INSTALL_COMMANDS = {
   grok: { win32: 'npm install -g @xai/grok-cli', default: 'npm install -g @xai/grok-cli' },
   omp: { win32: 'npm install -g @oh-my-prompt/omp', default: 'npm install -g @oh-my-prompt/omp' },
   antigravity: { win32: 'npm install -g @google/antigravity-cli', default: 'npm install -g @google/antigravity-cli' },
-  'kiro-cli': { win32: 'npm install -g kiro-cli', default: 'npm install -g kiro-cli' },
   openclaw: { win32: 'npm install -g openclaw', default: 'npm install -g openclaw' },
   hermes: { win32: 'pip install hermes-agent', default: 'pip3 install hermes-agent' },
 };

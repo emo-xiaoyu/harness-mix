@@ -66,6 +66,15 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
 
   function forwardEvent(process, event, emit) {
     recordNative(manifest.id, event);
+    if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta' && event.assistantMessageEvent.delta) process.harnessMixAnswer = (process.harnessMixAnswer || '') + event.assistantMessageEvent.delta;
+    if (event.type === 'message_end' && event.message?.role === 'assistant') {
+      if (event.message.stopReason === 'error' || event.message.errorMessage) {
+        emit({ kind: 'error', message: event.message.errorMessage || `${name} native model turn failed` });
+      } else if (!process.harnessMixAnswer) {
+        const answer = Array.isArray(event.message.content) ? event.message.content.filter(block => block?.type === 'text').map(block => block.text || '').join('\n') : '';
+        if (answer) emit({ kind: 'text-delta', text: answer });
+      }
+    }
     if (event.type !== 'agent_settled') { emitAll(emit, project(event)); return; }
     // Capture the native leaf before exposing completion; later forks use this boundary.
     void process.command({ type: 'get_entries' }).then(data => {
@@ -124,6 +133,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
       async send(session, text, _hooks, attachments) {
         // 图片走 RPC 原生 images 字段（base64）；文本附件由 Host 内联进 text
         const images = (attachments?.images ?? []).map((a) => ({ type: 'image', data: a.data, mimeType: a.mime }));
+        session.process.harnessMixAnswer = '';
         await session.process.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
       },
 
@@ -293,7 +303,11 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
       case "agent_settled":
         return { kind: "completed", finalAnswer: true };
       case "agent_end":
-        return event.willRetry ? { kind: "status", text: "请求失败，自动重试中…" } : null;
+        if (event.willRetry) return { kind: "status", text: "请求失败，自动重试中…" };
+        {
+          const message = event.message || event.messages?.findLast?.(row => row?.role === 'assistant');
+          return message?.stopReason === 'error' || message?.errorMessage ? { kind: 'error', message: message.errorMessage || `${name} native model turn failed` } : null;
+        }
       case "auto_retry_start":
         return { kind: "status", text: `自动重试（${event.attempt}/${event.maxAttempts}）…` };
       case "auto_retry_end":
