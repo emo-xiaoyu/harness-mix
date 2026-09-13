@@ -1,11 +1,13 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { PassThrough } = require('node:stream');
 const antigravity = require('../src/main/adapters/antigravity');
 
 (async () => {
-  const { manifest, create, parseModelsOutput, parseUsage, formatPrompt, prepareImageAttachments, ANTIGRAVITY_PERMISSION_MODES } = antigravity;
+  const { manifest, create, parseModelsOutput, parseUsage, formatPrompt, prepareImageAttachments, formatAntigravityResultError, modelSupportsEffort, ANTIGRAVITY_PERMISSION_MODES } = antigravity;
 
   // 1. Manifest
   assert.equal(manifest.id, 'antigravity');
@@ -47,11 +49,14 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.equal(flash.efforts[2].id, 'high');
   assert.equal(flash.defaultEffort, 'high');
   assert.equal(flash.contextWindow, 1_048_576);
+  assert.equal(modelSupportsEffort(flash), true);
 
   const claude = models.find(m => m.id === 'claude-sonnet-4-6');
   assert.ok(claude);
   assert.equal(claude.provider, 'anthropic');
   assert.equal(claude.contextWindow, 200_000);
+  assert.equal(modelSupportsEffort(claude), false);
+  assert.equal(modelSupportsEffort({ id: 'claude-sonnet-4-6' }), false);
 
   // 3. parseUsage
   const usage = parseUsage({
@@ -161,8 +166,28 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   ], tmpRoot);
   assert.equal(prepared.imageEntries.length, 2);
   assert.equal(prepared.imageEntries[0].name, 'test.png');
-  assert.equal(prepared.imageEntries[0].path, localImg.replace(/\\/g, '/'));
+  assert.notEqual(prepared.imageEntries[0].path, localImg.replace(/\\/g, '/'));
+  assert.match(prepared.imageEntries[0].path, /[\\/]\.gemini[\\/]attachments[\\/]/);
+  assert.equal(fs.readFileSync(prepared.imageEntries[0].path).toString('base64'), 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=');
   assert.ok(fs.existsSync(prepared.imageEntries[1].path));
+  await fs.promises.unlink(localImg);
+  assert.ok(fs.existsSync(prepared.imageEntries[0].path));
+  const legacyPath = path.join(os.tmpdir(), `codex-clipboard-legacy-${Date.now()}.png`);
+  await fs.promises.rm(legacyPath, { force: true }).catch(() => {});
+  const legacySession = await adapter.open({
+    thread: {
+      id: 'legacy-image-thread',
+      nativeSessionId: 'legacy-image-session',
+      cwd: tmpRoot,
+      messages: [{ role: 'user', attachments: [{ kind: 'image', path: legacyPath, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' }] }],
+      options: {},
+    },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  assert.equal(fs.readFileSync(legacyPath).toString('base64'), 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=');
+  await adapter.close(legacySession);
+  await fs.promises.unlink(legacyPath).catch(() => {});
   await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
 
   // 12. mergePendingStep
@@ -266,7 +291,235 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.ok(Array.isArray(quotaSnapshot.productUsage));
   assert.equal(quotaSnapshot.productUsage[0].usagePercent, 20); // (1 - 0.8) * 100
 
-  // 15. Close session
+  // 15. Native result failures must be visible instead of becoming an empty
+  // successful turn. This is the real error returned by agy 1.2.2 for an
+  // unsupported API location.
+  const locationError = formatAntigravityResultError({
+    status: 'ERROR',
+    error: { code: 'FAILED_PRECONDITION', message: 'User location is not supported for the API use.' },
+  });
+  assert.equal(locationError, 'Antigravity 回合失败：FAILED_PRECONDITION: User location is not supported for the API use.');
+
+  const errorChild = new EventEmitter();
+  errorChild.stdin = new PassThrough();
+  errorChild.stdout = new PassThrough();
+  errorChild.stderr = new PassThrough();
+  let errorCommandArgs = [];
+  let errorClosed = false;
+  const closeErrorChild = () => {
+    if (errorClosed) return;
+    errorClosed = true;
+    errorChild.stdout.end();
+    errorChild.stderr.end();
+    errorChild.emit('close', 0);
+  };
+  errorChild.stdin.once('data', () => setTimeout(() => {
+    if (!errorClosed) errorChild.stdout.write(`${JSON.stringify({
+      event: 'result',
+      result: {
+        conversation_id: 'fake-location-error',
+        status: 'ERROR',
+        error: { code: 'FAILED_PRECONDITION', message: 'User location is not supported for the API use.' },
+      },
+    })}\n`);
+  }, 1));
+  errorChild.stdin.once('finish', () => setTimeout(closeErrorChild, 0));
+  errorChild.kill = closeErrorChild;
+  const errorAdapter = create(() => {}, { spawnProcess: (_bin, args) => { errorCommandArgs = args; return errorChild; }, resultDrainMs: 10, resultDrainMaxMs: 30 });
+  const errorSession = await errorAdapter.open({
+    thread: { id: 'fake-error-thread', cwd: os.tmpdir(), options: { model: { id: 'claude-sonnet-4-6' }, thinking: 'high', permissionMode: 'skip' } },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  const errorEvents = [];
+  await assert.rejects(
+    errorAdapter.send(errorSession, 'return an error', { emit: event => errorEvents.push(event) }),
+    /User location is not supported for the API use/,
+  );
+  const errorEvent = errorEvents.find(event => event.kind === 'error');
+  assert.equal(errorEvent?.message, locationError);
+  assert.equal(errorCommandArgs.includes('--effort'), false);
+  assert.equal(errorEvents.some(event => event.kind === 'completed'), false);
+  assert.equal(errorSession.activeTurn, null);
+  await errorAdapter.close(errorSession);
+
+  // 16. A clean process exit without any result is also a protocol failure.
+  const noResultChild = new EventEmitter();
+  noResultChild.stdin = new PassThrough();
+  noResultChild.stdout = new PassThrough();
+  noResultChild.stderr = new PassThrough();
+  let noResultClosed = false;
+  const closeNoResultChild = () => {
+    if (noResultClosed) return;
+    noResultClosed = true;
+    noResultChild.stdout.end();
+    noResultChild.stderr.end();
+    noResultChild.emit('close', 0);
+  };
+  noResultChild.stdin.once('data', () => setTimeout(closeNoResultChild, 1));
+  noResultChild.kill = closeNoResultChild;
+  const noResultAdapter = create(() => {}, { spawnProcess: () => noResultChild });
+  const noResultSession = await noResultAdapter.open({
+    thread: { id: 'fake-no-result-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  const noResultEvents = [];
+  await assert.rejects(
+    noResultAdapter.send(noResultSession, 'return nothing', { emit: event => noResultEvents.push(event) }),
+    /未返回 result/,
+  );
+  assert.match(noResultEvents.find(event => event.kind === 'error')?.message || '', /未返回 result/);
+  assert.equal(noResultEvents.some(event => event.kind === 'completed'), false);
+  assert.equal(noResultSession.activeTurn, null);
+  await noResultAdapter.close(noResultSession);
+
+  // 17. A SUCCESS result with no assistant text must not be reported as a
+  // successful empty turn.
+  const emptySuccessChild = new EventEmitter();
+  emptySuccessChild.stdin = new PassThrough();
+  emptySuccessChild.stdout = new PassThrough();
+  emptySuccessChild.stderr = new PassThrough();
+  let emptySuccessClosed = false;
+  const closeEmptySuccessChild = () => {
+    if (emptySuccessClosed) return;
+    emptySuccessClosed = true;
+    emptySuccessChild.stdout.end();
+    emptySuccessChild.stderr.end();
+    emptySuccessChild.emit('close', 0);
+  };
+  emptySuccessChild.stdin.once('data', () => setTimeout(() => {
+    if (!emptySuccessClosed) emptySuccessChild.stdout.write(`${JSON.stringify({
+      event: 'result',
+      result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', response: '' },
+    })}\n`);
+  }, 1));
+  emptySuccessChild.stdin.once('finish', () => setTimeout(closeEmptySuccessChild, 0));
+  emptySuccessChild.kill = closeEmptySuccessChild;
+  const emptySuccessAdapter = create(() => {}, { spawnProcess: () => emptySuccessChild, resultDrainMaxMs: 20 });
+  const emptySuccessSession = await emptySuccessAdapter.open({
+    thread: { id: 'fake-empty-success-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  const emptySuccessEvents = [];
+  await assert.rejects(
+    emptySuccessAdapter.send(emptySuccessSession, 'return an empty success', { emit: event => emptySuccessEvents.push(event) }),
+    /没有 assistant 文本/,
+  );
+  assert.match(emptySuccessEvents.find(event => event.kind === 'error')?.message || '', /没有 assistant 文本/);
+  assert.equal(emptySuccessEvents.some(event => event.kind === 'completed'), false);
+  assert.equal(emptySuccessSession.activeTurn, null);
+  await emptySuccessAdapter.close(emptySuccessSession);
+
+  // 18. An empty view_file result must not close the Core turn before a late
+  // assistant response. This is the stream shape produced for image files by
+  // agy: the terminal tool step has no tool_info.output field.
+  const fakeChild = new EventEmitter();
+  fakeChild.stdin = new PassThrough();
+  fakeChild.stdout = new PassThrough();
+  fakeChild.stderr = new PassThrough();
+  let fakePrompt = '';
+  let fakeClosed = false;
+  const closeFakeChild = () => {
+    if (fakeClosed) return;
+    fakeClosed = true;
+    fakeChild.stdout.end();
+    fakeChild.stderr.end();
+    fakeChild.emit('close', 0);
+  };
+  fakeChild.stdin.once('data', (chunk) => {
+    fakePrompt = JSON.parse(String(chunk).trim()).message?.content || '';
+    const emit = (event, delay = 0) => setTimeout(() => {
+      if (!fakeClosed) fakeChild.stdout.write(`${JSON.stringify(event)}\n`);
+    }, delay);
+    emit({ event: 'init', conversation_id: 'fake-empty-view-file' });
+    emit({
+      event: 'step_update',
+      step_update: {
+        conversation_id: 'fake-empty-view-file',
+        step_index: 0,
+        state: 'DONE',
+        step_type: 'agent_response',
+        text_delta: 'checking image... ',
+      },
+    }, 1);
+    emit({
+      event: 'step_update',
+      step_update: {
+        conversation_id: 'fake-empty-view-file',
+        step_index: 1,
+        state: 'ACTIVE',
+        step_type: 'tool',
+        tool_name: 'view_file',
+        tool_info: { name: 'view_file', parameters: { AbsolutePath: 'image.png' } },
+      },
+    }, 5);
+    emit({
+      event: 'step_update',
+      step_update: {
+        conversation_id: 'fake-empty-view-file',
+        step_index: 1,
+        state: 'DONE',
+        step_type: 'tool',
+        tool_name: 'view_file',
+        tool_info: { name: 'view_file', parameters: { AbsolutePath: 'image.png' } },
+      },
+    }, 10);
+    emit({
+      event: 'result',
+      result: {
+        conversation_id: 'fake-empty-view-file',
+        status: 'SUCCESS',
+        num_turns: 1,
+        response: '',
+      },
+    }, 15);
+    emit({
+      event: 'step_update',
+      step_update: {
+        conversation_id: 'fake-empty-view-file',
+        step_index: 2,
+        state: 'DONE',
+        step_type: 'agent_response',
+        text_delta: 'late answer',
+      },
+    }, 70);
+  });
+  fakeChild.stdin.once('finish', () => setTimeout(closeFakeChild, 0));
+  fakeChild.kill = closeFakeChild;
+  const fakeAdapter = create(() => {}, {
+    spawnProcess: () => fakeChild,
+    resultDrainMs: 20,
+    resultDrainMaxMs: 250,
+  });
+  const fakeCwd = path.join(os.tmpdir(), `agy-empty-view-file-${Date.now()}`);
+  const fakeImagePath = path.join(fakeCwd, 'codex-clipboard-stale.png');
+  const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+  await fs.promises.mkdir(fakeCwd, { recursive: true });
+  await fs.promises.writeFile(fakeImagePath, Buffer.from(tinyPng, 'base64'));
+  const fakeSession = await fakeAdapter.open({
+    thread: { id: 'fake-thread', cwd: fakeCwd, options: { permissionMode: 'skip' } },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  const fakeEvents = [];
+  await fakeAdapter.send(fakeSession, 'inspect image', { emit: event => fakeEvents.push(event) }, {
+    images: [{ name: 'codex-clipboard-stale.png', path: fakeImagePath, data: tinyPng }],
+  });
+  assert.match(fakePrompt, /[\\/]\.gemini[\\/]attachments[\\/]/);
+  assert.ok(!fakePrompt.includes(fakeImagePath.replace(/\\/g, '/')));
+  await fs.promises.unlink(fakeImagePath);
+  const fakeTool = fakeEvents.filter(event => event.kind === 'tool').at(-1);
+  assert.equal(fakeTool?.title, 'view_file');
+  assert.equal(fakeTool?.state, 'done');
+  assert.equal(fakeTool?.output, undefined);
+  assert.equal(fakeEvents.filter(event => event.kind === 'text-delta').map(event => event.text).join(''), 'checking image... late answer');
+  assert.ok(fakeEvents.findIndex(event => event.kind === 'text-delta') < fakeEvents.findIndex(event => event.kind === 'completed'));
+  await fakeAdapter.close(fakeSession);
+  await fs.promises.rm(fakeCwd, { recursive: true, force: true }).catch(() => {});
+
+  // 19. Close session
   await adapter.close(session);
 
   console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, and turn pruning passed');

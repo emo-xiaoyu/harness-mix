@@ -18,6 +18,12 @@
       "level": "protocol-and-smoke",
       "checkedAt": "2026-09-11",
       "notes": "Install inspection, protocol suite, native build and offscreen Electron smoke passed; full restarted Desktop acceptance remains pending."
+    },
+    {
+      "desktopVersion": "26.908.4834.0",
+      "level": "desktop-e2e",
+      "checkedAt": "2026-09-13",
+      "notes": "Restarted isolated Desktop acceptance passed with the 26.908 connection snapshot and draft identity contracts: Renderer request bridge ready, native input editable, Pi selected with its model, external turn routed through Harness Mix HostRuntime, and exact live Pi response rendered."
     }
   ]
 }

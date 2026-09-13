@@ -292,6 +292,19 @@ describe("current Codex Renderer Agent adapter", () => {
     expect(routeResolver.resolve()).toBeNull();
   });
 
+  it("recognizes the 26.908 route-derived draft and rejects inconsistent snapshots", () => {
+    const draftSettings = { modelSettings: null, isManuallyChanged: false };
+    const updateDraftSettings = vi.fn();
+    const result = { draftSettings, isNewThreadDraft: true, updateDraftSettings };
+    const slots = ["/", "", "new-conversation", "client-new-thread:new", "new-conversation",
+      "client-new-thread:new", "client-new-thread:new", {}, updateDraftSettings,
+      draftSettings, true, updateDraftSettings, result];
+    const composer = composerWithFiber({ updateQueue: { memoCache: { data: [slots] } }, return: null });
+    expect(findComposerModelTarget(composer)).toEqual(["default", "client-new-thread:new"]);
+    slots[6] = "client-new-thread:other";
+    expect(findComposerModelTarget(composer)).toBeNull();
+  });
+
   it("finds the current seven-slot new Thread draft identity", () => {
     const wrapper = { isManuallyChanged: false, modelSettings: null, serviceTier: null };
     const draftAtom = { get: vi.fn(() => wrapper) };
