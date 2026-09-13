@@ -16,14 +16,14 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   grok: "Grok",
   omp: "Oh My Pi",
   antigravity: "Antigravity CLI",
-  "kiro-cli": "Kiro CLI",
+  "kiro-cli": "Kiro",
   openclaw: "OpenClaw",
   hermes: "Hermes",
   qoder: "Qoder",
   codebuddy: "CodeBuddy",
   zcode: "ZCode",
   trae: "Trae",
-  'cursor-cli': "Cursor CLI",
+  'cursor-cli': "Cursor",
   'codex-harness': 'Codex（协作）',
 };
 

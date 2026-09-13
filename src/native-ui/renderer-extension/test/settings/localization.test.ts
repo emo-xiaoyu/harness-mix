@@ -33,7 +33,7 @@ describe("Renderer settings localization", () => {
 
     expect(english.title).toBe("Settings");
     expect(chinese.title).toBe("设置");
-    expect(chinese.openSettings).toBe("打开 codexhost 设置");
+    expect(chinese.openSettings).toBe("打开 Harness Mix 设置");
     expect(chinese.updateInstallation).toBe("安装方式");
     expect(chinese.updateInstallationWindowsInstaller).toBe("Windows 安装程序");
     expect(english.updateInstallationMacOsDmg).toBe("macOS DMG");
@@ -43,7 +43,7 @@ describe("Renderer settings localization", () => {
     expect(chinese.updateWindowsManualRequired).toContain("Windows 暂不支持自动更新");
     expect(chinese.updateWindowsInstallerDescription).toContain("适用于当前系统的安装包");
     expect(chinese.updateManualNpmDescription).toBe(
-      "如需手动更新，请在终端运行以下命令。更新完成后，请退出 Codex 并通过 codexhost 重新启动。",
+      "如需手动更新，请在终端运行以下命令。更新完成后，请退出 Codex 并通过 Harness Mix 重新启动。",
     );
     expect(english.updateInstalling).toBe("Installing update...");
     expect(english.updateDownloadFromReleases).toBe("Download from GitHub Releases");
@@ -61,7 +61,7 @@ describe("Renderer settings localization", () => {
       "close the session in its native client before importing",
     );
     expect(english.sessionImportAvailabilityNote).toContain("avoid concurrent writes");
-    expect(chinese.aboutTagline).toBe("在 Codex Desktop 中运行 Pi 和其他 Harness");
+    expect(chinese.aboutTagline).toBe("在 Codex Desktop 中运行各类原生 Harness");
     expect(chinese.aboutParagraphs).toHaveLength(3);
     expect(chinese.aboutStarCallout).toContain("请给我们一个 Star");
     expect(chinese.aboutRepository).toBe("开源仓库");

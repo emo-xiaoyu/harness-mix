@@ -138,7 +138,11 @@ function create() {
       if (!model) throw new Error('Select an OpenCode model before compacting');
       if (session.state.active) throw new Error('OpenCode turn already active');
       session.state.active = true;
-      try { await session.host.request('POST', route(session, '/summarize'), { providerID: model.provider, modelID: model.id }, 30 * 60 * 1000); hooks.emit({ kind: 'completed', finalAnswer: false }); }
+      try {
+        await session.host.request('POST', route(session, '/summarize'), { providerID: model.provider, modelID: model.id }, 30 * 60 * 1000);
+        hooks.emit({ kind: 'compaction', state: 'completed', outcome: 'succeeded' });
+        hooks.emit({ kind: 'completed', finalAnswer: false });
+      }
       finally { session.state.active = false; }
     },
     async getContextUsage(session) {

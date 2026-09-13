@@ -173,7 +173,7 @@ export function mountRendererSettingsTrigger(
   button.append(createRendererSettingsBrandIcon(24, ownerDocument));
 
   const brandLabel = ownerDocument.createElement("span");
-  brandLabel.textContent = "CodexHost";
+  brandLabel.textContent = "Harness Mix";
   brandLabel.style.fontSize = "13px";
   brandLabel.style.fontWeight = "600";
   brandLabel.style.lineHeight = "1";

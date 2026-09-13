@@ -172,7 +172,7 @@ function updateCheck(status: UpdateStatus | null = null): UpdateCheckResult {
     updateAvailable: true,
     installationAvailable: true,
     releaseNotes: "Safer updates",
-    releaseNotesUrl: "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+    releaseNotesUrl: "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
     status,
     error: null,
   };
@@ -447,7 +447,7 @@ describe("Renderer Connections page", () => {
     expect(visibleText(content)).toContain("startup");
     const issueLink = descendants(content).find(
       ({ tagName, href }) =>
-        tagName === "a" && href === "https://github.com/BytePioneer-AI/codex-host/issues/new",
+        tagName === "a" && href === "https://github.com/emo-xiaoyu/harness-mix/issues/new",
     );
     expect(issueLink).toBeDefined();
     const copyButton = descendants(
@@ -1055,7 +1055,7 @@ describe("Renderer Updates page", () => {
 
     await vi.waitFor(() => {
       expect(releaseLink.href).toBe(
-        "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+        "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
       );
     });
 
@@ -1069,7 +1069,7 @@ describe("Renderer Updates page", () => {
     });
     expect(descendants(content)).toContain(releaseLink);
     expect(releaseLink.href).toBe(
-      "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+      "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
     );
 
     cleanup?.();
@@ -1077,7 +1077,7 @@ describe("Renderer Updates page", () => {
   });
 
   it.each([
-    ["npm" as const, "Windows 暂不支持自动更新。请退出 codexhost，在终端运行以下命令完成更新。"],
+    ["npm" as const, "Windows 暂不支持自动更新。请退出 Harness Mix，在终端运行以下命令完成更新。"],
     [
       "windows-installer" as const,
       "Windows 暂不支持自动更新。请下载并运行适用于当前系统的安装包。",
@@ -1116,13 +1116,13 @@ describe("Renderer Updates page", () => {
     ).toBeUndefined();
     expect(client.startUpdate).not.toHaveBeenCalled();
     if (installation === "npm") {
-      expect(visibleText(content)).toContain("npm install -g @codexhost/cli@latest");
+      expect(visibleText(content)).toContain("npm install -g harness-mix@latest");
     } else {
       const link = descendants(content).find(
         ({ tagName, href }) =>
           tagName === "a" &&
           href ===
-            "https://github.com/BytePioneer-AI/codex-host/releases/download/v1.2.3/codexhost-1.2.3-windows-x64.exe",
+            "https://github.com/emo-xiaoyu/harness-mix/releases/download/v1.2.3/harness-mix-1.2.3-windows-x64.exe",
       );
       expect(link).toMatchObject({ target: "_blank", rel: "noopener noreferrer" });
     }
@@ -1146,20 +1146,20 @@ describe("Renderer Updates page", () => {
       runLatest: (operation, handlers) => scope.runLatest(operation, handlers),
     });
 
-    expect(visibleText(content)).toContain("在 Codex Desktop 中运行 Pi 和其他 Harness");
+    expect(visibleText(content)).toContain("在 Codex Desktop 中运行各类原生 Harness");
     expect(visibleText(content)).toContain(
       "我们认为 Codex Desktop 提供了目前最好的桌面开发交互体验",
     );
-    expect(visibleText(content)).toContain("Claude Code 和 Pi Agent");
-    expect(visibleText(content)).toContain("codexhost 是一个开源项目");
+    expect(visibleText(content)).toContain("Claude Code");
+    expect(visibleText(content)).toContain("Harness Mix 是一个开源项目");
     expect(visibleText(content)).toContain("请给我们一个 Star");
     const repository = descendants(content).find(
       ({ tagName, href }) =>
-        tagName === "a" && href === "https://github.com/BytePioneer-AI/codex-host",
+        tagName === "a" && href === "https://github.com/emo-xiaoyu/harness-mix",
     );
     expect(repository).toMatchObject({ target: "_blank", rel: "noopener noreferrer" });
     expect(visibleNotesText(repository as FakeElement)).toContain(
-      "https://github.com/BytePioneer-AI/codex-host",
+      "https://github.com/emo-xiaoyu/harness-mix",
     );
 
     cleanup?.();

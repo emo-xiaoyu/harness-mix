@@ -14,12 +14,14 @@ const MODEL_FAMILIES = [
   { id: 'kimi', regex: /kimi|moonshot/i, file: 'model-kimi.svg', label: 'Kimi' },
   { id: 'zai', regex: /glm|zhipu|智谱|z[.-]?ai\b/i, file: 'model-zai.svg', label: 'GLM / Zai' },
   { id: 'openai', regex: /gpt|openai|o[134](?:-|\b)/i, file: 'model-openai.svg', label: 'OpenAI' },
+  { id: 'grok', regex: /grok|x[.-]?ai\b/i, file: 'grok-color.svg', label: 'Grok' },
   { id: 'astra', regex: /.*/, file: 'model-astra.svg', label: 'Astra' },
 ];
 
 const HARNESS_ICONS = [
-  { id: 'kiro-cli', file: 'kiro-cli-color.svg', label: 'Kiro CLI' },
-  { id: 'cursor-cli', file: 'cursor-cli-color.svg', label: 'Cursor CLI' },
+  { id: 'kiro-cli', file: 'kiro-cli-color.svg', label: 'Kiro' },
+  { id: 'cursor-cli', file: 'cursor-cli-color.svg', label: 'Cursor' },
+  { id: 'cursor', file: 'cursor-cli-color.svg', label: 'Cursor' },
   { id: 'antigravity', file: 'antigravity-color.svg', label: 'Antigravity' },
   { id: 'claude', file: 'claude-color.svg', label: 'Claude Code' },
   { id: 'codex', file: 'codex-harness.svg', label: 'Codex' },

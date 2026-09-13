@@ -23,7 +23,7 @@ const manifest = {
     permissionModes: true,
     resume: true,
     fork: true,
-    forkFromMessage: false,
+    forkFromMessage: true,
     compaction: false,
     usage: true,
     contextUsage: true,
@@ -32,9 +32,9 @@ const manifest = {
 };
 
 const ANTIGRAVITY_PERMISSION_MODES = [
-  { id: 'default', label: '默认', hint: '按 Antigravity 预设规则拦截或执行' },
-  { id: 'desktop', label: '桌面确认', hint: '在 Harness Mix 桌面端弹出确认工具执行' },
-  { id: 'skip', label: '自动放行', hint: '自动放行工具执行（--dangerously-skip-permissions）' },
+  { id: 'default', label: '默认', description: '按 Antigravity 预设规则拦截或执行' },
+  { id: 'desktop', label: '桌面确认', description: '在 Harness Mix 桌面端弹出确认工具执行' },
+  { id: 'skip', label: '自动放行', description: '自动放行工具执行（--dangerously-skip-permissions）', dangerous: true },
 ];
 
 const ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION =
@@ -108,23 +108,109 @@ function resolveContextWindow(modelId) {
   return 1_048_576;
 }
 
-function parseUsage(usageObj, modelId) {
+function usedPercentFrom(remainingFraction) {
+  if (typeof remainingFraction !== 'number' || !Number.isFinite(remainingFraction)) return null;
+  const used = (1 - Math.min(1, Math.max(0, remainingFraction))) * 100;
+  return Math.round(used * 100) / 100;
+}
+
+function parseAntigravityUsageCommand(command, fetchedAt = new Date().toISOString()) {
+  if (!command || typeof command !== 'object' || command.name !== 'usage' || !command.data) return null;
+  const { groups } = command.data;
+  if (!Array.isArray(groups)) return null;
+  const buckets = [];
+  for (const group of groups) {
+    if (!group || !Array.isArray(group.buckets)) continue;
+    const groupName = typeof group.name === 'string' ? group.name.trim() : '';
+    for (const bucket of group.buckets) {
+      if (!bucket || typeof bucket !== 'object') continue;
+      const usagePercent = usedPercentFrom(bucket.remaining_fraction);
+      if (usagePercent === null) continue;
+      const window = typeof bucket.window === 'string' ? bucket.window.trim() : '';
+      const label = window === 'weekly' ? 'Weekly window' : window === '5h' ? '5-hour window' : (window || bucket.id);
+      const resetsAt = typeof bucket.reset_time === 'string' && bucket.reset_time.trim() ? bucket.reset_time.trim() : undefined;
+      buckets.push({
+        product: groupName ? `${groupName} · ${label}` : label,
+        usagePercent,
+        window,
+        ...(resetsAt ? { resetsAt } : {}),
+      });
+    }
+  }
+  if (!buckets.length) return null;
+  const leading = [...buckets].sort((a, b) => {
+    if (b.usagePercent !== a.usagePercent) return b.usagePercent - a.usagePercent;
+    return Number(b.window === '5h') - Number(a.window === '5h');
+  })[0];
+  const others = buckets.filter((b) => b !== leading);
+  return {
+    usedPercent: leading.usagePercent,
+    periodType: leading.window === '5h' ? 'five_hour' : 'weekly',
+    fetchedAt,
+    ...(leading.resetsAt ? { resetsAt: leading.resetsAt } : {}),
+    ...(others.length > 0
+      ? { productUsage: others.map(({ product, usagePercent, resetsAt }) => ({ product, usagePercent, ...(resetsAt ? { resetsAt } : {}) })) }
+      : {}),
+  };
+}
+
+async function fetchAntigravityQuota(executable = resolveExecutable()) {
+  return new Promise((resolve) => {
+    execFile(executable, ['--print=/usage', '--output-format', 'stream-json'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      if (err || !stdout) return resolve(null);
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event?.event === 'command_result') {
+            const snapshot = parseAntigravityUsageCommand(event.command);
+            if (snapshot) return resolve(snapshot);
+          }
+        } catch {}
+      }
+      resolve(null);
+    });
+  });
+}
+
+function parseUsage(usageObj, modelId, quota) {
   if (!usageObj) return null;
   const input = usageObj.input_tokens ?? usageObj.inputTokens;
   const output = usageObj.output_tokens ?? usageObj.outputTokens;
   const thinking = usageObj.thinking_tokens ?? usageObj.reasoningOutputTokens;
+  const cached = usageObj.cache_read_tokens ?? usageObj.cachedInputTokens;
   const total = usageObj.total_tokens ?? usageObj.totalTokens;
   const contextWindow = resolveContextWindow(modelId);
   const contextUsed = usageObj.context_used_tokens ?? usageObj.estimated_tokens_used ?? input;
   const tokens = typeof contextUsed === 'number' ? contextUsed : (typeof total === 'number' ? total : null);
-  return {
+  const result = {
     tokens,
     contextWindow,
     contextPercent: tokens != null && contextWindow ? Math.min(100, Math.round((100 * tokens / contextWindow) * 10) / 10) : null,
     inputTokens: typeof input === 'number' ? input : null,
     outputTokens: typeof output === 'number' ? output : null,
     reasoningOutputTokens: typeof thinking === 'number' ? thinking : null,
+    cachedInputTokens: typeof cached === 'number' ? cached : null,
+    totalTokens: typeof total === 'number' ? total : (typeof input === 'number' && typeof output === 'number' ? input + output : null),
   };
+  if (quota) {
+    if (quota.periodType === 'five_hour') {
+      result.planFiveHourUsedPercent = quota.usedPercent;
+      if (quota.resetsAt) {
+        const unix = Math.floor(Date.parse(quota.resetsAt) / 1000);
+        if (Number.isFinite(unix) && unix > 0) result.planFiveHourResetsAtUnix = unix;
+      }
+    }
+    const weekly = quota.productUsage?.find(p => /weekly/i.test(p.product)) || (quota.periodType === 'weekly' ? quota : null);
+    if (weekly) {
+      result.planSevenDayUsedPercent = weekly.usagePercent;
+      if (weekly.resetsAt) {
+        const unix = Math.floor(Date.parse(weekly.resetsAt) / 1000);
+        if (Number.isFinite(unix) && unix > 0) result.planSevenDayResetsAtUnix = unix;
+      }
+    }
+  }
+  return result;
 }
 
 function formatPrompt(text) {
@@ -181,6 +267,30 @@ function toolTitle(name) {
   return name;
 }
 
+function mergePendingStep(pending, step) {
+  if (!pending) return step;
+  const toolName = step.tool_name ?? pending.tool_name;
+  const name = step.tool_info?.name ?? pending.tool_info?.name;
+  const parameters = step.tool_info?.parameters ?? pending.tool_info?.parameters;
+  const output = step.tool_info?.output ?? pending.tool_info?.output;
+  const error = step.tool_info?.error ?? pending.tool_info?.error;
+  return {
+    ...pending,
+    ...step,
+    ...(toolName !== undefined ? { tool_name: toolName } : {}),
+    ...(step.tool_info !== undefined || pending.tool_info !== undefined
+      ? {
+          tool_info: {
+            ...(name !== undefined ? { name } : {}),
+            ...(parameters !== undefined ? { parameters } : {}),
+            ...(output !== undefined ? { output } : {}),
+            ...(error !== undefined ? { error } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 function toolInput(step) {
   const params = step.tool_info?.parameters;
   if (!params) return undefined;
@@ -191,6 +301,9 @@ function toolInput(step) {
   if (params.DirectoryPath) return params.DirectoryPath;
   if (params.Url) return params.Url;
   if (params.query) return params.query;
+  if (Array.isArray(params.Subagents)) {
+    return params.Subagents.map((s) => `[${s.Role || s.TypeName || 'Agent'}] ${s.Prompt || ''}`.trim()).join('\n');
+  }
   return JSON.stringify(params, null, 2);
 }
 
@@ -210,7 +323,15 @@ function nativeBrainDirPath(sessionId, homedir = os.homedir()) {
   return path.join(homedir, '.gemini', 'antigravity-cli', 'brain', sessionId);
 }
 
-async function cloneDatabase(sourceId, derivedId, homedir = os.homedir()) {
+async function cloneDatabase(sourceId, derivedId, retainedTurnsCountOrHomedir, homedirOption = os.homedir()) {
+  let retainedTurnsCount;
+  let homedir = homedirOption;
+  if (typeof retainedTurnsCountOrHomedir === 'string') {
+    homedir = retainedTurnsCountOrHomedir;
+  } else if (typeof retainedTurnsCountOrHomedir === 'number') {
+    retainedTurnsCount = retainedTurnsCountOrHomedir;
+  }
+
   const sourceDb = nativeConversationDbPath(sourceId, homedir);
   const targetDb = nativeConversationDbPath(derivedId, homedir);
   try {
@@ -219,14 +340,66 @@ async function cloneDatabase(sourceId, derivedId, homedir = os.homedir()) {
   } catch {
     return false;
   }
+
+  let remainingStepCount = 0;
   try {
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(targetDb);
     try {
       db.prepare('UPDATE trajectory_meta SET cascade_id = ?').run(derivedId);
+      if (typeof retainedTurnsCount === 'number' && Number.isInteger(retainedTurnsCount)) {
+        try {
+          if (retainedTurnsCount <= 0) {
+            db.prepare('DELETE FROM steps').run();
+          } else {
+            const rows = db.prepare('SELECT idx FROM steps WHERE step_type = 14 ORDER BY idx ASC').all();
+            const cutoff = rows[retainedTurnsCount];
+            if (cutoff && typeof cutoff.idx === 'number') {
+              db.prepare('DELETE FROM steps WHERE idx >= ?').run(cutoff.idx);
+            }
+          }
+        } catch {}
+        try { db.prepare('DELETE FROM gen_metadata WHERE idx >= ?').run(retainedTurnsCount); } catch {}
+        try { db.prepare('DELETE FROM executor_metadata WHERE idx >= ?').run(retainedTurnsCount); } catch {}
+        try { db.prepare('DELETE FROM parent_references WHERE idx >= ?').run(retainedTurnsCount); } catch {}
+        try { db.prepare('DELETE FROM battle_mode_infos WHERE idx >= ?').run(retainedTurnsCount); } catch {}
+      }
+      try {
+        const countRow = db.prepare('SELECT count(*) as c FROM steps').get();
+        if (countRow && typeof countRow.c === 'number') remainingStepCount = countRow.c;
+      } catch {}
     } finally {
       db.close();
     }
+
+    // Register in conversation_summaries.db so `agy` trajectory lookup succeeds
+    try {
+      const summariesDbPath = path.join(homedir, '.gemini', 'antigravity-cli', 'conversation_summaries.db');
+      if (fs.existsSync(summariesDbPath)) {
+        const sumDb = new DatabaseSync(summariesDbPath);
+        try {
+          const row = sumDb.prepare('SELECT * FROM conversation_summaries WHERE conversation_id = ?').get(sourceId);
+          if (row) {
+            const cols = Object.keys(row);
+            const newRow = {
+              ...row,
+              conversation_id: derivedId,
+              last_modified_time: new Date().toISOString(),
+              ...(typeof retainedTurnsCount === 'number' ? { step_count: remainingStepCount } : {}),
+            };
+            const placeholders = cols.map(() => '?').join(', ');
+            const values = cols.map((col) => newRow[col]);
+            sumDb
+              .prepare(
+                `INSERT OR REPLACE INTO conversation_summaries (${cols.map((c) => `\`${c}\``).join(', ')}) VALUES (${placeholders})`
+              )
+              .run(...values);
+          }
+        } finally {
+          sumDb.close();
+        }
+      }
+    } catch {}
   } catch {}
   return true;
 }
@@ -512,6 +685,8 @@ class QuestionBridge {
 }
 
 function create(emit) {
+  let cachedQuota = null;
+
   return {
     manifest,
 
@@ -529,6 +704,9 @@ function create(emit) {
     },
 
     async open({ thread, emit: emitEvent, diagnostic }) {
+      if (!cachedQuota) {
+        void fetchAntigravityQuota().then((q) => { if (q) cachedQuota = q; }).catch(() => {});
+      }
       const model = thread.options?.model ?? { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'google' };
       const thinkingLevel = thread.options?.thinking ?? 'high';
       const permissionMode = thread.options?.permissionMode ?? 'default';
@@ -554,7 +732,7 @@ function create(emit) {
 
       const emitEvent = hooks?.emit || emit;
       const bin = resolveExecutable();
-      const approvals = session.permissionMode === 'desktop';
+      const approvals = session.permissionMode === 'desktop' || session.permissionMode === 'desktop-approvals';
       const bridge = await QuestionBridge.create({
         approvals,
         emit: emitEvent,
@@ -588,7 +766,7 @@ function create(emit) {
       if (session.thinkingLevel) {
         args.push('--effort', session.thinkingLevel);
       }
-      if (session.permissionMode === 'skip' || session.permissionMode === 'desktop') {
+      if (['skip', 'desktop', 'dangerously-skip-permissions', 'desktop-approvals'].includes(session.permissionMode)) {
         args.push('--dangerously-skip-permissions');
       }
       args.push('--add-dir', session.cwd);
@@ -611,9 +789,13 @@ function create(emit) {
         turnReject = reject;
       });
 
-      const turn = { child, resolve: turnResolve, reject: turnReject, logPath, resultSeen: false, killTimer: null };
+      const turn = { child, resolve: turnResolve, reject: turnReject, logPath, resultSeen: false, killTimer: null, pendingSteps: new Map() };
       session.activeTurn = turn;
       let sawTextDelta = false;
+      let stderrTail = '';
+      child.stderr?.setEncoding('utf8')?.on('data', (chunk) => {
+        stderrTail = (stderrTail + chunk).slice(-8000);
+      });
 
       // agy 在 stream-json 模式下产出 result 后进程仍常驻（实测 25s+ 不自行退出），
       // 不主动收尾会让 session.activeTurn 永远悬挂，下一回合 send 被“当前回合尚未结束”拒绝。
@@ -642,7 +824,10 @@ function create(emit) {
         }
 
         if (event.event === 'step_update') {
-          const s = event.step_update || {};
+          const rawStep = event.step_update || {};
+          const prevStep = turn.pendingSteps.get(rawStep.step_index);
+          const s = mergePendingStep(prevStep, rawStep);
+          if (s.step_index != null) turn.pendingSteps.set(s.step_index, s);
           const stepRef = { ...nativeRef, itemId: String(s.step_index) };
 
           if (s.step_type === 'agent_response') {
@@ -659,6 +844,23 @@ function create(emit) {
             if (thinkingText) {
               emitEvent({ kind: 'thinking-delta', text: thinkingText, nativeRef: stepRef });
             }
+            return;
+          }
+
+          if (s.step_type === 'subagent') {
+            const info = s.subagent_info || {};
+            const subagents = Array.isArray(info.subagents) ? info.subagents : [];
+            const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
+            const details = subagents.map((sub) => `[${sub.role || sub.type_name || 'Subagent'}] ID: ${sub.conversation_id || ''}\n${sub.initial_prompt || ''}`.trim()).join('\n\n');
+            emitEvent({
+              kind: 'tool',
+              toolCallId: String(s.step_index),
+              title: '子 Agent',
+              state,
+              input: details || undefined,
+              output: s.state === 'DONE' ? '子 Agent 启动完成' : undefined,
+              nativeRef: stepRef,
+            });
             return;
           }
 
@@ -701,7 +903,7 @@ function create(emit) {
           }
 
           if (s.usage) {
-            const u = parseUsage(s.usage, session.model?.id);
+            const u = parseUsage(s.usage, session.model?.id, cachedQuota);
             if (u) {
               session.usage = u;
               emitEvent({ kind: 'usage', usage: u, nativeRef: stepRef });
@@ -716,7 +918,7 @@ function create(emit) {
             session.nativeSessionId = res.conversation_id;
           }
           if (res.usage) {
-            const u = parseUsage(res.usage, session.model?.id);
+            const u = parseUsage(res.usage, session.model?.id, cachedQuota);
             if (u) {
               session.usage = u;
               emitEvent({ kind: 'usage', usage: u, nativeRef });
@@ -726,11 +928,16 @@ function create(emit) {
             emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
           }
           turn.resultSeen = true;
+          const completedRef = {
+            ...nativeRef,
+            turnId: res.num_turns != null ? `turn:${res.num_turns}` : undefined,
+            checkpointId: res.num_turns != null ? String(res.num_turns) : undefined,
+          };
           emitEvent({
             kind: 'completed',
             finalAnswer: res.status === 'SUCCESS',
             stopReason: res.status === 'SUCCESS' ? 'completed' : 'error',
-            nativeRef,
+            nativeRef: completedRef,
           });
           turnResolve?.();
           finishTurn();
@@ -754,6 +961,10 @@ function create(emit) {
         if (session.bridge === bridge) session.bridge = null;
         if (session.activeTurn === turn) session.activeTurn = null;
         if (!turn.resultSeen) {
+          const cleanErr = stderrTail.trim();
+          if (code !== 0 && cleanErr) {
+            emitEvent({ kind: 'error', message: `Antigravity CLI 异常退出 (code ${code}): ${cleanErr}` });
+          }
           // 进程未产出 result 即退出（崩溃或协议中断）：保证 Turn 结算，不悬挂
           emitEvent({ kind: 'completed', finalAnswer: false, stopReason: code === 0 ? 'completed' : 'error' });
         }
@@ -857,8 +1068,10 @@ function create(emit) {
     async fork(source, { emit: emitEvent, diagnostic, message }) {
       const derivedId = randomUUID();
       const sourceId = source.nativeSessionId;
+      const checkpointId = message?.coreTurn?.nativeTurnRef?.checkpointId;
+      const retainedTurnsCount = checkpointId != null && !Number.isNaN(Number(checkpointId)) ? Number(checkpointId) : undefined;
       if (sourceId) {
-        await cloneDatabase(sourceId, derivedId);
+        await cloneDatabase(sourceId, derivedId, retainedTurnsCount);
         await cloneBrain(sourceId, derivedId);
       }
       const model = source.model || { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'google' };
@@ -877,6 +1090,26 @@ function create(emit) {
       return { session, nativeSessionId: derivedId };
     },
 
+    credits() {
+      return cachedQuota;
+    },
+
+    async refreshCredits() {
+      const quota = await fetchAntigravityQuota();
+      if (quota) cachedQuota = quota;
+      return cachedQuota;
+    },
+
+    async inspectAccount() {
+      const quota = await this.refreshCredits();
+      if (!quota) return null;
+      return {
+        label: 'Antigravity',
+        plan: 'Google Gemini',
+        credits: quota,
+      };
+    },
+
     async close(session) {
       await this.cancel(session);
     },
@@ -890,6 +1123,11 @@ module.exports = {
   parseUsage,
   formatPrompt,
   prepareImageAttachments,
+  mergePendingStep,
+  cloneDatabase,
+  fetchAntigravityQuota,
+  parseAntigravityUsageCommand,
   ANTIGRAVITY_PERMISSION_MODES,
   ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION,
 };
+

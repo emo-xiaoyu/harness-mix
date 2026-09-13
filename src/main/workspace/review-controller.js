@@ -77,7 +77,7 @@ class ReviewController {
         if (!monitor.closed) for (const listener of this.listeners) listener({ type: 'turn/diff/updated', threadId: thread.id, turnId: message.id, error: e.message });
       } finally { monitor.busy = false; }
     };
-    monitor.timer = setInterval(() => void tick(), 2000);
+    monitor.timer = setInterval(() => void tick(), 3000);
     monitor.timer.unref?.();
     this.reviewMonitors.set(thread.id, monitor);
     void tick();

@@ -28,7 +28,7 @@ async function readText(root, relative) {
   const buffer = await fs.readFile(target);
   const text = buffer.toString('utf8');
   if (buffer.includes(0) || !Buffer.from(text).equals(buffer)) throw Error('二进制或非 UTF-8 文件不参与预览');
-  return { text, hash: hash(buffer), mode: stat.mode };
+  return { text, hash: hash(buffer), mode: stat.mode, mtimeMs: stat.mtimeMs, size: stat.size };
 }
 
 async function list(root, relative = '') {
@@ -38,7 +38,7 @@ async function list(root, relative = '') {
     .slice(0, 1500).map(e => ({ name: e.name, path: path.join(relative, e.name), directory: e.isDirectory() }));
 }
 
-async function snapshot(root) {
+async function snapshot(root, previousFiles = null) {
   const names = [], files = Object.create(null), skipped = [];
   let bytes = 0, entries = 0;
   async function walk(relative) {
@@ -51,6 +51,17 @@ async function snapshot(root) {
       else if (entry.isFile()) {
         names.push(file);
         try {
+          const prev = previousFiles ? previousFiles[file] : null;
+          if (prev && Number.isFinite(prev.mtimeMs) && Number.isFinite(prev.size)) {
+            const target = await resolveFile(root, file);
+            const stat = await fs.stat(target);
+            if (stat.isFile() && stat.mtimeMs === prev.mtimeMs && stat.size === prev.size) {
+              bytes += Buffer.byteLength(prev.text);
+              if (bytes > 24 * 1024 * 1024) throw Error('快照超过 24 MB');
+              files[file] = prev;
+              continue;
+            }
+          }
           const value = await readText(root, file);
           bytes += Buffer.byteLength(value.text);
           if (bytes > 24 * 1024 * 1024) throw Error('快照超过 24 MB');

@@ -111,6 +111,12 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
   ) {
     throw new Error('ThreadMetadataGenerationService signature mismatch');
   }
+  const originalGenerateDescription = typeof servicePrototype?.generateDescription === 'function'
+    ? servicePrototype.generateDescription
+    : null;
+  const originalReconsiderTitle = typeof servicePrototype?.reconsiderTitle === 'function'
+    ? servicePrototype.reconsiderTitle
+    : null;
   const counters = {
     codexTitleCalls: 0,
     piTitleSkips: 0,
@@ -163,9 +169,35 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
     counters.codexTitleCalls += 1;
     return originalGenerateTitle.call(this, params);
   };
+  const shouldSkipExternalMetadata = async (service) => {
+    const owner = service[ownerSymbol];
+    if (owner == null || owner.isDestroyed()) return true;
+    let selection = null;
+    try {
+      selection = await owner.executeJavaScript(
+        "window.__codexhostRendererBindingProbeV1?.lockedSelection() ?? null",
+        true,
+      );
+    } catch {}
+    return selection?.phase === 'locked' && selection.agent !== 'codex';
+  };
+  const wrappedGenerateDescription = originalGenerateDescription
+    ? async function (params) {
+        if (await shouldSkipExternalMetadata(this)) return null;
+        return originalGenerateDescription.call(this, params);
+      }
+    : null;
+  const wrappedReconsiderTitle = originalReconsiderTitle
+    ? async function (params) {
+        if (await shouldSkipExternalMetadata(this)) return null;
+        return originalReconsiderTitle.call(this, params);
+      }
+    : null;
 
   context.createAppHost = wrappedCreateAppHost;
   servicePrototype.generateTitle = wrappedGenerateTitle;
+  if (wrappedGenerateDescription) servicePrototype.generateDescription = wrappedGenerateDescription;
+  if (wrappedReconsiderTitle) servicePrototype.reconsiderTitle = wrappedReconsiderTitle;
   const state = {
     counters,
     ownedWebContentsIds,
@@ -175,6 +207,12 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
       }
       if (servicePrototype.generateTitle === wrappedGenerateTitle) {
         servicePrototype.generateTitle = originalGenerateTitle;
+      }
+      if (wrappedGenerateDescription && servicePrototype.generateDescription === wrappedGenerateDescription) {
+        servicePrototype.generateDescription = originalGenerateDescription;
+      }
+      if (wrappedReconsiderTitle && servicePrototype.reconsiderTitle === wrappedReconsiderTitle) {
+        servicePrototype.reconsiderTitle = originalReconsiderTitle;
       }
       if (globalThis[stateSymbol] === state) delete globalThis[stateSymbol];
     },

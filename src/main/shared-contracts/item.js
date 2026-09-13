@@ -13,6 +13,7 @@ const ITEM_TYPES = [
   'plan',
   'usage',
   'notice',
+  'context_compaction',
 ];
 
 // started：刚建立；streaming：持续接收 delta；completed/cancelled/error：终态。

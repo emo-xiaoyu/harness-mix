@@ -2,7 +2,7 @@
 // to Harness Mix HostRuntime / ProtocolCore and their existing adapters.
 const { getHarnessSvg } = require('./icons');
 const { prepareInput } = require('./input');
-const { projectUsage } = require('./usage');
+const { projectUsage, projectAccountCredits } = require('./usage');
 const { exec } = require('node:child_process');
 const os = require('node:os');
 const { randomUUID } = require('node:crypto');
@@ -142,6 +142,7 @@ function projectItem(item) {
       const kind = change.changeType === 'deleted' ? { type: 'delete' } : change.changeType === 'added' ? { type: 'add' } : { type: 'update', move_path: null };
       return { path: change.path || change.file || '', kind, diff: unifiedDiff(change, kind.type) };
     }) };
+  if (item.type === 'context_compaction' || item.type === 'contextCompaction') return { ...base, type: 'contextCompaction' };
   return null;
 }
 
@@ -158,6 +159,9 @@ class NativeProtocol {
     // Host 侧新建的线程（协作子任务等）也要通知 Desktop 侧栏，与 thread/start 同一契约
     this.unsubscribeRuntime = runtime.subscribe(event => {
       if (event?.type === 'thread-created' && event.thread) this.emit({ method: 'thread/started', params: { thread: this.projectThread(event.thread) } });
+      if (event?.type === 'thread-updated' && event.thread) {
+        this.emit({ method: 'thread/name/updated', params: { threadId: event.thread.id, threadName: event.thread.title } });
+      }
     });
   }
   thread(id) { return this.runtime.threads.find(t => t.id === id); }
@@ -280,6 +284,32 @@ class NativeProtocol {
     if (method === 'harness-mix/runtime/inspect') return { owner: 'harness-mix', runtime: 'src/main/host/runtime.js', core: 'src/main/protocol-core/protocol-core.js', threads: this.runtime.threads.length };
     // No additional managed accounts: native Codex keeps its own signed-in account.
     if (method === 'codexhost/account/list' || method === 'codexhost/account/refresh') return { accounts: [] };
+    if (method === 'codexhost/harness/accounts/list') {
+      const accounts = [];
+      for (const adapter of this.runtime.adapters.values()) {
+        if (typeof adapter.inspectAccount !== 'function') continue;
+        try {
+          const raw = await Promise.race([
+            Promise.resolve().then(() => adapter.inspectAccount()),
+            new Promise((resolve) => setTimeout(() => resolve(null), 10_000)),
+          ]);
+          if (!raw || typeof raw !== 'object') continue;
+          const credits = projectAccountCredits(raw.credits);
+          if (!credits) continue;
+          accounts.push({
+            harnessId: externalId(adapter.manifest.id),
+            harnessName: adapter.manifest.name,
+            ...(typeof raw.email === 'string' && raw.email.trim() ? { email: raw.email.trim() } : {}),
+            ...(typeof raw.label === 'string' && raw.label.trim() ? { label: raw.label.trim() } : {}),
+            ...(typeof raw.plan === 'string' && raw.plan.trim() ? { plan: raw.plan.trim() } : {}),
+            credits,
+          });
+        } catch {
+          // Individual adapter inspection failure must not block the others
+        }
+      }
+      return { accounts };
+    }
     if (method === 'codexhost/harness/plugins/list') return { plugins: this.runtime.snapshot().adapters.map(a => ({ id: externalId(a.id), name: a.id === 'codex' ? 'Codex（协作）' : a.name, version: '0.1.0', icon: `data:image/svg+xml;base64,${Buffer.from(getHarnessSvg(a.id)).toString('base64')}` })) };
     if (method === 'codexhost/harness/inspect') return this.inspect(params.harnessId);
     if (method === 'codexhost/harness/install') {
@@ -323,6 +353,7 @@ class NativeProtocol {
       if (!route) return undefined;
       const id = ALIASES[route.harnessId] || route.harnessId;
       if (!this.runtime.adapters.has(id)) throw new Error(`Unsupported Harness: ${id}`);
+      if (params.ephemeral && params.threadSource) throw new Error('Ephemeral background thread is not supported');
       const isWorktree = params.worktree === true || params.options?.worktree === true;
       const created = await this.runtime.createThread({ harnessId: id, cwd: params.cwd, ephemeral: params.ephemeral === true,
         worktree: isWorktree,
@@ -410,7 +441,17 @@ class NativeProtocol {
     if (method === 'thread/loaded/list') return { data: [...this.runtime.sessions.keys()] };
     if (method === 'codexhost/thread/usage/inspect') {
       const usage = params.refresh === 'exact' ? await this.runtime.refreshUsage(thread.id) : this.runtime.core.getThread(thread.id)?.usage;
-      return { threadId: thread.id, usage: projectUsage(usage) };
+      const adapter = this.runtime.adapters.get(thread.harnessId);
+      if (adapter && params.refresh === 'exact' && typeof adapter.refreshCredits === 'function') {
+        try { await adapter.refreshCredits(); } catch {}
+      }
+      const rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
+      const credits = projectAccountCredits(rawCredits);
+      return {
+        threadId: thread.id,
+        usage: projectUsage(usage),
+        ...(credits ? { accountCredits: credits } : {}),
+      };
     }
     if (method === 'codexhost/thread/command/execute') {
       if (params.arguments && Object.keys(params.arguments).length) throw new Error('This command does not accept arguments');
@@ -419,13 +460,24 @@ class NativeProtocol {
     }
     if (method === 'codexhost/thread/model/select') { await this.runtime.setModel(thread.id, await this.resolveModel(thread.harnessId, params.model)); return this.configuration(thread); }
     if (method === 'codexhost/thread/thinking/select') { await this.runtime.setThinking(thread.id, params.thinkingOptionId); return this.configuration(thread); }
-    if (method === 'codexhost/thread/permission-mode/select') { await this.runtime.setOptions(thread.id, { permissionMode: params.permissionModeId }); return this.configuration(thread); }
+    if (method === 'codexhost/thread/permission-mode/select') {
+      await this.runtime.setOptions(thread.id, { permissionMode: params.permissionModeId });
+      const session = this.runtime.sessions.get(thread.id);
+      const adapter = this.runtime.adapters.get(thread.harnessId);
+      if (session && adapter && typeof adapter.setPermissionMode === 'function') {
+        try { await adapter.setPermissionMode(session, params.permissionModeId); } catch {}
+      }
+      return this.configuration(thread);
+    }
     // 原地切换 Harness：会话历史保留，下条消息携带一次性上下文信封（/switch 指令的 RPC 等价物）
     if (method === 'codexhost/thread/harness/switch') {
       await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, { note: typeof params.note === 'string' ? params.note : undefined });
       return { threadId: thread.id };
     }
     if (method === 'thread/fork' || method === 'codexhost/thread/fork') {
+      if (params.ephemeral || params.threadSource || params.excludeTurns) {
+        throw new Error('Ephemeral fork is not supported');
+      }
       const messageId = params.lastTurnId ? thread.messages.find(m => m.coreTurnId === params.lastTurnId)?.id : params.messageId;
       if (params.lastTurnId && !messageId) throw new Error('Unknown fork turn');
       const fork = await this.runtime.forkThread(thread.id, messageId);
@@ -458,6 +510,10 @@ class NativeProtocol {
         if (item.type === 'reasoning' && item.content?.length > (previous?.content?.length || 0)) notify('item/reasoning/summaryTextDelta', { itemId: item.id, summaryIndex: 0, delta: item.content.slice(previous?.content?.length || 0) });
         if (terminal(item.status) && (!terminal(previous?.status) || ['file_change', 'tool_call'].includes(item.type) && JSON.stringify(converted) !== JSON.stringify(projectItem(previous)))) notify('item/completed', { item: converted });
         this.published.set(item.id, structuredClone(item));
+        if (this.published.size > 200) {
+          const oldest = this.published.keys().next().value;
+          if (oldest) this.published.delete(oldest);
+        }
       }
       if (['approval', 'question'].includes(item.type) && event.type === 'item.started') {
         const id = `harness-mix:approval:${item.id}`;
@@ -475,6 +531,9 @@ class NativeProtocol {
     if (event.type.startsWith('turn.') && projected.turn && terminal(projected.turn.status)) {
       notify('turn/completed', { turn: this.turn(projected.turn) });
       notify('thread/status/changed', { status: { type: 'idle' } });
+      if (Array.isArray(projected.turn.itemIds)) {
+        for (const id of projected.turn.itemIds) this.published.delete(id);
+      }
     }
   }
   async startNativeTurn(thread, text, attachments, commandId) {
@@ -518,7 +577,7 @@ class NativeProtocol {
       // Cancel settles synchronously in Core, but the acknowledgement is not completion:
       // the replacement waits until the old Turn is fully terminal and the file-review
       // snapshot has settled (≤20s, shorter than the Desktop submission timeout).
-      const settled = () => !this.runtime.execution.isRunning(thread.id) && !thread.reviewPending;
+      const settled = () => !this.runtime.execution.isRunning(thread.id) && !thread.reviewPending && !this.runtime.sending?.has(thread.id);
       const deadline = Date.now() + 20_000;
       while (!settled() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
       if (!settled()) throw new Error('Timed out waiting for the previous Turn to settle');

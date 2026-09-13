@@ -48,14 +48,38 @@ function grokAdapter() {
           },
           onEvent: event => {
             if (event.method === '_x.ai/models/update') { session.state.models = event.params; return; }
-            if (event.method === '_x.ai/session_notification' && event.params.sessionId === session.nativeSessionId) {
-              const u = event.params.update;
-              if (!session.state.loading && u?.usage) { session.state.usage = projectUsage(u.usage); emit({ kind: 'usage', usage: session.state.usage }); }
+            const isSessionEvent = event.method === 'session/update'
+              || event.method === '_x.ai/session/update'
+              || event.method === 'x.ai/session_notification'
+              || event.method === '_x.ai/session_notification';
+            if (!isSessionEvent) return;
+            if (session.nativeSessionId && event.params?.sessionId && event.params.sessionId !== session.nativeSessionId) return;
+            const u = event.params?.update || event.params;
+            if (!u || typeof u !== 'object') return;
+            if (!session.state.loading && u.usage) {
+              session.state.usage = projectUsage(u.usage);
+              emit({ kind: 'usage', usage: session.state.usage });
+            }
+            const compactEvent = parseGrokCompactionUpdate(u);
+            if (compactEvent) {
+              if (compactEvent.type === 'started') {
+                emit({ kind: 'compaction', state: 'running', ...compactEvent });
+              } else if (compactEvent.type === 'completed') {
+                if (compactEvent.tokensAfter != null) {
+                  session.state.usage = {
+                    ...(session.state.usage || {}),
+                    tokens: compactEvent.tokensAfter,
+                    totalTokens: compactEvent.tokensAfter,
+                    inputTokens: compactEvent.tokensAfter,
+                    ...(compactEvent.contextWindowTokens != null ? { contextWindow: compactEvent.contextWindowTokens } : {}),
+                  };
+                  emit({ kind: 'usage', usage: session.state.usage });
+                }
+                emit({ kind: 'compaction', state: 'completed', ...compactEvent });
+              }
               return;
             }
-            if (event.method !== 'session/update') return;
-            if (session.nativeSessionId && event.params.sessionId !== session.nativeSessionId) return;
-            const u = event.params.update;
+            if (u.sessionUpdate === 'compaction_checkpoint') return;
             if (u.sessionUpdate === 'config_option_update') session.state.configOptions = u.configOptions;
             if (u.sessionUpdate === 'available_commands_update') session.state.commands = u.availableCommands || [];
             if (u.sessionUpdate === 'current_mode_update' && session.state.modes) session.state.modes.currentModeId = u.currentModeId;
@@ -101,6 +125,12 @@ function grokAdapter() {
       // Grok catalogs and vendor events remain owned by its native stdio process.
       async listModelsFor(session) { return catalog(session).models; },
       async send(session, text, hooks, attachments) {
+        if (typeof text === 'string' && /^\/compact(?:\s+([\s\S]*))?$/.test(text.trim())) {
+          const match = /^\/compact(?:\s+([\s\S]*))?$/.exec(text.trim());
+          const userContext = match && match[1] ? match[1].trim() : undefined;
+          await doGrokCompact(session, userContext, hooks);
+          return;
+        }
         const prompt = [...(text ? [{ type: 'text', text }] : []), ...(attachments?.images || []).map(i => ({ type: 'image', data: i.data, mimeType: i.mime }))];
         const result = await session.process.request('session/prompt', { sessionId: session.nativeSessionId, prompt });
         if (result._meta?.usage) { session.state.usage = projectUsage(result._meta.usage); hooks.emit({ kind: 'usage', usage: session.state.usage }); }
@@ -137,8 +167,21 @@ function grokAdapter() {
           session.state.configOptions = result.configOptions || session.state.configOptions;
         } else await session.process.request('session/set_mode', { sessionId: session.nativeSessionId, modeId: mode });
       },
-      async listCommands(session) { return (session?.state.commands || []).map(c => ({ id: c.name, label: '/' + c.name, description: c.description, action: 'insert' })); },
-      async executeCommand(session, id, hooks) { await adapter.send(session, '/' + id, hooks); },
+      async listCommands(session) {
+        const nativeCommands = (session?.state.commands || []).map(c => ({ id: c.name, label: '/' + c.name, description: c.description, action: 'insert' }));
+        const hasCompact = nativeCommands.some(c => c.id === 'compact');
+        return [
+          ...nativeCommands,
+          ...(hasCompact ? [] : [{ id: 'compact', label: '/compact', description: '由 Grok 原生压缩当前会话上下文', action: 'execute' }]),
+        ];
+      },
+      async executeCommand(session, id, hooks, args) {
+        if (id === 'compact') {
+          await doGrokCompact(session, args?.userContext || args?.text, hooks);
+          return;
+        }
+        await adapter.send(session, '/' + id, hooks);
+      },
       async getContextUsage(session) { return session.state.usage; },
       async fork(source, context) {
         if (!fork || context.message) throw new Error('Native ACP does not support this fork boundary');
@@ -158,4 +201,77 @@ function projectUsage(u) {
   const fields = { inputTokens: ['inputTokens', 'input_tokens'], outputTokens: ['outputTokens', 'output_tokens'], reasoningOutputTokens: ['reasoningTokens', 'reasoning_tokens'], cacheRead: ['cachedReadTokens', 'cached_read_tokens'], cacheWrite: ['cacheCreationTokens', 'cache_creation_tokens'] };
   return Object.fromEntries(Object.entries(fields).flatMap(([key, names]) => { const value = names.map(n => u[n]).find(Number.isFinite); return value === undefined ? [] : [[key, value]]; }));
 }
-module.exports = { ...grokAdapter(), projectUsage };
+function parseGrokCompactionUpdate(update) {
+  if (!update || typeof update !== 'object' || typeof update.sessionUpdate !== 'string') return null;
+  const tokensUsed = update.tokensUsed ?? update.tokens_used;
+  const contextWindowTokens = update.contextWindowTokens ?? update.contextWindow ?? update.context_window;
+  const tokensBefore = update.tokensBefore ?? update.tokens_before;
+  const tokensAfter = update.tokensAfter ?? update.tokens_after;
+  if (update.sessionUpdate === 'auto_compact_started') {
+    return {
+      type: 'started',
+      ...(tokensUsed != null ? { tokensUsed } : {}),
+      ...(contextWindowTokens != null ? { contextWindowTokens } : {}),
+    };
+  }
+  if (update.sessionUpdate === 'auto_compact_completed') {
+    return {
+      type: 'completed',
+      outcome: 'succeeded',
+      ...(tokensBefore != null ? { tokensBefore } : {}),
+      ...(tokensAfter != null ? { tokensAfter } : {}),
+      ...(contextWindowTokens != null ? { contextWindowTokens } : {}),
+    };
+  }
+  if (update.sessionUpdate === 'auto_compact_failed') {
+    return {
+      type: 'completed',
+      outcome: 'failed',
+      errorMessage: update.errorMessage ?? update.error_message ?? update.message,
+    };
+  }
+  if (update.sessionUpdate === 'auto_compact_cancelled') {
+    return { type: 'completed', outcome: 'cancelled' };
+  }
+  return null;
+}
+async function doGrokCompact(session, userContext, hooks) {
+  const params = {
+    sessionId: session.nativeSessionId,
+    ...(userContext ? { userContext } : {}),
+  };
+  let result;
+  try {
+    result = await session.process.request('x.ai/compact_conversation', params);
+  } catch (err) {
+    if (err.message && (err.message.includes('Method not found') || err.message.includes('-32601') || err.message.includes('not supported') || err.message.includes('Unsupported'))) {
+      result = await session.process.request('_x.ai/compact_conversation', params);
+    } else {
+      throw err;
+    }
+  }
+  const tokensBefore = result?.tokensBefore ?? result?.tokens_before;
+  const tokensAfter = result?.tokensAfter ?? result?.tokens_after;
+  const contextWindowTokens = result?.contextWindowTokens ?? result?.context_window;
+  if (tokensAfter != null) {
+    session.state.usage = {
+      ...(session.state.usage || {}),
+      tokens: tokensAfter,
+      totalTokens: tokensAfter,
+      inputTokens: tokensAfter,
+      ...(contextWindowTokens != null ? { contextWindow: contextWindowTokens } : {}),
+    };
+    hooks?.emit?.({ kind: 'usage', usage: session.state.usage });
+  }
+  const outcome = result?.outcome ?? (result?.aborted ? 'cancelled' : result?.success === false ? 'failed' : 'succeeded');
+  hooks?.emit?.({
+    kind: 'compaction',
+    state: 'completed',
+    outcome,
+    ...(tokensBefore != null ? { tokensBefore } : {}),
+    ...(tokensAfter != null ? { tokensAfter } : {}),
+    ...(contextWindowTokens != null ? { contextWindowTokens } : {}),
+  });
+  hooks?.emit?.({ kind: 'completed', finalAnswer: outcome !== 'cancelled' });
+}
+module.exports = { ...grokAdapter(), projectUsage, parseGrokCompactionUpdate, doGrokCompact };

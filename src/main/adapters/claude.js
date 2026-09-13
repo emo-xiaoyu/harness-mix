@@ -15,12 +15,12 @@ const manifest = {
 
 /** Claude Code 原生权限模式（SDK PermissionMode 全集），与其 TUI/Desktop 一致 */
 const CLAUDE_PERMISSION_MODES = [
-  { id: "default", label: "默认（询问）", hint: "编辑和其他受保护操作前询问" },
-  { id: "plan", label: "规划模式", hint: "探索并制定计划；批准计划后退出规划" },
-  { id: "acceptEdits", label: "接受编辑", hint: "允许文件编辑；其他受保护操作前询问" },
-  { id: "auto", label: "自动模式", hint: "由 Claude 判断权限请求" },
-  { id: "dontAsk", label: "免询问", hint: "跳过权限询问（非绕过检查）" },
-  { id: "bypassPermissions", label: "绕过权限", hint: "跳过全部权限检查，谨慎使用", danger: true },
+  { id: "default", label: "默认（询问）", description: "编辑和其他受保护操作前询问" },
+  { id: "plan", label: "规划模式", description: "探索并制定计划；批准计划后退出规划" },
+  { id: "acceptEdits", label: "接受编辑", description: "允许文件编辑；其他受保护操作前询问" },
+  { id: "auto", label: "自动模式", description: "由 Claude 判断权限请求" },
+  { id: "dontAsk", label: "免询问", description: "跳过权限询问（非绕过检查）" },
+  { id: "bypassPermissions", label: "绕过权限", description: "跳过全部权限检查，谨慎使用", dangerous: true },
 ];
 
 function summarizeInput(input) {
@@ -37,7 +37,7 @@ function projectEvent(event) {
   } else if (event.type === "system" && event.subtype === "api_retry") {
     out.push({ kind: "status", text: `Claude 模型限流（${event.error_status ?? ""}），重试 ${event.attempt}/${event.max_retries}…` });
   } else if (event.type === 'system' && event.subtype === 'compact_boundary') {
-    out.push({ kind: 'text-delta', text: '上下文已由 Claude Code 压缩。' });
+    out.push({ kind: 'compaction', state: 'completed', outcome: 'succeeded', summary: '上下文已由 Claude Code 压缩。' });
   } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
     for (const block of event.message.content) {
       if (block.type === "thinking" && block.thinking) out.push({ kind: "thinking-delta", text: block.thinking, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
@@ -77,19 +77,101 @@ function projectEvent(event) {
   } }));
 }
 
+function parsePlanLimitWindow(val) {
+  if (!val || typeof val !== "object") return undefined;
+  const utilization = val.utilization;
+  if (typeof utilization !== "number" || !Number.isFinite(utilization) || utilization < 0) return undefined;
+  const utilizationPercent = Math.min(100, Math.max(0, Math.round(utilization * 10000) / 100));
+  const resetsAt = val.resetsAt;
+  const resetsAtUnix = Number.isSafeInteger(resetsAt) && resetsAt >= 0 ? resetsAt : undefined;
+  return { utilizationPercent, ...(resetsAtUnix !== undefined ? { resetsAtUnix } : {}) };
+}
+
+function parseClaudePlanLimitEvent(event) {
+  if (!event || typeof event !== "object" || event.type !== "rate_limit_event") return null;
+  const info = event.rate_limit_info;
+  if (!info || typeof info !== "object") return null;
+  const windows = info.unifiedWindows && typeof info.unifiedWindows === "object" ? info.unifiedWindows : undefined;
+  let fiveHour = parsePlanLimitWindow(windows?.five_hour);
+  let sevenDay = parsePlanLimitWindow(windows?.seven_day);
+  if (!fiveHour && !sevenDay) {
+    const flat = parsePlanLimitWindow(info);
+    if (flat && info.rateLimitType === "five_hour") fiveHour = flat;
+    else if (flat && info.rateLimitType === "seven_day") sevenDay = flat;
+  }
+  if (!fiveHour && !sevenDay) return null;
+  return {
+    ...(fiveHour ? { fiveHour } : {}),
+    ...(sevenDay ? { sevenDay } : {}),
+  };
+}
+
+function projectClaudePlanLimitToCredits(planLimit) {
+  if (!planLimit) return null;
+  const { fiveHour, sevenDay } = planLimit;
+  if (!fiveHour && !sevenDay) return null;
+  const primary = fiveHour ?? sevenDay;
+  const periodType = fiveHour ? "five_hour" : "seven_day";
+  const other = fiveHour && sevenDay ? sevenDay : undefined;
+  return {
+    usedPercent: primary.utilizationPercent,
+    periodType,
+    ...(primary.resetsAtUnix !== undefined ? { resetsAt: new Date(primary.resetsAtUnix * 1000).toISOString() } : {}),
+    ...(other ? {
+      productUsage: [
+        {
+          product: "7-day window",
+          usagePercent: other.utilizationPercent,
+          ...(other.resetsAtUnix !== undefined ? { resetsAt: new Date(other.resetsAtUnix * 1000).toISOString() } : {}),
+        },
+      ],
+    } : {}),
+  };
+}
+
+function applyClaudePlanLimitToUsage(usage, planLimit) {
+  if (!planLimit) return usage;
+  const next = { ...(usage ?? {}) };
+  if (planLimit.fiveHour) {
+    next.planFiveHourUsedPercent = planLimit.fiveHour.utilizationPercent;
+    if (planLimit.fiveHour.resetsAtUnix !== undefined) {
+      next.planFiveHourResetsAtUnix = planLimit.fiveHour.resetsAtUnix;
+    }
+  }
+  if (planLimit.sevenDay) {
+    next.planSevenDayUsedPercent = planLimit.sevenDay.utilizationPercent;
+    if (planLimit.sevenDay.resetsAtUnix !== undefined) {
+      next.planSevenDayResetsAtUnix = planLimit.sevenDay.resetsAtUnix;
+    }
+  }
+  return next;
+}
+
 /** result 事件 → 上下文用量（官方 modelUsage.contextWindow 为权威窗口大小） */
-function usageFromResult(event) {
+function usageFromResult(event, planLimit) {
   const usage = event?.usage;
   if (!usage || typeof usage !== "object") return undefined;
   const models = Object.values(event.modelUsage ?? {});
   const window = models.find((m) => Number.isFinite(m?.contextWindow))?.contextWindow ?? null;
-  const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
-  if (!tokens && !window) return undefined;
-  return {
+  const input = usage.input_tokens;
+  const output = usage.output_tokens;
+  const cacheRead = usage.cache_read_input_tokens;
+  const cacheWrite = usage.cache_creation_input_tokens;
+  const cost = event.total_cost_usd ?? event.cost ?? usage.total_cost;
+  const tokens = (input ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const totalTokens = (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const out = {
     tokens: tokens || null,
     contextWindow: window,
-    contextPercent: tokens && window ? 100 * tokens / window : null,
+    contextPercent: tokens && window ? (100 * tokens / window) : null,
+    inputTokens: typeof input === "number" ? input : null,
+    outputTokens: typeof output === "number" ? output : null,
+    cachedInputTokens: typeof cacheRead === "number" ? cacheRead : null,
+    cacheWriteInputTokens: typeof cacheWrite === "number" ? cacheWrite : null,
+    totalCostUsd: typeof cost === "number" ? cost : null,
+    totalTokens: totalTokens || null,
   };
+  return applyClaudePlanLimitToUsage(out, planLimit);
 }
 
 /** canUseTool → Host 审批卡片；AskUserQuestion → 选项提问卡片 */
@@ -162,7 +244,7 @@ async function loadSdk() {
 }
 
 /** 建立一个常驻 SDK 会话（open 与 fork 共用）：构造 query、启动事件泵 */
-function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration }) {
+function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration, onPlanLimit }) {
   const input = new MessageQueue();
   const session = {
     nativeSessionId: resumeId || newSessionId,
@@ -175,7 +257,7 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
     pendingApprovals: new Map(),
     // 注意：runtime 以浅拷贝保存 adapter session（{ adapter, ...session }），
     // 泵写入的可变状态必须放在共享引用的 state 容器内，拷贝内外才一致。
-    state: { turn: null, crashed: false, lastUsage: undefined, checkpointId: undefined },
+    state: { turn: null, crashed: false, lastUsage: undefined, latestPlanLimit: undefined, checkpointId: undefined },
   };
 
   session.query = sdk.query({
@@ -217,8 +299,19 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
           emit({ kind: "session", nativeSessionId: event.session_id, model: session.model });
           continue;
         }
+        if (event.type === "rate_limit_event") {
+          const limit = parseClaudePlanLimitEvent(event);
+          if (limit) {
+            session.state.latestPlanLimit = limit;
+            if (typeof onPlanLimit === "function") onPlanLimit(limit);
+            const current = session.state.lastUsage || {};
+            session.state.lastUsage = applyClaudePlanLimitToUsage(current, limit);
+            emit({ kind: "usage", usage: session.state.lastUsage });
+          }
+          continue;
+        }
         if (event.type === "result") {
-          const usage = usageFromResult(event);
+          const usage = usageFromResult(event, session.state.latestPlanLimit);
           if (usage) session.state.lastUsage = usage;
           session.state.checkpointId = event.user_message_uuid ?? session.state.checkpointId;
           for (const mapped of projectEvent(event)) {
@@ -247,8 +340,25 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
 
 /** Claude Code Adapter：官方 Agent SDK 常驻会话，能力事件经统一投影落到线程模型 */
 function create() {
+  let adapterLatestPlanLimit = null;
+  const onPlanLimit = (limit) => { adapterLatestPlanLimit = limit; };
+
   return {
     manifest,
+
+    credits() {
+      return projectClaudePlanLimitToCredits(adapterLatestPlanLimit);
+    },
+
+    async inspectAccount() {
+      const creds = this.credits();
+      if (!creds) return null;
+      return {
+        label: "Claude Code",
+        plan: "Anthropic Claude",
+        credits: creds,
+      };
+    },
 
     async inspect() {
       const result = await new Promise((resolve) => {
@@ -273,6 +383,7 @@ function create() {
         modelId: thread.options?.model?.id,
         emit,
         collaboration,
+        onPlanLimit,
       });
     },
 
@@ -339,6 +450,7 @@ function create() {
         resumeId: result.sessionId,
         permissionMode: source.options?.permissionMode,
         emit,
+        onPlanLimit,
       });
       return { checkpointMap, session };
     },
@@ -396,4 +508,12 @@ function create() {
   };
 }
 
-module.exports = { manifest, create, projectEvent };
+module.exports = {
+  manifest,
+  create,
+  projectEvent,
+  CLAUDE_PERMISSION_MODES,
+  parseClaudePlanLimitEvent,
+  projectClaudePlanLimitToCredits,
+  applyClaudePlanLimitToUsage,
+};

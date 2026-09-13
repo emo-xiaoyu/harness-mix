@@ -135,13 +135,13 @@ async function main() {
     assert.equal(replay.turnId, steered.turnId, 'Identical retry returns the delivery receipt');
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'other', clientUserMessageId: 'msg-1', input: [{ type: 'text', text: 'changed' }] }), /Conflicting/, 'Same message ID with different payload is rejected');
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'second' }] });
     const current = runtime.threads.find(t => t.id === threadId).currentTurn.id;
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'wrong-turn', input: [{ type: 'text', text: 'x' }] }), /no longer matches/, 'Stale target is not guessed');
     assert.ok(runtime.execution.isRunning(threadId) && runtime.threads.find(t => t.id === threadId).currentTurn.id === current, 'Stale steering never cancels the running Turn');
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending);
     assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex requests pass through');
     adapter.listCommands = async () => [{ id: 'compact', action: 'execute', label: 'Compact' }];
     let compactCalls = 0;
@@ -227,6 +227,11 @@ async function main() {
     await wait(() => !runtime.execution.isRunning(threadId) && !runtime.execution.isRunning(stuck.childThreadId));
     assert.equal(childAdapter.cancelCalls, 1, '中断父线程级联取消子任务');
     assert.equal(runtime.core.getTurn(stuck.turn.id).status, 'cancelled');
+    // 瞬态 Fork / 后台元数据线程防护：拒绝 ephemeral / threadSource 请求，防止重命名/索引时静默派生会话
+    await assert.rejects(bridge.request('thread/fork', { threadId, ephemeral: true }), /Ephemeral fork is not supported/);
+    await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);
+    await assert.rejects(bridge.request('thread/fork', { threadId, excludeTurns: true }), /Ephemeral fork is not supported/);
+    await assert.rejects(bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true, threadSource: 'thread_description' }), /Ephemeral background thread is not supported/);
     console.log('PASS: native protocol, external steering, command execution and Usage projection');
   } finally { bridge.close(); await runtime.close(); }
 }

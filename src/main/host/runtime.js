@@ -68,6 +68,17 @@ class HostRuntime {
       thread.reviewPending = false;
       thread.pendingApprovals = [];
       thread.tools = (thread.tools ?? []).map((tool) => (tool.state === "running" ? { ...tool, state: "interrupted" } : tool));
+      // 兼容历史会话：对于旧的未命名的“新任务”，若已有首轮用户消息，自动派生真实标题
+      if (isDefaultTitle(thread.title) && thread.messages?.length) {
+        const firstUserMsg = thread.messages.find(m => m.role === 'user');
+        if (firstUserMsg?.text || firstUserMsg?.attachments?.length) {
+          const isWorktree = thread.workspace?.mode === 'worktree';
+          const derived = deriveThreadTitle(firstUserMsg.text, firstUserMsg.attachments, { isWorktree });
+          if (derived && !isDefaultTitle(derived)) {
+            thread.title = derived;
+          }
+        }
+      }
       this.execution.threadCreated(thread);
     }
     await this.#save();
@@ -237,6 +248,15 @@ class HostRuntime {
     }
     // 首个真实输入让预热（ephemeral）线程转正为持久会话
     if (thread.ephemeral) delete thread.ephemeral;
+    // 自动为默认标题任务派生语义标题
+    if (isDefaultTitle(thread.title)) {
+      const isWorktree = thread.workspace?.mode === 'worktree';
+      const derived = deriveThreadTitle(typed, prepared.meta.length ? prepared.meta : attachments, { isWorktree });
+      if (derived && !isDefaultTitle(derived)) {
+        thread.title = derived;
+        for (const listener of this.listeners) listener({ type: 'thread-updated', thread });
+      }
+    }
     const session = await this.#ensureOpen(thread);
     if (!session) throw Error(thread.error ?? '原生会话未连接');
     if (collaborationOf && (!this.execution.isRunning(collaborationOf) || thread.parentThreadId !== collaborationOf)) throw Error('协作父任务已结束');
@@ -661,6 +681,8 @@ class HostRuntime {
     const thread = this.#requireThread(threadId);
     thread.title = title.trim();
     await this.#save(); this.#broadcast();
+    for (const listener of this.listeners) listener({ type: 'thread-updated', thread });
+    return thread;
   }
 
   async updateThreadMetadata(threadId, gitInfo) {
@@ -943,4 +965,59 @@ function parseSwitchCommand(text) {
   return { target: match[1], note: match[2]?.trim() || undefined };
 }
 
-module.exports = { HostRuntime };
+/** 校验任务标题是否属于系统默认生成的占位名称 */
+function isDefaultTitle(title) {
+  return !title || title === '新任务' || title === '新任务 (隔离分支)' || title.startsWith('新任务 (');
+}
+
+/**
+ * 根据用户首轮输入或附件信息自动派生语义标题（截取前 30 字）
+ */
+function deriveThreadTitle(text, attachments = [], { isWorktree = false } = {}) {
+  let raw = String(text ?? '').trim();
+
+  // 若存在结构化用户输入标头（如 "## My request:"），提取正文核心内容
+  const reqMatch = /(?:##\s*)?My request:\s*([\s\S]+)/i.exec(raw);
+  if (reqMatch && reqMatch[1].trim()) {
+    raw = reqMatch[1].trim();
+  }
+
+  // 剔除系统提示包裹与附件标记
+  raw = raw.replace(/\[System Instruction:[\s\S]*?\]/gi, '');
+  raw = raw.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '');
+  raw = raw.replace(/\[用户上传了图片附件\]/gi, '');
+  raw = raw.replace(/\[Harness Mix[\s\S]*?\]/gi, '');
+
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let candidate = '';
+  for (const line of lines) {
+    const cleaned = line
+      .replace(/^[#*>\-\s\d.)]+/, '')
+      .replace(/[`*_~]/g, '')
+      .trim();
+    if (!cleaned) continue;
+    if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) continue;
+    if (/^[\w.-]+\.(png|jpg|jpeg|gif|webp|svg|pdf|json|txt|md|js|ts|py|rs|go|c|cpp|h|java|cs):\s*/i.test(cleaned)) continue;
+    candidate = cleaned;
+    break;
+  }
+
+  if (!candidate && Array.isArray(attachments) && attachments.length > 0) {
+    const first = attachments[0];
+    const name = first.name || (first.path ? path.basename(first.path) : null);
+    if (name) candidate = `附件: ${name}`;
+    else candidate = '图片/附件分析';
+  }
+
+  if (!candidate) {
+    return isWorktree ? '新任务 (隔离分支)' : '新任务';
+  }
+
+  if (candidate.length > 30) {
+    candidate = candidate.slice(0, 30).trim() + '…';
+  }
+
+  return isWorktree ? `${candidate} (隔离分支)` : candidate;
+}
+
+module.exports = { HostRuntime, isDefaultTitle, deriveThreadTitle };

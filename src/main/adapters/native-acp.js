@@ -5,6 +5,25 @@ const { nativeCommand } = require('./native-acp-command');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
 
 const text = value => Array.isArray(value) ? value.map(text).filter(Boolean).join('\n') : value?.type === 'text' ? value.text || '' : value?.content ? text(value.content) : '';
+function extractToolOutput(tool, update) {
+  if (update?.content && Array.isArray(update.content) && update.content.length) {
+    const direct = text(update.content);
+    if (direct) return direct;
+  }
+  const raw = update?.rawOutput ?? tool.rawOutput;
+  if (raw != null) {
+    if (typeof raw === 'string') return raw;
+    if (typeof raw.text === 'string') return raw.text;
+    if (typeof raw.output === 'string') return raw.output;
+    if (typeof raw.stdout === 'string') return raw.stdout + (raw.stderr ? '\n' + raw.stderr : '');
+  }
+  if (tool.content) {
+    const fallback = text(tool.content);
+    if (fallback) return fallback;
+  }
+  if (raw != null) return JSON.stringify(raw);
+  return undefined;
+}
 const options = list => (list || []).flatMap(o => Array.isArray(o.options) ? options(o.options) : typeof o.value === 'string' ? [o] : []);
 const finite = n => Number.isFinite(n) && n >= 0;
 function config(s, kind) {
@@ -116,7 +135,7 @@ function project(s, event) {
   const terminal = ['completed', 'failed'].includes(tool.status);
   s.emit({ kind: 'tool', toolCallId: tool.toolCallId, title: tool.title || tool.kind || 'Native tool',
     state: tool.status === 'completed' ? 'completed' : tool.status === 'failed' ? 'error' : 'running',
-    input: JSON.stringify(tool.rawInput), output: terminal ? text(tool.content) || JSON.stringify(tool.rawOutput) : undefined });
+    input: JSON.stringify(tool.rawInput), output: terminal ? extractToolOutput(tool, u) : undefined });
   if (tool.status !== 'completed') return;
   const changes = (tool.content || []).filter(c => c.type === 'diff' && typeof c.path === 'string' && typeof c.newText === 'string' && (c.oldText == null || typeof c.oldText === 'string'))
     .filter(c => c.oldText !== c.newText && (c.oldText?.length || 0) + c.newText.length <= 100000)
