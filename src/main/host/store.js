@@ -50,12 +50,13 @@ class Store {
       const rejecters = this.pendingRejecters;
       this.pendingResolvers = [];
       this.pendingRejecters = [];
+      const tmpFile = `${this.file}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
       try {
         const contents = JSON.stringify(data, null, 2);
         await fs.mkdir(this.directory, { recursive: true });
-        await fs.writeFile(`${this.file}.tmp`, contents);
+        await fs.writeFile(tmpFile, contents);
         for (let attempt = 0; ; attempt++) {
-          try { await fs.rename(`${this.file}.tmp`, this.file); break; }
+          try { await fs.rename(tmpFile, this.file); break; }
           catch (error) {
             if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt === 9) throw error;
             await new Promise(resolve => setTimeout(resolve, 50));
@@ -63,6 +64,7 @@ class Store {
         }
         for (const r of resolvers) r();
       } catch (error) {
+        await fs.unlink(tmpFile).catch(() => {});
         for (const r of rejecters) r(error);
       }
     }

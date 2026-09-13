@@ -78,13 +78,18 @@ async function run() {
   const legacyThread = await runtime.createThread({ harnessId: 'antigravity', cwd: root, title: '新任务' });
   legacyThread.messages.push({ role: 'user', text: '历史遗留会话提问', at: Date.now() });
   await runtime.store.save(runtime.threads);
+  bridge.close();
+  await runtime.close();
 
   const newRuntime = new HostRuntime({ dataDirectory: dataDir });
-  await newRuntime.initialize();
-  const loadedLegacy = newRuntime.threads.find(t => t.id === legacyThread.id);
-  assert.equal(loadedLegacy.title, '历史遗留会话提问', '重启初始化时自动为历史“新任务”回填首轮语义标题');
-
-  console.log('PASS: thread title auto-derivation, notification and persistence');
+  try {
+    await newRuntime.initialize();
+    const loadedLegacy = newRuntime.threads.find(t => t.id === legacyThread.id);
+    assert.equal(loadedLegacy.title, '历史遗留会话提问', '重启初始化时自动为历史“新任务”回填首轮语义标题');
+    console.log('PASS: thread title auto-derivation, notification and persistence');
+  } finally {
+    await newRuntime.close();
+  }
 }
 
 run().catch(err => {

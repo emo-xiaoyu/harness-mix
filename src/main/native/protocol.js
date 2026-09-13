@@ -560,8 +560,8 @@ class NativeProtocol {
     if (method === 'codexhost/thread/inspect') {
       if (!thread) return { owner: 'codex', locked: true };
       const catalog = await this.runtime.describe(thread.harnessId);
-      const usage = this.runtime.core.getThread(thread.id)?.usage;
-      const adapter = this.runtime.adapters.get(thread.harnessId);
+      const usage = typeof this.runtime.core?.getThread === 'function' ? this.runtime.core.getThread(thread.id)?.usage : undefined;
+      const adapter = this.runtime.adapters && typeof this.runtime.adapters.get === 'function' ? this.runtime.adapters.get(thread.harnessId) : null;
       const rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
       const credits = projectAccountCredits(rawCredits);
       return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: routeModel(externalId(thread.harnessId)), locked: true,
@@ -764,6 +764,9 @@ class NativeProtocol {
   }
   async startNativeTurn(thread, text, attachments, commandId) {
     const before = thread.currentTurn?.id;
+    for (let i = 0; i < 100 && this.runtime.sending?.has(thread.id) && !this.runtime.execution.isRunning(thread.id); i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     let failure;
     const running = (commandId ? this.runtime.executeCommand(thread.id, commandId) : this.runtime.send(thread.id, text, { attachments })).catch(error => { failure = error; });
     for (let attempt = 0; attempt < 600 && thread.currentTurn?.id === before && !failure; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
