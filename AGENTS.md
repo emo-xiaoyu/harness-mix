@@ -10,7 +10,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 - `src/native-ui/` — TypeScript sources of the Codex Desktop integration: `renderer-extension/` (injected UI), `desktop-control/` (CDP controller), `shared-contracts/` (shared protocol contracts).
 - `src/assets/icons/` — harness and model icons, embedded at build time.
 - `scripts/` — verification tooling (`check.cjs`, `build-native.cjs`, `native-*-test.cjs`, `e2e-*.cjs`).
-- `design/` — prototype HTML/PNG and icon assets. `output/` — build and test artifacts; do not commit.
+- `docs/images/` — Codex Desktop native UI screenshots used in the README. `output/` — build and test artifacts; do not commit.
 
 ## Build, Test, and Development Commands
 
