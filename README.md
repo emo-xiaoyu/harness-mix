@@ -4,6 +4,10 @@
   <img src="src/assets/brand-harness-mix.png" width="92" alt="Harness Mix logo">
 </p>
 
+<p align="center">
+  ⭐ 如果这个项目对你有帮助，请给我们一个 <a href="https://github.com/emo-xiaoyu/harness-mix">Star</a>！ ⭐
+</p>
+
 <p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness。</strong></p>
 
 <p align="center">
@@ -12,9 +16,46 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
 </p>
 
-Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通过本地编译的 CLI Shim 对接桌面的 app-server 协议，把 Codex、Pi、Claude Code、DeepSeek Harness、CodeBuddy、Kiro CLI、Cursor CLI 等原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理任务映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+<p align="center"><strong>当前注册的 Harness（16 个）</strong></p>
 
-![Harness Mix 首页](docs/images/harness-mix-home.png)
+<table align="center">
+  <tbody>
+    <tr>
+      <td align="center"><img src="src/assets/icons/antigravity-color.svg" width="28" height="28" alt="Antigravity"><br><sub>Antigravity</sub></td>
+      <td align="center"><img src="src/assets/icons/codex-harness.svg" width="28" height="28" alt="Codex"><br><sub>Codex</sub></td>
+      <td align="center"><img src="src/assets/icons/claude-color.svg" width="28" height="28" alt="Claude Code"><br><sub>Claude Code</sub></td>
+      <td align="center"><img src="src/assets/icons/pi.svg" width="28" height="28" alt="Pi"><br><sub>Pi</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/omp-color.svg" width="28" height="28" alt="Oh My Pi"><br><sub>Oh My Pi</sub></td>
+      <td align="center"><img src="src/assets/icons/deepseek-color.svg" width="28" height="28" alt="DeepSeek Harness"><br><sub>DeepSeek</sub></td>
+      <td align="center"><img src="src/assets/icons/opencode-color.svg" width="28" height="28" alt="OpenCode"><br><sub>OpenCode</sub></td>
+      <td align="center"><img src="src/assets/icons/grok-color.svg" width="28" height="28" alt="Grok"><br><sub>Grok</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/openclaw-color.svg" width="28" height="28" alt="OpenClaw"><br><sub>OpenClaw</sub></td>
+      <td align="center"><img src="src/assets/icons/hermes-color.svg" width="28" height="28" alt="Hermes"><br><sub>Hermes</sub></td>
+      <td align="center"><img src="src/assets/icons/qoder-color.svg" width="28" height="28" alt="Qoder"><br><sub>Qoder</sub></td>
+      <td align="center"><img src="src/assets/icons/codebuddy-color.svg" width="28" height="28" alt="CodeBuddy"><br><sub>CodeBuddy</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/kiro-cli-color.svg" width="28" height="28" alt="Kiro"><br><sub>Kiro</sub></td>
+      <td align="center"><img src="src/assets/icons/cursor.svg" width="28" height="28" alt="Cursor"><br><sub>Cursor</sub></td>
+      <td align="center"><img src="src/assets/icons/zcode-color.svg" width="28" height="28" alt="ZCode"><br><sub>ZCode</sub></td>
+      <td align="center"><img src="src/assets/icons/trae-color.svg" width="28" height="28" alt="Trae"><br><sub>Trae</sub></td>
+    </tr>
+  </tbody>
+</table>
+
+<p align="center"><sub>图标与 Harness 能力均来自项目自身的注册表；只有本机已安装且握手成功的 Harness 才会进入真实运行。</sub></p>
+
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通过本地编译的 CLI Shim 对接桌面的 app-server 协议，把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode 和 Trae 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理任务映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/harness-mix-home.png" width="960" alt="Harness Mix 首页">
+</p>
 
 ## 能做什么
 
@@ -26,7 +67,9 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - CodeBuddy、Kiro 和 Cursor 使用原生 ACP 加厂商专用接口：提问、计划确认、配置确认、取消恢复、上下文与历史按各自协议处理。功能和验证范围见下表，不将通用 ACP 能力视为所有 CLI 都已支持。
 - 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
 
-![Harness Mix 会话](docs/images/harness-mix-session.png)
+<p align="center">
+  <img src="docs/images/harness-mix-session.png" width="960" alt="Harness Mix 会话">
+</p>
 
 ## 原生接入
 
