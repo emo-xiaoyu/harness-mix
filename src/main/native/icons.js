@@ -20,8 +20,8 @@ const MODEL_FAMILIES = [
 
 const HARNESS_ICONS = [
   { id: 'kiro-cli', file: 'kiro-cli-color.svg', label: 'Kiro' },
-  { id: 'cursor-cli', file: 'cursor-cli-color.svg', label: 'Cursor' },
-  { id: 'cursor', file: 'cursor-cli-color.svg', label: 'Cursor' },
+  { id: 'cursor-cli', file: 'cursor.svg', label: 'Cursor' },
+  { id: 'cursor', file: 'cursor.svg', label: 'Cursor' },
   { id: 'antigravity', file: 'antigravity-color.svg', label: 'Antigravity' },
   { id: 'claude', file: 'claude-color.svg', label: 'Claude Code' },
   { id: 'codex', file: 'codex-harness.svg', label: 'Codex' },

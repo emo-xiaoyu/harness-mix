@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
+const { terminateTree } = require('../native/process-utils');
 
 const manifest = {
   id: 'antigravity',
@@ -47,6 +48,13 @@ const EFFORT_LABELS = {
 };
 const EFFORT_SUFFIX_PATTERN = /^(?<base>.+)-(?<effort>low|medium|high)$/u;
 const EFFORT_LABEL_SUFFIX_PATTERN = /\s*\((?:low|medium|high)\)$/iu;
+const ANTIGRAVITY_RESULT_DRAIN_MS = 250;
+const ANTIGRAVITY_RESULT_DRAIN_MAX_MS = 10_000;
+
+function positiveDuration(value, fallback) {
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration > 0 ? duration : fallback;
+}
 
 function resolveExecutable() {
   if (process.env.HARNESS_MIX_ANTIGRAVITY_COMMAND) return process.env.HARNESS_MIX_ANTIGRAVITY_COMMAND;
@@ -213,6 +221,45 @@ function parseUsage(usageObj, modelId, quota) {
   return result;
 }
 
+function errorText(value) {
+  if (value == null) return '';
+  if (value instanceof Error) return value.message.trim();
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(errorText).filter(Boolean).join('; ');
+  if (typeof value === 'object') {
+    const code = value.code ?? value.errorCode ?? value.status;
+    const nested = value.message ?? value.errorMessage ?? value.error_message ?? value.detail ?? value.description ?? value.reason ?? value.error;
+    const message = errorText(nested);
+    if (message) {
+      const codeText = code == null ? '' : String(code).trim();
+      return codeText && !message.startsWith(`${codeText}:`) ? `${codeText}: ${message}` : message;
+    }
+    try { return JSON.stringify(value); } catch { return ''; }
+  }
+  return String(value);
+}
+
+function formatAntigravityResultError(result) {
+  const detail = [result?.error, result?.errorMessage, result?.error_message, result?.message, result?.detail]
+    .map(errorText)
+    .find(Boolean);
+  if (detail) return `Antigravity 回合失败：${detail}`;
+  const status = errorText(result?.status);
+  return status ? `Antigravity 回合失败（${status}）` : 'Antigravity 回合失败（未知错误）';
+}
+
+function resultSucceeded(result) {
+  return errorText(result?.status).toUpperCase() === 'SUCCESS';
+}
+
+function modelSupportsEffort(model) {
+  const id = String(model?.id ?? '').trim();
+  if (Array.isArray(model?.efforts)) return model.efforts.length > 0;
+  // Claude models expose built-in thinking in agy and reject --effort.
+  return !/^claude(?:[-_.]|$)/i.test(id);
+}
+
 function formatPrompt(text) {
   if (!text) return '';
   if (text.startsWith('/') || text.includes('ArtifactMetadata')) return text;
@@ -223,30 +270,65 @@ async function prepareImageAttachments(images, cwd) {
   if (!Array.isArray(images) || !images.length) return { imageEntries: [], extraDirs: [] };
   const imageEntries = [];
   const extraDirs = [];
+  let targetDir = null;
+  const ensureTargetDir = async () => {
+    if (targetDir) return targetDir;
+    targetDir = path.join(cwd, '.gemini', 'attachments');
+    try {
+      await fs.promises.mkdir(targetDir, { recursive: true });
+    } catch {
+      targetDir = path.join(os.tmpdir(), 'harness-mix-antigravity-attachments');
+      await fs.promises.mkdir(targetDir, { recursive: true });
+      if (!extraDirs.includes(targetDir)) extraDirs.push(targetDir);
+    }
+    return targetDir;
+  };
+
   for (const img of images) {
     if (!img) continue;
-    let filePath = img.path;
-    if (!filePath || !fs.existsSync(filePath)) {
-      const ext = path.extname(img.name || '') || (img.mime === 'image/jpeg' ? '.jpg' : img.mime === 'image/gif' ? '.gif' : img.mime === 'image/webp' ? '.webp' : img.mime === 'image/svg+xml' ? '.svg' : '.png');
-      const safeBase = path.basename(img.name || 'image', ext).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_') || 'image';
-      const fileName = `${Date.now()}-${randomUUID().slice(0, 6)}-${safeBase}${ext}`;
-      let targetDir = path.join(cwd, '.gemini', 'attachments');
-      try {
-        await fs.promises.mkdir(targetDir, { recursive: true });
-      } catch {
-        targetDir = path.join(os.tmpdir(), 'harness-mix-antigravity-attachments');
-        await fs.promises.mkdir(targetDir, { recursive: true });
-        if (!extraDirs.includes(targetDir)) extraDirs.push(targetDir);
-      }
-      filePath = path.join(targetDir, fileName);
-      if (img.data) {
-        await fs.promises.writeFile(filePath, Buffer.from(img.data, 'base64'));
-      }
+    const ext = path.extname(img.name || '') || (img.mime === 'image/jpeg' ? '.jpg' : img.mime === 'image/gif' ? '.gif' : img.mime === 'image/webp' ? '.webp' : img.mime === 'image/svg+xml' ? '.svg' : '.png');
+    const safeBase = path.basename(img.name || 'image', ext).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_') || 'image';
+    const fileName = `${Date.now()}-${randomUUID().slice(0, 6)}-${safeBase}${ext}`;
+    const sourcePath = typeof img.path === 'string' && img.path ? path.resolve(cwd, img.path) : null;
+    const hasData = typeof img.data === 'string' && img.data.length > 0;
+    if (!sourcePath && !hasData) throw new Error(`图片附件「${img.name || 'image'}」缺少本地文件或内容`);
+
+    // Desktop clipboard images live in %TEMP% and may disappear after this
+    // turn. Always materialize a durable copy before putting a path in the
+    // native prompt, even when the source still exists right now.
+    const durableDir = await ensureTargetDir();
+    const filePath = path.join(durableDir, fileName);
+    if (hasData) await fs.promises.writeFile(filePath, Buffer.from(img.data, 'base64'));
+    else await fs.promises.copyFile(sourcePath, filePath);
+
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`图片附件「${img.name || 'image'}」保存失败`);
     }
     const normalizedPath = path.resolve(filePath).replace(/\\/g, '/');
     imageEntries.push({ name: img.name || path.basename(filePath), path: normalizedPath });
   }
   return { imageEntries, extraDirs };
+}
+
+async function restoreLegacyClipboardAttachments(thread) {
+  const tempRoot = path.resolve(os.tmpdir());
+  const restored = new Set();
+  const messages = Array.isArray(thread?.messages) ? thread.messages : [];
+  for (const message of messages) {
+    const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+    for (const attachment of attachments) {
+      if (attachment?.kind !== 'image' || typeof attachment.path !== 'string' || !attachment.path || typeof attachment.data !== 'string' || !attachment.data) continue;
+      const filePath = path.resolve(thread.cwd || process.cwd(), attachment.path);
+      const relative = path.relative(tempRoot, filePath);
+      if (!relative || path.isAbsolute(relative) || relative.includes(path.sep) || !/^codex-clipboard-[a-z0-9-]+\.(?:png|jpe?g|gif|webp)$/i.test(path.basename(filePath))) continue;
+      if (fs.existsSync(filePath) || restored.has(filePath)) continue;
+      try {
+        await fs.promises.writeFile(filePath, Buffer.from(attachment.data, 'base64'));
+        restored.add(filePath);
+      } catch { /* A missing legacy temp file must not prevent session recovery. */ }
+    }
+  }
+  return restored.size;
 }
 
 function toolTitle(name) {
@@ -684,8 +766,21 @@ class QuestionBridge {
   }
 }
 
-function create(emit) {
+function create(emit, options = {}) {
   let cachedQuota = null;
+  let quotaPromise = null;
+  const spawnProcess = options.spawnProcess || spawn;
+  const resultDrainMs = positiveDuration(
+    options.resultDrainMs ?? process.env.HARNESS_MIX_ANTIGRAVITY_RESULT_DRAIN_MS,
+    ANTIGRAVITY_RESULT_DRAIN_MS,
+  );
+  const resultDrainMaxMs = Math.max(
+    resultDrainMs,
+    positiveDuration(
+      options.resultDrainMaxMs ?? process.env.HARNESS_MIX_ANTIGRAVITY_RESULT_DRAIN_MAX_MS,
+      ANTIGRAVITY_RESULT_DRAIN_MAX_MS,
+    ),
+  );
 
   return {
     manifest,
@@ -704,9 +799,9 @@ function create(emit) {
     },
 
     async open({ thread, emit: emitEvent, diagnostic }) {
-      if (!cachedQuota) {
-        void fetchAntigravityQuota().then((q) => { if (q) cachedQuota = q; }).catch(() => {});
-      }
+      // Do not start a second agy process while a real turn may be starting.
+      // Quota is loaded only by the explicit account/usage refresh path below.
+      await restoreLegacyClipboardAttachments(thread);
       const model = thread.options?.model ?? { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'google' };
       const thinkingLevel = thread.options?.thinking ?? 'high';
       const permissionMode = thread.options?.permissionMode ?? 'default';
@@ -744,6 +839,7 @@ function create(emit) {
       if (imageEntries.length) {
         const imageNotice = [
           '[用户上传了图片附件]',
+          '[仅使用本轮列出的持久化副本路径；不要复用历史消息中的 codex-clipboard 临时路径。]',
           ...imageEntries.map(e => `- [${e.name}](file:///${e.path}): 请使用 view_file 工具查看并分析该图片。`),
         ].join('\n');
         effectivePrompt = effectivePrompt.trim()
@@ -763,7 +859,7 @@ function create(emit) {
       if (session.model?.id) {
         args.push('--model', session.model.id);
       }
-      if (session.thinkingLevel) {
+      if (session.thinkingLevel && modelSupportsEffort(session.model)) {
         args.push('--effort', session.thinkingLevel);
       }
       if (['skip', 'desktop', 'dangerously-skip-permissions', 'desktop-approvals'].includes(session.permissionMode)) {
@@ -776,7 +872,7 @@ function create(emit) {
       }
       args.push('--log-file', logPath);
 
-      const child = spawn(bin, args, {
+      const child = spawnProcess(bin, args, {
         cwd: session.cwd,
         env: { ...process.env, ...bridge.environment },
         windowsHide: true,
@@ -789,9 +885,23 @@ function create(emit) {
         turnReject = reject;
       });
 
-      const turn = { child, resolve: turnResolve, reject: turnReject, logPath, resultSeen: false, killTimer: null, pendingSteps: new Map() };
+      const turn = {
+        child,
+        resolve: turnResolve,
+        reject: turnReject,
+        logPath,
+        resultSeen: false,
+        result: null,
+        completed: false,
+        processClosing: false,
+        processClosed: false,
+        killTimer: null,
+        resultDrainTimer: null,
+        resultDrainMaxTimer: null,
+        pendingSteps: new Map(),
+      };
       session.activeTurn = turn;
-      let sawTextDelta = false;
+      let sawTextSinceLastTool = false;
       let stderrTail = '';
       child.stderr?.setEncoding('utf8')?.on('data', (chunk) => {
         stderrTail = (stderrTail + chunk).slice(-8000);
@@ -799,12 +909,85 @@ function create(emit) {
 
       // agy 在 stream-json 模式下产出 result 后进程仍常驻（实测 25s+ 不自行退出），
       // 不主动收尾会让 session.activeTurn 永远悬挂，下一回合 send 被“当前回合尚未结束”拒绝。
-      // 结束 stdin 可让 agy 干净退出（实测 ~1.5s，code 0），kill 兜底；close 处理器做最终清理。
-      const finishTurn = () => {
-        if (session.activeTurn === turn) session.activeTurn = null;
+      // 但某些工具（尤其 view_file 图片）会先产生没有 output 字段的 DONE，随后才
+      // 刷出最终 assistant_response。先结算 Turn 再结束 stdin 会把这段迟到文本丢给
+      // 已关闭的 Normalizer，所以空结果时必须先做一个有界 drain。
+      const clearResultDrainTimers = () => {
+        if (turn.resultDrainTimer) clearTimeout(turn.resultDrainTimer);
+        if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
+        turn.resultDrainTimer = null;
+        turn.resultDrainMaxTimer = null;
+      };
+
+      const closeProcess = () => {
+        if (turn.processClosing || turn.processClosed) return;
+        turn.processClosing = true;
         try { child.stdin.end(); } catch {}
-        turn.killTimer = setTimeout(() => { try { child.kill(); } catch {} }, 10000);
+        turn.killTimer = setTimeout(() => { void terminateTree(child.pid); }, 10000);
         turn.killTimer.unref?.();
+      };
+
+      const settleResult = () => {
+        if (turn.completed || !turn.result) return;
+        turn.completed = true;
+        clearResultDrainTimers();
+        if (session.activeTurn === turn) session.activeTurn = null;
+        const { res, nativeRef } = turn.result;
+        const completedRef = {
+          ...nativeRef,
+          turnId: res.num_turns != null ? `turn:${res.num_turns}` : undefined,
+          checkpointId: res.num_turns != null ? String(res.num_turns) : undefined,
+        };
+        const successful = resultSucceeded(res);
+        const hasAssistantText = (typeof res.response === 'string'
+          ? Boolean(res.response.trim())
+          : Boolean(res.response)) || sawTextSinceLastTool;
+        if (!successful) {
+          const message = formatAntigravityResultError(res);
+          emitEvent({ kind: 'error', message, nativeRef: completedRef });
+          turnReject?.(new Error(message));
+          closeProcess();
+          return;
+        }
+        if (!hasAssistantText) {
+          const message = 'Antigravity 回合返回 SUCCESS，但没有 assistant 文本';
+          emitEvent({ kind: 'error', message, nativeRef: completedRef });
+          turnReject?.(new Error(message));
+          closeProcess();
+          return;
+        }
+        emitEvent({
+          kind: 'completed',
+          finalAnswer: true,
+          stopReason: 'completed',
+          nativeRef: completedRef,
+        });
+        turnResolve?.();
+        closeProcess();
+      };
+
+      const scheduleResultDrain = () => {
+        if (!turn.resultSeen || turn.completed || !turn.result) return;
+        if (!resultSucceeded(turn.result.res)) {
+          settleResult();
+          return;
+        }
+        const hasAssistantText = (typeof turn.result.res.response === 'string'
+          ? Boolean(turn.result.res.response.trim())
+          : Boolean(turn.result.res.response)) || sawTextSinceLastTool;
+        if (hasAssistantText) {
+          if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
+          turn.resultDrainMaxTimer = null;
+          if (turn.resultDrainTimer) clearTimeout(turn.resultDrainTimer);
+          turn.resultDrainTimer = setTimeout(settleResult, resultDrainMs);
+          return;
+        }
+        // No text at result time is not proof that the native turn is finished.
+        // Keep the Core turn active until a late assistant response arrives, but
+        // always retain a hard ceiling for a genuinely tool-only/empty turn.
+        if (!turn.resultDrainMaxTimer) {
+          turn.resultDrainMaxTimer = setTimeout(settleResult, resultDrainMaxMs);
+        }
       };
 
       const rl = readline.createInterface({ input: child.stdout });
@@ -832,9 +1015,10 @@ function create(emit) {
 
           if (s.step_type === 'agent_response') {
             const text = s.text_delta || s.text || s.content || s.message;
-            if (text) {
-              sawTextDelta = true;
+            if (typeof text === 'string' && text) {
+              sawTextSinceLastTool = true;
               emitEvent({ kind: 'text-delta', text, nativeRef: stepRef });
+              scheduleResultDrain();
             }
             return;
           }
@@ -848,6 +1032,7 @@ function create(emit) {
           }
 
           if (s.step_type === 'subagent') {
+            sawTextSinceLastTool = false;
             const info = s.subagent_info || {};
             const subagents = Array.isArray(info.subagents) ? info.subagents : [];
             const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
@@ -865,6 +1050,7 @@ function create(emit) {
           }
 
           if (s.step_type === 'tool') {
+            sawTextSinceLastTool = false;
             const toolName = s.tool_name || s.tool_info?.name;
             const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
             emitEvent({
@@ -913,6 +1099,7 @@ function create(emit) {
         }
 
         if (event.event === 'result') {
+          if (turn.resultSeen || turn.completed) return;
           const res = event.result || {};
           if (res.conversation_id && !session.nativeSessionId) {
             session.nativeSessionId = res.conversation_id;
@@ -924,28 +1111,26 @@ function create(emit) {
               emitEvent({ kind: 'usage', usage: u, nativeRef });
             }
           }
-          if (res.response && !sawTextDelta) {
-            emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
+          if (res.response && !sawTextSinceLastTool) {
+            if (typeof res.response === 'string') {
+              sawTextSinceLastTool = true;
+              emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
+            }
           }
           turn.resultSeen = true;
-          const completedRef = {
-            ...nativeRef,
-            turnId: res.num_turns != null ? `turn:${res.num_turns}` : undefined,
-            checkpointId: res.num_turns != null ? String(res.num_turns) : undefined,
-          };
-          emitEvent({
-            kind: 'completed',
-            finalAnswer: res.status === 'SUCCESS',
-            stopReason: res.status === 'SUCCESS' ? 'completed' : 'error',
-            nativeRef: completedRef,
-          });
-          turnResolve?.();
-          finishTurn();
+          turn.result = { res, nativeRef };
+          scheduleResultDrain();
         }
       });
 
       child.on('error', (err) => {
+        if (turn.resultSeen) {
+          settleResult();
+          return;
+        }
         if (turn.killTimer) clearTimeout(turn.killTimer);
+        clearResultDrainTimers();
+        turn.completed = true;
         if (session.activeTurn === turn) session.activeTurn = null;
         void fs.promises.unlink(logPath).catch(() => {});
         void bridge.dispose();
@@ -955,20 +1140,28 @@ function create(emit) {
       });
 
       child.on('close', (code) => {
+        turn.processClosed = true;
         if (turn.killTimer) clearTimeout(turn.killTimer);
+        clearResultDrainTimers();
         void fs.promises.unlink(logPath).catch(() => {});
         void bridge.dispose();
         if (session.bridge === bridge) session.bridge = null;
-        if (session.activeTurn === turn) session.activeTurn = null;
-        if (!turn.resultSeen) {
+        if (turn.resultSeen) {
+          // A real process close means stdout can no longer deliver a late
+          // assistant event; settle the already received result now.
+          settleResult();
+        } else if (!turn.completed) {
+          turn.completed = true;
+          if (session.activeTurn === turn) session.activeTurn = null;
           const cleanErr = stderrTail.trim();
-          if (code !== 0 && cleanErr) {
-            emitEvent({ kind: 'error', message: `Antigravity CLI 异常退出 (code ${code}): ${cleanErr}` });
-          }
-          // 进程未产出 result 即退出（崩溃或协议中断）：保证 Turn 结算，不悬挂
-          emitEvent({ kind: 'completed', finalAnswer: false, stopReason: code === 0 ? 'completed' : 'error' });
+          const message = cleanErr
+            ? `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）：${cleanErr}`
+            : `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）`;
+          // 进程未产出 result 即退出（崩溃、认证失败或协议中断）：明确失败，
+          // 不能把 code 0 的空 stdout 伪装成成功回合。
+          emitEvent({ kind: 'error', message });
+          turnReject?.(new Error(message));
         }
-        turnResolve?.();
       });
 
       try {
@@ -977,9 +1170,14 @@ function create(emit) {
           child.stdin.write(JSON.stringify({ event: 'user', message: { content: fullPrompt } }) + '\n');
         }
       } catch (err) {
+        const message = `Antigravity 输入失败：${err.message}`;
+        turn.completed = true;
         if (session.activeTurn === turn) session.activeTurn = null;
-        child.kill();
-        turnReject?.(err);
+        void bridge.dispose();
+        if (session.bridge === bridge) session.bridge = null;
+        void terminateTree(child.pid);
+        emitEvent({ kind: 'error', message });
+        turnReject?.(new Error(message));
       }
 
       return settled;
@@ -987,7 +1185,7 @@ function create(emit) {
 
     async cancel(session) {
       if (session.activeTurn?.child) {
-        try { session.activeTurn.child.kill(); } catch {}
+        void terminateTree(session.activeTurn.child.pid);
       }
       if (session.bridge) {
         await session.bridge.dispose().catch(() => {});
@@ -1095,7 +1293,11 @@ function create(emit) {
     },
 
     async refreshCredits() {
-      const quota = await fetchAntigravityQuota();
+      if (!quotaPromise) quotaPromise = fetchAntigravityQuota();
+      const request = quotaPromise;
+      const quota = await request.finally(() => {
+        if (quotaPromise === request) quotaPromise = null;
+      });
       if (quota) cachedQuota = quota;
       return cachedQuota;
     },
@@ -1121,6 +1323,8 @@ module.exports = {
   create,
   parseModelsOutput,
   parseUsage,
+  formatAntigravityResultError,
+  modelSupportsEffort,
   formatPrompt,
   prepareImageAttachments,
   mergePendingStep,

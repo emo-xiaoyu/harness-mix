@@ -32,6 +32,12 @@ async function createWorkspace(cwd, id, mode = 'auto') {
     if (mode === 'auto' && /not a git repository/i.test(error.stderr || '')) return { mode: 'shared', cwd };
     throw new Error(`无法建立隔离工作区：${error.stderr || error.message}`);
   }
+  // Git for Windows may return the repository root using a different spelling
+  // (for example a long path) than Node's original cwd (for example RUNNER~1).
+  // Canonicalize both paths before computing the nested cwd, otherwise
+  // path.relative() can escape the new worktree and point back at the source.
+  source = await fs.realpath(source);
+  const canonicalCwd = await fs.realpath(cwd);
   const baseCommit = (await git(source, ['rev-parse', '--verify', 'HEAD'])).trim();
   const baseTree = await tree(source);
   // Keep the snapshot reachable across git gc, independently of the mutable worker index.
@@ -44,8 +50,12 @@ async function createWorkspace(cwd, id, mode = 'auto') {
   // Keep failed checkouts for inspection; never delete a workspace containing user/agent work.
   await git(root, ['read-tree', '--reset', '-u', baseTree]);
   await git(root, ['reset', '--mixed', 'HEAD']);
-  const relative = path.relative(source, cwd);
-  return { mode: 'worktree', root, cwd: path.join(root, relative), source, branch, baseCommit, baseTree };
+  const relative = path.relative(source, canonicalCwd);
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error(`无法建立隔离工作区：工作目录不在 Git 根目录内 (${cwd})`);
+  }
+  const worktreeCwd = relative ? path.join(root, relative) : root;
+  return { mode: 'worktree', root, cwd: worktreeCwd, source, branch, baseCommit, baseTree };
 }
 
 async function reviewWorkspace(workspace) {

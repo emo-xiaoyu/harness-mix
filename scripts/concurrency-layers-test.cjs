@@ -144,6 +144,8 @@ const until = async (predicate, timeoutMs = 4000) => {
   assert.equal(wtThread.workspace.mode, 'worktree');
   assert.notEqual(wtThread.cwd, gitRepo, 'Worktree cwd must be physically different from gitRepo');
   assert.equal(wtThread.originalCwd, gitRepo);
+  const [physicalSource, physicalWorktree] = await Promise.all([fs.realpath(gitRepo), fs.realpath(wtThread.cwd)]);
+  assert.notEqual(physicalWorktree, physicalSource, 'Worktree cwd must resolve to a different physical directory');
 
   // 在主仓库和隔离分支同时并发写入同名或不同文件
   await fs.writeFile(path.join(gitRepo, 'main-code.txt'), 'main modified\n');
