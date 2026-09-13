@@ -4,7 +4,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 
 ## Project Structure & Module Organization
 
-- `src/main/native/` — native mode: `launcher.js` (desktop activation + auto-update), `updater.js` (git fast-forward updates), `rs/` (Rust workspace: `harness-mix-shim` protocol bridge, `harness-mix-appx` AppX activation), `host.js` (protocol entry), `protocol.js` (app-server projection), `icons.js` (icon catalog).
+- `src/main/native/` — native mode: `launcher.js` (desktop activation, leftover sweep, update flow), `updater.js` + `update-state.js` (dual-channel update: git fast-forward / npm registry, lock, rollback), `host.js` (protocol entry, heartbeat, crash reports), `protocol.js` (app-server projection), `process-utils.js` (process-tree termination), `redact.js` (log redaction), `secure-store.js` (DPAPI vault wrapper), `rs/` (Rust workspace: `harness-mix-shim` protocol bridge + kill-on-close job object, `harness-mix-appx` AppX activation, `harness-mix-secret` DPAPI vault), `icons.js` (icon catalog).
 - `src/main/host/` — Host Runtime: `runtime.js` (orchestration/resume/projection), `store.js`, `jsonl.js` (persistence).
 - `src/main/adapters/` — one plugin per harness (`pi.js`, `omp.js`, `dsh.js`, `claude.js`, `antigravity.js`, `codex.js`, `opencode.js`, `grok.js`; Pi/OMP share `pi-family.js`, OpenCode uses native HTTP/SSE via `opencode-server.js`, Grok independently maps native stdio and `_x.ai/*` extensions), registered in `index.js`. New harnesses follow the manifest/factory/session shape documented in `README.md`.
 - `src/native-ui/` — TypeScript sources of the Codex Desktop integration: `renderer-extension/` (injected UI), `desktop-control/` (CDP controller), `shared-contracts/` (shared protocol contracts).

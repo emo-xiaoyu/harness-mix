@@ -38,14 +38,33 @@ npm start
 
 ## 自动更新
 
-每次 `npm start` 会先检查 `origin` 上游：可快进且无本地改动时自动拉取、按需重装依赖并重建原生组件，然后继续启动。分叉、本地领先或工作区有未提交改动时跳过并打印原因；更新失败（如离线）不影响启动。
+启动时自动检查更新，按安装形态走两条通道：
 
-- `npm run update`：只检查并应用更新，不启动桌面。
+- **git 检出（开发形态）**：可快进且工作区干净时自动拉取、按需重装依赖并重建原生组件；`install` / `build` 失败自动回退到更新前的提交。分叉、本地领先或工作区有未提交改动时跳过并打印原因。
+- **npm 全局安装**：从 registry 发现新版本后，先停止桌面，再用 `npm install -g harness-mix@<版本>` 应用（校验由 npm integrity 承担），失败自动重试并挂起至下次启动；连续两次启动未成功会自动回滚到上一版本。
+
+所有变更操作持有更新锁（`%APPDATA%\harness-mix\codexhost\update.lock`），状态记录在 `update-state.json`；应用成功后启动器自行重启加载新代码。任何更新失败（如离线、占用、权限）都不阻塞启动。
+
+- `npm run update`：只检查并应用更新，不启动桌面（应用时会先停一次桌面）。
 - `npm start -- --no-update` 或 `HARNESS_MIX_AUTO_UPDATE=0`：跳过本次更新检查。
+- `HARNESS_MIX_UPDATE_REGISTRY`：自定义 registry；`HARNESS_MIX_UPDATE_PRERELEASE=1`：允许预发布版本。
 
-## Shim 与激活器（Rust）
+## Shim 与原生组件（Rust）
 
-`harness-mix-shim.exe` 与 `harness-mix-appx.exe` 由 `src/main/native/rs` 下的 Rust workspace 构建（`npm run build:native`），零外部 crate 依赖：Shim 仅用 std，AppX 手写 COM 声明，任意干净的 Rust 工具链即可构建。产物经 e2e:native 全链路验证。
+`harness-mix-shim.exe`、`harness-mix-appx.exe` 与 `harness-mix-secret.exe` 由 `src/main/native/rs` 下的 Rust workspace 构建（`npm run build:native`），零外部 crate 依赖：Shim 仅用 std 并给自身挂 kill-on-close Job Object，AppX 手写 COM 声明，Secret 手写 DPAPI/kernel32 声明；任意干净的 Rust 工具链即可构建。Shim 产物经 e2e:native 全链路验证，Job Object 级联清理由 `npm run test:native-job-object` 验证。
+
+## 进程监管
+
+- Shim 启动即把自身加入 Job Object（`KILL_ON_JOB_CLOSE`）：node 宿主、官方 app-server、各家 CLI 与 pwsh 终端全部随 shim 级联清理，强杀或崩溃也不例外。
+- 宿主每 5s 写心跳（`%APPDATA%\harness-mix\codexhost\runtime\instance.json`）；`uncaughtException` / `unhandledRejection` / `SIGBREAK` 会写入同目录 `crash-<ts>.json` 并尝试优雅收尾。
+- 启动器在重启桌面前清扫本项目残留进程（仅匹配 shim 二进制路径与 `native-host.cjs` / `desktop-controller.mjs` 入口），并把上次异常退出时运行中的任务标记为 interrupted，重新发送即可继续。
+- 适配器与终端统一经 `src/main/native/process-utils.js` 的 `terminateTree()`（Windows `taskkill /T /F`）终止进程树。
+
+## 安全存储与诊断
+
+- `harness-mix-secret.exe`（DPAPI，当前用户范围）提供平台保险箱：`set / get / delete / list`，密文落盘 `<data>\secrets.dat`；JS 入口 `src/main/native/secure-store.js`，helper 缺失时明确报错、绝不降级为明文。当前没有默认凭据写入，供后续功能（私有 registry token、直连模型密钥等）使用。
+- `host-traffic.jsonl` 与 `shim-invocations.log` 均为 5MB × 3 轮转；写盘前对 Bearer/API key 形态与敏感字段键做脱敏（`src/main/native/redact.js`）。
+- `npm run diagnostics`：把版本、桌面兼容状态、更新/实例状态、脱敏日志尾与最近崩溃报告打包为 zip 输出到 `output/`，供问题反馈。
 
 默认 Host 数据目录为 `%APPDATA%\harness-mix\codexhost`，可用 `CODEXHOST_DATA_DIR` 覆盖。
 

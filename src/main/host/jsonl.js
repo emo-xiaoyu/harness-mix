@@ -1,5 +1,6 @@
 const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
+const { terminateTree } = require("../native/process-utils");
 
 /**
  * JSONL 进程传输层。
@@ -94,7 +95,7 @@ class JsonlProcess {
   /** 回复 Agent → Client 请求之外的自由格式报文（如 Pi extension_ui_response） */
   send(payload) { this.#write(payload); }
 
-  stop() { try { this.child.kill(); } catch { /* already gone */ } }
+  stop() { void terminateTree(this.child.pid); }
 
   #failAll(error) {
     for (const { reject } of this.pending.values()) reject(error);

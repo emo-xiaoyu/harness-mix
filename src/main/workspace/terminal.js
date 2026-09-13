@@ -1,5 +1,6 @@
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { terminateTree } = require('../native/process-utils');
 
 // A bounded command runner, not a PTY. Only explicitly submitted user commands
 // reach this service; transcript tool output is never executed here.
@@ -26,10 +27,7 @@ class CommandTerminal {
   async stop(id) {
     const s = this.sessions.get(id);
     if (!s?.running) return;
-    await new Promise(resolve => {
-      const killer = spawn('taskkill.exe', ['/PID', String(s.proc.pid), '/T', '/F'], { windowsHide: true });
-      killer.on('error', resolve); killer.on('close', resolve);
-    });
+    await terminateTree(s.proc.pid);
   }
   close() { return Promise.all([...this.sessions.keys()].map(id => this.stop(id))); }
 }

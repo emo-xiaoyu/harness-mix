@@ -60,7 +60,13 @@ class HostRuntime {
       if (thread.pendingHandoff) thread.pendingHandoff.fromHarnessId = this.resolveHarnessId(thread.pendingHandoff.fromHarnessId) || thread.pendingHandoff.fromHarnessId;
       thread.connectionStatus = 'ready';
       if (thread.nativeSessionId && thread.messages?.length) thread.restore = true;
-      if (thread.status === "working" || thread.status === "opening") thread.status = "ready";
+      if (thread.status === "working") {
+        // The host died mid-turn (crash / force-kill): surface it as interrupted
+        // instead of pretending the turn completed; resending continues the thread.
+        thread.status = "interrupted";
+        thread.error = '宿主异常退出，任务已中断；重新发送即可继续。';
+      }
+      if (thread.status === "opening") thread.status = "ready";
       for (const message of thread.messages ?? []) {
 
         if (message.reviewId && !message.review) message.reviewError = '上次任务中断，文件快照未结算，不能安全撤回。';

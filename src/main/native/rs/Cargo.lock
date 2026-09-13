@@ -7,5 +7,9 @@ name = "harness-mix-appx"
 version = "0.2.0"
 
 [[package]]
+name = "harness-mix-secret"
+version = "0.1.0"
+
+[[package]]
 name = "harness-mix-shim"
 version = "0.2.0"

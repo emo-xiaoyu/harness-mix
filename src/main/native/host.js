@@ -5,6 +5,8 @@ const { spawn } = require('node:child_process');
 const { HostRuntime } = require('../host/runtime');
 const { NativeProtocol } = require('./protocol');
 const { mergeThreadPage } = require('./thread-list');
+const { terminateTree } = require('./process-utils');
+const { redact } = require('./redact');
 
 async function runNativeHost() {
   const stock = process.env.CODEXHOST_STOCK_CODEX_PATH;
@@ -17,10 +19,50 @@ async function runNativeHost() {
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, slim(v)]));
     return value;
   };
+  // Keep the debug journal bounded (5MB × 3) and free of credential-looking text.
+  const rotateTraffic = () => {
+    try {
+      if (!fs.existsSync(trafficLog) || fs.statSync(trafficLog).size < 5 * 1024 * 1024) return;
+      fs.rmSync(`${trafficLog}.2`, { force: true });
+      if (fs.existsSync(`${trafficLog}.1`)) fs.renameSync(`${trafficLog}.1`, `${trafficLog}.2`);
+      fs.renameSync(trafficLog, `${trafficLog}.1`);
+    } catch { /* best-effort */ }
+  };
   const traffic = (kind, message) => {
-    try { fs.appendFileSync(trafficLog, JSON.stringify({ ts: Date.now(), pid: process.pid, kind, message: slim(message) }) + '\n'); } catch {}
+    try { fs.appendFileSync(trafficLog, JSON.stringify({ ts: Date.now(), pid: process.pid, kind, message: redact(slim(message)) }) + '\n'); } catch {}
   };
   const runtime = new HostRuntime({ dataDirectory: directory });
+  // Heartbeat: lets the launcher tell a live instance from leftovers, and gives
+  // crash recovery a timestamp to reason about.
+  const startedAt = Date.now();
+  const instanceFile = path.join(path.dirname(directory), 'runtime', 'instance.json');
+  const writeInstance = () => {
+    try {
+      rotateTraffic();
+      fs.mkdirSync(path.dirname(instanceFile), { recursive: true });
+      fs.writeFileSync(`${instanceFile}.tmp`, JSON.stringify({ pid: process.pid, version: process.env.HARNESS_MIX_VERSION || null, startedAt, beatAt: Date.now(), mode: 'native-host' }));
+      fs.renameSync(`${instanceFile}.tmp`, instanceFile);
+    } catch { /* heartbeat is best-effort */ }
+  };
+  writeInstance();
+  const heartbeat = setInterval(writeInstance, 5000);
+  if (heartbeat.unref) heartbeat.unref();
+  const writeCrash = (kind, error) => {
+    try {
+      fs.writeFileSync(path.join(path.dirname(instanceFile), `crash-${Date.now()}.json`), JSON.stringify({
+        kind, pid: process.pid, version: process.env.HARNESS_MIX_VERSION || null, at: Date.now(),
+        message: String((error && error.message) || error), stack: String((error && error.stack) || ''),
+      }, null, 2));
+    } catch { /* diagnostics are best-effort */ }
+  };
+  process.on('uncaughtException', error => {
+    writeCrash('uncaughtException', error);
+    const bail = setTimeout(() => process.exit(1), 3000);
+    if (bail.unref) bail.unref();
+    void close().finally(() => process.exit(1));
+  });
+  process.on('unhandledRejection', reason => writeCrash('unhandledRejection', reason));
+  process.on('SIGBREAK', () => void close());
   const ready = runtime.initialize();
   const write = message => { traffic('out', message); process.stdout.write(`${JSON.stringify(message)}\n`); };
   const internal = new Map();
@@ -68,13 +110,15 @@ async function runNativeHost() {
   async function close() {
     if (closing) return;
     closing = true;
+    clearInterval(heartbeat);
+    try { fs.rmSync(instanceFile, { force: true }); } catch { /* already gone */ }
     input.close(); protocol.close();
     for (const pending of internal.values()) { clearTimeout(pending.timer); pending.reject(new Error('Native host closed')); }
     internal.clear();
     await ready.catch(() => {});
     await runtime.close();
     official.stdin.end();
-    const timer = setTimeout(() => official.kill(), 2000); timer.unref();
+    const timer = setTimeout(() => { void terminateTree(official.pid); }, 2000); timer.unref();
   }
   input.on('line', line => {
     void (async () => {
