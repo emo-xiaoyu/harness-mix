@@ -85,6 +85,7 @@
     "test:collaboration": "node scripts/collaboration-test.cjs",
     "test:switch-harness": "node scripts/switch-harness-test.cjs",
     "smoke:collaboration-ui": "electron scripts/collaboration-ui-smoke.cjs",
+    "smoke:chatgpt-context-ui": "electron scripts/chatgpt-context-ui-smoke.cjs",
     "e2e:collaboration": "node scripts/e2e-collaboration.cjs",
     "test:native-rollback": "node scripts/native-rollback-test.cjs",
     "test:native-images": "node scripts/native-images-test.cjs",
@@ -175,11 +176,11 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@harness-mix/native-win32-x64": "0.1.4",
-    "@harness-mix/native-win32-arm64": "0.1.4",
-    "@harness-mix/native-darwin-x64": "0.1.4",
-    "@harness-mix/native-darwin-arm64": "0.1.4",
-    "@harness-mix/native-linux-x64": "0.1.4",
-    "@harness-mix/native-linux-arm64": "0.1.4"
+    "@harness-mix/native-win32-x64": "0.1.5",
+    "@harness-mix/native-win32-arm64": "0.1.5",
+    "@harness-mix/native-darwin-x64": "0.1.5",
+    "@harness-mix/native-darwin-arm64": "0.1.5",
+    "@harness-mix/native-linux-x64": "0.1.5",
+    "@harness-mix/native-linux-arm64": "0.1.5"
   }
 }
