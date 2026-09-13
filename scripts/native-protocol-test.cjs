@@ -80,7 +80,7 @@ async function main() {
     const materialized = await bridge.request('thread/read', { threadId: prewarmed.thread.id });
     assert.equal(materialized.thread.ephemeral, false, 'Materialized thread projects as persistent');
     await bridge.request('turn/interrupt', { threadId: prewarmed.thread.id });
-    await wait(() => !runtime.threads.find(t => t.id === prewarmed.thread.id).reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === prewarmed.thread.id).reviewPending && !runtime.sending.has(prewarmed.thread.id));
     emit = emits[0]; // 恢复主线程的事件源（open 顺序：主线程序，预热线程后）
     schemas.threadInspectionSchema.parse(await bridge.request('codexhost/thread/inspect', { threadId }));
     const turn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'test' }] });
@@ -101,7 +101,7 @@ async function main() {
     assert.equal(answers[1].answer.value, 'Alice');
     emit({ kind: 'file-change', changes: [{ path: 'a.txt', changeType: 'added', before: '', after: 'hello', complete: true }] });
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(events.filter(e => e.method === 'item/agentMessage/delta').map(e => e.params.delta).join(''), 'hello world');
     assert.ok(events.some(e => e.method === 'item/completed' && e.params.item.type === 'mcpToolCall'));
     // Desktop 以 `diff --git a/x b/x` 切分文件并提取路径，且只在 @@ hunk 头之后计数增删行
@@ -122,7 +122,7 @@ async function main() {
     await bridge.request('thread/unarchive', { threadId });
     await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'cancel' }] });
     await bridge.request('turn/interrupt', { threadId });
-    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(events.filter(e => e.method === 'turn/completed').at(-1).params.turn.status, 'interrupted');
     // External steering: cancel the active Turn, settle, then start a real new Turn.
     const stale = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'first' }] });
@@ -141,7 +141,7 @@ async function main() {
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: 'wrong-turn', input: [{ type: 'text', text: 'x' }] }), /no longer matches/, 'Stale target is not guessed');
     assert.ok(runtime.execution.isRunning(threadId) && runtime.threads.find(t => t.id === threadId).currentTurn.id === current, 'Stale steering never cancels the running Turn');
     emit({ kind: 'completed', finalAnswer: true });
-    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex requests pass through');
     adapter.listCommands = async () => [{ id: 'compact', action: 'execute', label: 'Compact' }];
     let compactCalls = 0;
@@ -152,7 +152,7 @@ async function main() {
     };
     const command = await bridge.request('codexhost/thread/command/execute', { threadId, commandId: 'compact' });
     schemas.threadCommandExecuteResultSchema.parse(command);
-    await wait(() => compactCalls === 1 && !runtime.threads.find(t => t.id === threadId).reviewPending);
+    await wait(() => compactCalls === 1 && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     const usage = await bridge.request('codexhost/thread/usage/inspect', { threadId });
     schemas.threadUsageInspectionSchema.parse(usage);
     assert.equal(usage.usage.inputTokens, 20);
