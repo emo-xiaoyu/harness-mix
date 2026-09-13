@@ -1,6 +1,6 @@
 {
   "name": "harness-mix",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
@@ -109,7 +109,6 @@
     "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-update-apply-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs && node scripts/thread-title-test.cjs && node scripts/native-job-object-test.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
-    "test:git": "node scripts/git-test.cjs",
     "e2e:pi": "node scripts/e2e-pi.cjs",
     "e2e:shadow-pi": "node scripts/e2e-shadow.cjs pi",
     "e2e:shadow-claude": "node scripts/e2e-shadow.cjs claude",

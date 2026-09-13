@@ -106,7 +106,7 @@ function usageView(tokenUsage) {
   const last = tokenUsage.last ?? {};
   const total = tokenUsage.total ?? {};
   const tokens = Number.isFinite(last.totalTokens) ? last.totalTokens : null;
-  const contextWindow = Number.isFinite(tokenUsage.modelContextWindow) ? tokenUsage.modelContextWindow : null;
+  const contextWindow = Number.isFinite(tokenUsage.modelContextWindow) ? tokenUsage.modelContextWindow : 128_000;
   return {
     tokens,
     contextWindow,
@@ -290,13 +290,15 @@ function queueRequest(message, session, emit) {
     });
   }
 
-  if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'].includes(method)) {
+  if (method.endsWith('/requestApproval') || method.includes('requestApproval')) {
     const requestId = `codex-${id}`;
     return new Promise((resolve) => {
       session.pendingApprovals.set(requestId, { method, resolve, params });
       const title = method.includes('commandExecution') ? 'Codex 请求运行命令'
-        : method.includes('fileChange') ? 'Codex 请求修改文件' : 'Codex 请求额外权限';
-      const messageText = params.reason ?? params.command ?? (params.grantRoot ? `允许写入 ${params.grantRoot}` : text(params.permissions));
+        : method.includes('fileChange') ? 'Codex 请求修改文件'
+        : (method.includes('mcp') || method.includes('tool')) ? `Codex 请求调用工具 · ${params.tool ?? params.toolName ?? params.serverName ?? 'MCP'}`
+        : 'Codex 请求权限审批';
+      const messageText = params.reason ?? params.command ?? params.tool ?? (params.grantRoot ? `允许写入 ${params.grantRoot}` : text(params.permissions));
       emit({
         kind: 'approval', requestId, title, message: messageText,
         options: approvalOptions(method, params),
@@ -473,8 +475,8 @@ function create() {
           models,
           thinkingLevels: selected?.efforts ?? [],
           permissionModes: [
-            { id: 'default', label: '原生默认', hint: '使用 Codex 当前配置的权限策略' },
-            ...profiles.filter((profile) => profile.allowed).map((profile) => ({ id: profile.id, label: profile.id, hint: profile.description })),
+            { id: 'default', label: '原生默认', description: '使用 Codex 当前配置的权限策略' },
+            ...profiles.filter((profile) => profile.allowed).map((profile) => ({ id: profile.id, label: profile.id, description: profile.description })),
           ],
         };
       } finally { host.release(); }
@@ -489,8 +491,8 @@ function create() {
         models,
         thinkingLevels: selected?.efforts ?? [],
         permissionModes: [
-          { id: 'default', label: '原生默认', hint: '使用 Codex 当前配置的权限策略' },
-          ...profiles.filter((profile) => profile.allowed).map((profile) => ({ id: profile.id, label: profile.id, hint: profile.description })),
+          { id: 'default', label: '原生默认', description: '使用 Codex 当前配置的权限策略' },
+          ...profiles.filter((profile) => profile.allowed).map((profile) => ({ id: profile.id, label: profile.id, description: profile.description })),
         ],
       };
     },

@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.1.1 — 2026-09-12
+## 0.1.3 — 2026-09-13
+
+- Added multi-agent collaboration support (@ mentions composer, thread delegation, worktree isolation).
+- Cleaned up legacy standalone workbench UI services, throwaway HTML prototypes, and unused icon assets.
+- Enhanced native harness adapters and settings management.
+
+## 0.1.2 — 2026-09-13
+
+- Hardened native process supervision, DPAPI secret store, and dual-channel auto-update.
+
 
 - Added native ACP adapters for CodeBuddy, Kiro CLI, Cursor CLI and Qoder.
 - Added explicit ACP bridge configuration for ZCode and Trae without claiming an unverified vendor entry point.

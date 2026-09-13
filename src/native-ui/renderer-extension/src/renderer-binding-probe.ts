@@ -77,6 +77,7 @@ import {
 } from "./renderer-new-thread-preference.js";
 import { installRendererSidebarAgentIcons } from "./renderer-sidebar-agent-icons.js";
 import { installHarnessMentions } from './renderer-harness-mentions.js';
+import { installCollabCards } from './renderer-collab-cards.js';
 import {
   rendererHarnessCommandExecutesDirectly,
   routeRendererHarnessCommandSelection,
@@ -207,7 +208,12 @@ export function rendererUsageRefreshDelay(attempt: number): number {
  * to pick up account limits after Usage has already arrived.
  */
 function externalAgentHasAccountCredits(agent: RendererAgent): boolean {
-  return agent === "codex" || agent === "grok" || agent === "claude-code";
+  return (
+    agent === "codex" ||
+    agent === "grok" ||
+    agent === "claude-code" ||
+    agent === "antigravity"
+  );
 }
 
 export function shouldRetryExternalThreadUsage(
@@ -717,6 +723,17 @@ export function installRendererBindingProbe(
     }) : [];
     return { agents, sessions, canDelegate: agents.some(agent => agent.id === state.agent && agent.lead) };
   });
+  const collabCards = installCollabCards({
+    openThread: (threadId) => openRendererThread(threadId, { hostId: 'local' }),
+    reviewWorkspace: async (threadId) => {
+      const client = modelClientForHost('local');
+      return (client as any)?.reviewThreadWorkspace?.({ threadId }) ?? { patch: '', digest: '' };
+    },
+    applyWorkspace: async (threadId, digest) => {
+      const client = modelClientForHost('local');
+      return (client as any)?.applyThreadWorkspace?.({ threadId, digest }) ?? { patch: '', digest: '' };
+    },
+  });
   let connectionDiagnostics: RendererConnectionDiagnostics | null = null;
   const settingsLifecycle = installRendererSettingsLifecycle(window, {
     getUpdateClient: () => modelControl,
@@ -1011,13 +1028,54 @@ export function installRendererBindingProbe(
     }
   };
 
-  const refreshThreadUsage = async (mounted: MountedComposer, refresh?: "exact"): Promise<void> => {
-    const threadId = threadIdFromComposerModelTarget(mounted.modelTarget);
-    if (!threadId && controller.get(mounted.composer).agent === "codex") {
-      await refreshDraftCodexUsage(mounted);
+  const refreshDraftExternalCredits = async (mounted: MountedComposer): Promise<void> => {
+    const state = controller.get(mounted.composer);
+    if (
+      state.agent === "codex" ||
+      state.phase !== "draft" ||
+      controller.isSubmissionPending(mounted.composer) ||
+      threadIdFromComposerModelTarget(mounted.modelTarget)
+    ) {
       return;
     }
-    if (!threadId || !modelControl) {
+    const hostId = mounted.hostId;
+    const client = modelClientForHostFrom(modelControl, hostId ?? activeModelHostId());
+    if (!client?.listHarnessAccounts) return;
+    const harnessId = externalHarnessIds[state.agent as keyof typeof externalHarnessIds];
+    if (!harnessId) return;
+    const generation = ++mounted.usageRequestGeneration;
+    try {
+      const result = await client.listHarnessAccounts();
+      if (
+        disposed ||
+        !mounted.composer.isConnected ||
+        mountedByComposer.get(mounted.composer) !== mounted ||
+        mounted.usageRequestGeneration !== generation ||
+        controller.get(mounted.composer).agent !== state.agent ||
+        controller.get(mounted.composer).phase !== "draft" ||
+        threadIdFromComposerModelTarget(mounted.modelTarget)
+      ) {
+        return;
+      }
+      const match = result.accounts.find((a) => a.harnessId === harnessId);
+      mounted.accountCredits = match?.credits ?? null;
+      renderMounted(mounted);
+    } catch {
+      // Leave empty if unavailable
+    }
+  };
+
+  const refreshThreadUsage = async (mounted: MountedComposer, refresh?: "exact"): Promise<void> => {
+    const threadId = threadIdFromComposerModelTarget(mounted.modelTarget);
+    if (!threadId) {
+      if (controller.get(mounted.composer).agent === "codex") {
+        await refreshDraftCodexUsage(mounted);
+      } else {
+        await refreshDraftExternalCredits(mounted);
+      }
+      return;
+    }
+    if (!modelControl) {
       mounted.usage = null;
       mounted.accountCredits = null;
       usageRefreshAttempts.delete(mounted.composer);
@@ -1143,6 +1201,8 @@ export function installRendererBindingProbe(
         restoredThreadOwnership(inspection);
       if (mounted.usageRequestGeneration === usageGeneration) {
         mounted.usage = inspection.owner === "external" ? (inspection.usage ?? null) : null;
+        mounted.accountCredits =
+          inspection.owner === "external" ? (inspection.accountCredits ?? null) : null;
       }
       const restored = controller.restore(
         mounted.composer,
@@ -2338,10 +2398,10 @@ export function installRendererBindingProbe(
       if (!client?.inspectHarness) throw new Error("Harness inspect is unavailable");
       return client.inspectHarness({ harnessId: externalHarnessIds[agent] });
     },
-    async installHarness(hostId: string, agent: ExternalRendererAgent) {
+    async installHarness(hostId: string, agent: ExternalRendererAgent, options?: { terminal?: boolean }) {
       const client = modelClientForHost(hostId);
       if (!client?.installHarness) throw new Error("Harness install is unavailable");
-      const result = await client.installHarness({ harnessId: externalHarnessIds[agent] });
+      const result = await client.installHarness({ harnessId: externalHarnessIds[agent], terminal: options?.terminal });
       void refreshHarnessAvailabilityForHost(hostId, true, false, true).catch(() => undefined);
       return result;
     },
@@ -2908,6 +2968,7 @@ export function installRendererBindingProbe(
       mutationObserver.disconnect();
       sidebarAgentIcons.dispose();
       harnessMentions.dispose();
+      collabCards.dispose();
       settingsLifecycle.dispose();
       document.removeEventListener("beforeinput", onBeforeInput, true);
       document.removeEventListener("submit", onSubmit, true);

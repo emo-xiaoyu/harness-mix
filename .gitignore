@@ -3,5 +3,7 @@ data/
 *.log
 output/
 .learnings/
+.gemini/
+.workbuddy/
 src/main/native/rs/target/
 src/native-ui/*/dist/

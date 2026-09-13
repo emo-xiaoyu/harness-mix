@@ -4,6 +4,13 @@ export interface CollaborationSession { id: string; title: string; harnessId: st
 export interface CollaborationMentionCatalog { agents: CollaborationAgent[]; sessions: CollaborationSession[]; canDelegate?: boolean }
 type MentionEntry = ({ kind: 'agent' } & CollaborationAgent) | ({ kind: 'session' } & CollaborationSession);
 
+const entryKey = (entry: MentionEntry): string => entry.kind === 'agent' ? `agent:${entry.id}` : `session:${entry.id}`;
+
+// Encode an entry as the @agent literal the Host expects in the submitted text.
+const entryLiteral = (entry: MentionEntry): string => entry.kind === 'agent'
+  ? `@${entry.id} `
+  : `@[${entry.title.replace(/[\[\]()\r\n]/g, '')}](harness-mix://session/${entry.id}) `;
+
 /** Adds native-Harness suggestions while preserving the original composer editor. */
 export function installHarnessMentions(load: (editor: Element, query: string) => Promise<CollaborationMentionCatalog>) {
   const menu = document.createElement('div');
@@ -26,68 +33,108 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   let matches: MentionEntry[] = [], activeKind: 'agent' | 'session' = 'agent', canDelegate = true;
   const catalogs = new Map<HTMLElement, CollaborationMentionCatalog>();
   const badges = new Map<HTMLElement, HTMLElement>();
+
+  // Per-editor mention state, decoupled from editor text so the literal
+  // @agent handles never leak into the visible composer.
+  const selections = new Map<HTMLElement, Map<string, MentionEntry>>();
+  const selectionsFor = (target: HTMLElement): Map<string, MentionEntry> => {
+    let perEditor = selections.get(target);
+    if (!perEditor) {
+      perEditor = new Map();
+      selections.set(target, perEditor);
+    }
+    return perEditor;
+  };
+
+  const replaceSelectionWith = (target: HTMLElement, replacement: string): boolean => {
+    if (target instanceof HTMLTextAreaElement) {
+      target.setSelectionRange(start, end);
+      target.setRangeText(replacement, start, end, 'end');
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    // ProseMirror may replace text nodes while its own suggestions render.
+    // Rebuild the saved text offsets instead of reusing a live, stale Range.
+    const fresh = document.createRange();
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    let offset = 0, foundStart = false, foundEnd = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0;
+      if (!foundStart && start <= offset + length) { fresh.setStart(node, start - offset); foundStart = true; }
+      if (foundStart && end <= offset + length) { fresh.setEnd(node, end - offset); foundEnd = true; break; }
+      offset += length;
+    }
+    if (!foundEnd) return false;
+    const selection = window.getSelection();
+    selection?.removeAllRanges(); selection?.addRange(fresh);
+    document.dispatchEvent(new Event('selectionchange'));
+    document.execCommand('insertText', false, replacement);
+    return true;
+  };
+
   const syncBadges = (target: HTMLElement) => {
     for (const [old, strip] of badges) if (!old.isConnected) { strip.remove(); badges.delete(old); catalogs.delete(old); }
-    const text = (target instanceof HTMLTextAreaElement ? target.value : target.textContent ?? '').replace(/```[\s\S]*?```|`[^`\n]*`/g, '');
-    const ids = new Set([...text.matchAll(/(?:^|[\s，。；：])@([\w-]+)(?=$|[\s，。；：])/g)].map(m => m[1]));
-    const catalog = catalogs.get(target) ?? { agents: [], sessions: [] };
-    const selectedAgents = catalog.agents.filter(a => ids.has(a.id));
-    const sessionIds = new Set([...text.matchAll(/\]\(harness-mix:\/\/session\/([A-Za-z0-9_-]+)\)/g)].map(match => match[1]));
-    const selectedSessions = catalog.sessions.filter(session => sessionIds.has(session.id));
+    const perEditor = selections.get(target);
+    const hasAny = !!perEditor && perEditor.size > 0;
     let strip = badges.get(target);
-    if (!strip && !selectedAgents.length && !selectedSessions.length) return;
+    if (!strip && !hasAny) return;
     if (!strip) {
       strip = document.createElement('div'); strip.dataset.harnessMixSelectedMentions = 'true';
       strip.setAttribute('aria-label', '已提及的协作者');
       strip.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:6px 0';
       target.after(strip); badges.set(target, strip);
     }
-    strip.replaceChildren(); strip.style.display = selectedAgents.length || selectedSessions.length ? 'flex' : 'none';
-    for (const agent of selectedAgents) {
+    strip.replaceChildren(); strip.style.display = hasAny ? 'flex' : 'none';
+    if (!perEditor) return;
+    for (const entry of perEditor.values()) {
       const badge = document.createElement('span');
+      badge.dataset.harnessMixMentionBadge = entry.kind === 'agent' ? `agent:${entry.id}` : `session:${entry.id}`;
       badge.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid #8883;border-radius:8px;font:12px inherit;background:#8881';
-      badge.append(collaborationIcon(agent.id, agent.name, 16), document.createTextNode(agent.name));
-      badge.title = `@${agent.id}${agent.available ? '' : ' · 未就绪'}`; strip.append(badge);
-    }
-    for (const session of selectedSessions) {
-      const badge = document.createElement('span');
-      badge.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid #8883;border-radius:8px;font:12px inherit;background:#8881';
-      badge.append(collaborationIcon(session.harnessId, session.harnessId, 16), document.createTextNode(session.title));
-      badge.title = `历史会话 · ${session.cwd}`; strip.append(badge);
+      const iconWrap = document.createElement('span');
+      iconWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
+      iconWrap.append(
+        collaborationIcon(entry.kind === 'agent' ? entry.id : entry.harnessId, entry.kind === 'agent' ? entry.name : entry.title, 16),
+        document.createTextNode(entry.kind === 'agent' ? entry.name : entry.title),
+      );
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.dataset.harnessMixMentionRemove = entry.kind === 'agent' ? `agent:${entry.id}` : `session:${entry.id}`;
+      const removeLabel = entry.kind === 'agent' ? `移除 ${entry.name}` : `移除会话 ${entry.title}`;
+      remove.setAttribute('aria-label', removeLabel);
+      remove.title = removeLabel;
+      remove.textContent = '×';
+      remove.style.cssText = 'border:0;background:transparent;color:inherit;cursor:pointer;padding:0 0 0 2px;margin:0;font:600 14px/1 inherit;opacity:.55;line-height:1;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%';
+      remove.addEventListener('mouseenter', () => { remove.style.opacity = '1'; remove.style.background = '#8883'; });
+      remove.addEventListener('mouseleave', () => { remove.style.opacity = '.55'; remove.style.background = 'transparent'; });
+      remove.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
+      remove.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const live = selections.get(target);
+        if (!live) return;
+        live.delete(entryKey(entry));
+        syncBadges(target);
+      });
+      badge.append(iconWrap, remove);
+      badge.title = entry.kind === 'agent' ? `@${entry.id}${entry.available ? '' : ' · 未就绪'}` : `历史会话 · ${entry.cwd}`;
+      strip.append(badge);
     }
   };
   const close = () => { generation++; menu.hidden = true; activeComposer?.removeAttribute('data-harness-mix-mention-active'); activeComposer = null; };
   const choose = (entry: MentionEntry) => {
     if (!editor || (entry.kind === 'agent' ? !entry.available || !canDelegate : entry.running === true)) return;
     const target = editor;
-    const inserted = entry.kind === 'agent' ? `@${entry.id} ` : `@[${entry.title.replace(/[\[\]()\r\n]/g, '')}](harness-mix://session/${entry.id}) `;
-    close(); target.focus();
-    if (target instanceof HTMLTextAreaElement) {
-      target.setSelectionRange(start, end);
-      if (!document.execCommand('insertText', false, inserted)) {
-        target.setRangeText(inserted, start, end, 'end');
-        target.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    } else if (range) {
-      // ProseMirror may replace text nodes while its own suggestions render.
-      // Rebuild the saved text offsets instead of reusing a live, stale Range.
-      const replacement = document.createRange();
-      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-      let offset = 0, foundStart = false, foundEnd = false;
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const length = node.textContent?.length ?? 0;
-        if (!foundStart && start <= offset + length) { replacement.setStart(node, start - offset); foundStart = true; }
-        if (foundStart && end <= offset + length) { replacement.setEnd(node, end - offset); foundEnd = true; break; }
-        offset += length;
-      }
-      if (!foundEnd) return;
-      const selection = window.getSelection();
-      selection?.removeAllRanges(); selection?.addRange(replacement);
-      document.dispatchEvent(new Event('selectionchange'));
-      document.execCommand('insertText', false, inserted);
-    }
-    // Dismiss the native search opened by the inserted literal @ mention.
-    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    close();
+    target.focus();
+    // Drop the @query trigger text the user typed to open the picker so the
+    // editor stays free of literal @agent handles. The chip below carries
+    // the same intent and is the only visible signal.
+    replaceSelectionWith(target, '');
+    // Toggle the entry in the per-editor selections; a second click removes it.
+    const perEditor = selectionsFor(target);
+    const key = entryKey(entry);
+    if (perEditor.has(key)) perEditor.delete(key);
+    else perEditor.set(key, entry);
     syncBadges(target);
   };
   const render = () => {
@@ -198,16 +245,62 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     }
   };
   const outside = (event: Event) => { if (event.target instanceof Node && !menu.contains(event.target)) close(); };
+
+  // The Host detects mentions by parsing `@agent` literals out of the submitted
+  // text. The composer no longer carries those literals while the user is
+  // typing, so before the native form submit reads the editor we re-attach
+  // the mentions at the start of the value. The editor then clears itself
+  // after Codex Desktop finishes dispatching the turn, hiding the literal
+  // text again.
+  const findEditorIn = (root: Element | null): HTMLElement | null => {
+    if (!root) return null;
+    if (root.matches('textarea,[contenteditable="true"]')) return root as HTMLElement;
+    return root.querySelector<HTMLElement>('textarea,[contenteditable="true"]');
+  };
+  const injectMentionsInto = (target: HTMLElement): boolean => {
+    const perEditor = selections.get(target);
+    if (!perEditor || perEditor.size === 0) return false;
+    const text = [...perEditor.values()].map(entryLiteral).join('');
+    if (!text) return false;
+    target.focus();
+    if (target instanceof HTMLTextAreaElement) {
+      target.value = `${text}${target.value}`;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+    const selection = window.getSelection();
+    const fresh = document.createRange();
+    fresh.selectNodeContents(target);
+    fresh.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(fresh);
+    document.dispatchEvent(new Event('selectionchange'));
+    document.execCommand('insertText', false, text);
+    return true;
+  };
+  const onSubmitCapture = (event: Event) => {
+    const composerRoot = (event.target instanceof Element ? event.target : null)?.closest?.('[data-codex-composer-root]');
+    const candidate = composerRoot ?? (event.target instanceof Element ? event.target : null);
+    const editorEl = findEditorIn(candidate);
+    if (!editorEl) return;
+    if (!editorEl.closest('[data-codex-composer-root]')) return;
+    injectMentionsInto(editorEl);
+  };
+
   document.addEventListener('input', input, true);
   document.addEventListener('keydown', keydown, true);
   document.addEventListener('mousedown', outside);
+  document.addEventListener('submit', onSubmitCapture, true);
   window.addEventListener('blur', close);
   return { dispose() {
     disposed = true; close(); menu.remove(); style.remove();
     for (const strip of badges.values()) strip.remove(); badges.clear(); catalogs.clear();
+    for (const [target, perEditor] of selections) if (!target.isConnected) selections.delete(target);
     document.removeEventListener('input', input, true);
     document.removeEventListener('keydown', keydown, true);
     document.removeEventListener('mousedown', outside);
+    document.removeEventListener('submit', onSubmitCapture, true);
     window.removeEventListener('blur', close);
   } };
 }

@@ -435,13 +435,19 @@ export function mountRendererUsageControl(
   trigger.style.fontVariantNumeric = "tabular-nums";
   trigger.style.letterSpacing = "0";
 
+  const ringSlot = document.createElement("span");
+  ringSlot.dataset.codexhostUsageRing = "";
+  ringSlot.style.display = "inline-flex";
+  ringSlot.style.flex = "0 0 auto";
+  ringSlot.style.alignItems = "center";
+
   const label = document.createElement("span");
   label.style.display = "inline-block";
   label.style.maxWidth = "100%";
   label.style.overflow = "hidden";
   label.style.textOverflow = "ellipsis";
   label.style.whiteSpace = "nowrap";
-  trigger.append(label);
+  trigger.append(ringSlot, label);
 
   const popover = document.createElement("div");
   popover.id = `${composerId}-usage-popover`;
@@ -561,7 +567,33 @@ export function renderRendererUsageControl(
     return false;
   }
 
+  const ringSlot = control.trigger.querySelector<HTMLElement>("[data-codexhost-usage-ring]");
+  const contextPercent =
+    usage?.contextUsagePercent !== undefined
+      ? usage.contextUsagePercent
+      : (hasContext && usage?.contextWindowTokens !== undefined && usage.contextWindowTokens > 0
+          ? Math.round((100 * (usage.contextUsedTokens ?? 0) / usage.contextWindowTokens) * 10) / 10
+          : undefined);
+
+  if (contextPercent !== undefined) {
+    const tone = contextPercent >= 90 ? "hot" : contextPercent >= 70 ? "warn" : "ok";
+    const color = tone === "hot" ? "#c45c4a" : tone === "warn" ? "#c9a227" : "#3d9a64";
+    if (ringSlot) {
+      ringSlot.replaceChildren(
+        createRendererUsageRing(contextPercent, {
+          size: 14,
+          strokeWidth: 2.4,
+          color,
+        }),
+      );
+    }
+  } else if (ringSlot) {
+    ringSlot.replaceChildren();
+  }
+
+  const percentLabel = contextPercent !== undefined ? `${decimal(contextPercent, 1)}%` : null;
   const summary = [
+    percentLabel,
     usage?.totalCredits !== undefined ? formatRendererCredits(usage.totalCredits) : null,
     cacheHitRatePercent !== undefined ? formatRendererCacheHitRate(cacheHitRatePercent) : null,
     outputTokensPerSecond !== undefined
@@ -569,8 +601,7 @@ export function renderRendererUsageControl(
       : null,
     totalCostUsd !== undefined ? formatRendererCost(totalCostUsd) : null,
   ].filter((value): value is string => value !== null);
-  const contextPercent = usage?.contextUsagePercent;
-  if (contextPercent !== undefined && summary.length === 0) summary.push(messages.usage);
+
   if (
     summary.length === 0 &&
     hasContext &&

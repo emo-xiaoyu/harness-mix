@@ -1,12 +1,14 @@
 import type { HarnessAccountListResult } from "@codexhost/shared-contracts";
 import { KNOWN_RENDERER_AGENTS } from "../agent-selection-state.js";
 import { createRendererAgentIcon } from "../renderer-agent-icon.js";
+import { createRendererSettingsIcon } from "./icons.js";
 import { renderAccountUsage, type AccountUsageDisplay } from "./accounts-usage.js";
 import type { RendererSettingsPageMountContext } from "./core.js";
 import type { RendererSettingsMessages } from "./localization.js";
 
 export interface RendererHarnessAccountClient {
   listHarnessAccounts?(): Promise<HarnessAccountListResult>;
+  loginHarnessAccount?(input: { harnessId: string }): Promise<{ success: boolean; command?: string | undefined; error?: string | undefined }>;
 }
 
 /** Read-only telemetry, deliberately separate from Codex Account IDs and mutations. */
@@ -22,7 +24,7 @@ export function mountHarnessAccounts(
   section.hidden = true;
   const heading = document.createElement("h2");
   heading.className = "settings-harness-accounts__title";
-  heading.textContent = messages.harnessAccountsTitle;
+  heading.textContent = messages.harnessAccountsPageTitle || messages.harnessAccountsTitle;
   const list = document.createElement("div");
   list.className = "settings-account-list";
   section.append(heading, list);
@@ -31,6 +33,7 @@ export function mountHarnessAccounts(
   let refreshing = false;
   let query = "";
   let display: AccountUsageDisplay = "remaining";
+  let refresh: () => Promise<void>;
 
   const render = (): void => {
     section.hidden = accounts.length === 0;
@@ -71,14 +74,44 @@ export function mountHarnessAccounts(
         plan.textContent = account.plan;
         metadata.append(plan);
       }
+      if (account.status) {
+        if (accountName || account.plan) {
+          const separator = document.createElement("span");
+          separator.textContent = "·";
+          separator.setAttribute("aria-hidden", "true");
+          metadata.append(separator);
+        }
+        const statusBadge = document.createElement("span");
+        statusBadge.className = `settings-harness-account__badge settings-harness-account__badge--${account.status}`;
+        statusBadge.textContent =
+          account.status === "ready"
+            ? messages.harnessAccountStatusReady
+            : account.status === "not_installed"
+              ? messages.harnessAccountStatusNotInstalled
+              : messages.harnessAccountStatusUnconfigured;
+        metadata.append(statusBadge);
+      }
       if (metadata.childElementCount) identity.append(metadata);
-      const usage = renderAccountUsage(
-        document,
-        { status: "ready", credits: account.credits },
-        messages,
-        display,
-        () => undefined,
-      );
+      if (account.configHint) {
+        const configHint = document.createElement("div");
+        configHint.className = "settings-harness-account__config-hint";
+        configHint.title = account.configHint;
+        const label = document.createElement("span");
+        label.textContent = `${messages.harnessAccountConfigGuide}: `;
+        const code = document.createElement("code");
+        code.textContent = account.configHint;
+        configHint.append(label, code);
+        identity.append(configHint);
+      }
+      const usage = account.credits
+        ? renderAccountUsage(
+            document,
+            { status: "ready", credits: account.credits },
+            messages,
+            display,
+            () => undefined,
+          )
+        : null;
       const person = document.createElement("div");
       person.className = "settings-account-row__person";
       const agent = KNOWN_RENDERER_AGENTS.find((agent) => agent === account.harnessId);
@@ -92,6 +125,32 @@ export function mountHarnessAccounts(
       person.append(identity);
       row.append(person);
       if (usage) row.append(usage);
+      const actions = document.createElement("div");
+      actions.className = "settings-harness-account__actions";
+      if (account.loginCommand) {
+        const loginBtn = document.createElement("button");
+        loginBtn.type = "button";
+        loginBtn.className = "settings-command-button settings-command-button--secondary settings-harness-account__login-btn";
+        loginBtn.append(createRendererSettingsIcon("external-link", 14), messages.harnessAccountLogin);
+        loginBtn.title = account.loginCommand;
+        loginBtn.addEventListener("click", () => {
+          const client = getClient();
+          if (!client?.loginHarnessAccount) return;
+          loginBtn.disabled = true;
+          loginBtn.textContent = messages.harnessAccountLoginStarted;
+          void client.loginHarnessAccount({ harnessId: account.harnessId }).finally(() => {
+            document.defaultView?.setTimeout(() => {
+              loginBtn.disabled = false;
+              loginBtn.replaceChildren(createRendererSettingsIcon("external-link", 14), messages.harnessAccountLogin);
+              void refresh();
+            }, 3000);
+          });
+        });
+        actions.append(loginBtn);
+      }
+      if (actions.childElementCount > 0) {
+        row.append(actions);
+      }
       list.append(row);
     }
     if (accounts.length && !visible.length) {
@@ -101,6 +160,27 @@ export function mountHarnessAccounts(
       list.append(empty);
     }
   };
+  refresh = async (): Promise<void> => {
+    if (refreshing || context.signal.aborted) return;
+    const client = getClient();
+    if (!client?.listHarnessAccounts) return;
+    refreshing = true;
+    onChange();
+    try {
+      const result = await client.listHarnessAccounts();
+      if (!context.signal.aborted) accounts = result.accounts;
+    } catch {
+      // Older Hosts and unavailable authentication have no read-only rows.
+      if (!context.signal.aborted) accounts = [];
+    } finally {
+      refreshing = false;
+      if (!context.signal.aborted) {
+        render();
+        onChange();
+      }
+    }
+  };
+
   return {
     get refreshing() {
       return refreshing;
@@ -110,25 +190,6 @@ export function mountHarnessAccounts(
       display = nextDisplay;
       render();
     },
-    async refresh(): Promise<void> {
-      if (refreshing || context.signal.aborted) return;
-      const client = getClient();
-      if (!client?.listHarnessAccounts) return;
-      refreshing = true;
-      onChange();
-      try {
-        const result = await client.listHarnessAccounts();
-        if (!context.signal.aborted) accounts = result.accounts;
-      } catch {
-        // Older Hosts and unavailable authentication have no read-only rows.
-        if (!context.signal.aborted) accounts = [];
-      } finally {
-        refreshing = false;
-        if (!context.signal.aborted) {
-          render();
-          onChange();
-        }
-      }
-    },
+    refresh,
   };
 }

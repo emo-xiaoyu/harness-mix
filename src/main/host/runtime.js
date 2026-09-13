@@ -11,7 +11,7 @@ const { CoreSession } = require('./core-session');
 const { Collaboration, mentionedAgents } = require('./collaboration');
 const { SessionHistory } = require('./session-history');
 const { buildHandoffContext, composeHandoffEnvelope } = require('./handoff');
-const { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace } = require('./collaboration-worktree');
+const { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace } = require('./collaboration-worktree');
 
 /**
  * Host Runtime：harness-mix 的核心职责 —— 自研 Desktop 背后的
@@ -224,6 +224,27 @@ class HostRuntime {
     this.#notify('status', '已成功将隔离分支改动应用到主项目', thread.id);
     await this.#save();
     this.#broadcast();
+    return result;
+  }
+
+  async discardThreadWorkspace(threadId) {
+    const thread = this.#requireThread(threadId);
+    if (thread.workspace?.mode !== 'worktree') throw new Error('该任务未使用 Worktree 隔离工作区');
+    if (this.execution.isRunning(thread.id) || thread.reviewPending) throw new Error('请等待任务完成后再丢弃隔离分支');
+    const result = await discardWorkspace(thread.workspace);
+    delete thread.workspace;
+    this.#notify('status', `已丢弃并删除隔离分支 ${result.branch || ''}`, thread.id);
+    await this.#save();
+    this.#broadcast();
+    return result;
+  }
+
+  async pushThreadWorkspace(threadId, { remote = 'origin', branch } = {}) {
+    const thread = this.#requireThread(threadId);
+    if (thread.workspace?.mode !== 'worktree') throw new Error('该任务未使用 Worktree 隔离工作区');
+    if (this.execution.isRunning(thread.id) || thread.reviewPending) throw new Error('请等待任务完成后再推送分支');
+    const result = await pushWorkspace(thread.workspace, remote, branch);
+    this.#notify('status', `已成功将分支 ${result.branch} 推送到远程 ${result.remote}`, thread.id);
     return result;
   }
 

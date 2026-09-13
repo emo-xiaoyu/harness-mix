@@ -27,7 +27,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererA
   "deepseek-harness": { command: "pip install deepseek-harness" },
   opencode: { command: "npm install -g opencode-ai" },
   grok: { command: "npm install -g @xai/grok-cli" },
-  omp: { command: "npm install -g @oh-my-prompt/omp" },
+  omp: { command: "npm install -g @oh-my-pi/pi-coding-agent" },
   antigravity: { command: "npm install -g @google/antigravity-cli" },
   openclaw: { command: "npm install -g openclaw" },
   hermes: { command: "pip install hermes-agent" },
@@ -76,7 +76,7 @@ export interface RendererConnectionDiagnostics {
   refresh(): Promise<void>;
   openWebUi?(hostId: string, agent: ExternalRendererAgent): Promise<void>;
   inspectHarness?(hostId: string, agent: ExternalRendererAgent): Promise<HarnessInspection>;
-  installHarness?(hostId: string, agent: ExternalRendererAgent): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
+  installHarness?(hostId: string, agent: ExternalRendererAgent, options?: { terminal?: boolean }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -446,37 +446,14 @@ function renderOneClickInstallSection(
   head.append(icon, copy);
 
   const commandInfo = HARNESS_INSTALL_COMMANDS[agent];
-  const commandBox = document.createElement("div");
-  commandBox.className = "settings-install-command-box";
-  commandBox.hidden = !commandInfo;
-  const commandLabel = document.createElement("span");
-  commandLabel.className = "settings-install-command-label";
-  commandLabel.textContent = messages.installCommandLabel;
-  const commandRow = document.createElement("div");
-  commandRow.className = "settings-install-command-row";
-  const code = document.createElement("code");
-  code.textContent = commandInfo?.command ?? `npm install -g ${agent}`;
-  commandRow.append(code);
-  commandBox.append(commandLabel, commandRow);
 
   const actions = document.createElement("div");
   actions.className = "settings-install-actions";
 
-  const installBtn = document.createElement("button");
-  installBtn.type = "button";
-  installBtn.hidden = !commandInfo;
-  installBtn.disabled = !commandInfo;
-  installBtn.className = "settings-command-button";
-  installBtn.append(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
-
-  const copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.hidden = !commandInfo;
-  copyBtn.className = "settings-command-button settings-command-button--secondary";
-  copyBtn.append(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
+  const feedback = document.createElement("div");
+  feedback.className = "settings-install-feedback";
 
   const downloadLink = document.createElement("a");
-  downloadLink.className = "settings-command-button settings-command-button--secondary";
   downloadLink.href = HARNESS_INSTALL_URLS[agent];
   downloadLink.target = "_blank";
   downloadLink.rel = "noopener noreferrer";
@@ -486,12 +463,70 @@ function renderOneClickInstallSection(
   refreshBtn.type = "button";
   refreshBtn.className = "settings-command-button settings-command-button--secondary";
   refreshBtn.append(createRendererSettingsIcon("diagnose", 15), messages.refreshDetection);
+  refreshBtn.addEventListener("click", () => {
+    void diagnostics?.refresh();
+  });
 
-  const feedback = document.createElement("div");
-  feedback.className = "settings-install-feedback";
+  // If this harness does not have a CLI npm/pip install command (e.g. standalone IDEs/tools like Kiro, Cursor, CodeBuddy, Trae, ZCode)
+  if (!commandInfo) {
+    const manualCard = document.createElement("div");
+    manualCard.className = "settings-install-manual-card";
+    const manualBadge = document.createElement("div");
+    manualBadge.className = "settings-install-manual-badge";
+    manualBadge.textContent = messages.manualInstallTitle;
+    const manualNotice = document.createElement("p");
+    manualNotice.className = "settings-install-manual-notice";
+    manualNotice.textContent = messages.manualInstallNotice;
+
+    const stepsList = document.createElement("ol");
+    stepsList.className = "settings-install-steps";
+    for (const stepText of [messages.manualInstallStep1, messages.manualInstallStep2, messages.manualInstallStep3]) {
+      const stepItem = document.createElement("li");
+      stepItem.textContent = stepText;
+      stepsList.append(stepItem);
+    }
+    manualCard.append(manualBadge, manualNotice, stepsList);
+
+    downloadLink.className = "settings-command-button";
+    actions.append(downloadLink, refreshBtn);
+    section.append(head, manualCard, actions, feedback);
+    container.append(section);
+    return;
+  }
+
+  // Harness has a CLI command:
+  const commandBox = document.createElement("div");
+  commandBox.className = "settings-install-command-box";
+  const commandLabel = document.createElement("span");
+  commandLabel.className = "settings-install-command-label";
+  commandLabel.textContent = messages.installCommandLabel;
+  const commandRow = document.createElement("div");
+  commandRow.className = "settings-install-command-row";
+  const code = document.createElement("code");
+  code.textContent = commandInfo.command;
+  commandRow.append(code);
+  commandBox.append(commandLabel, commandRow);
+
+  downloadLink.className = "settings-command-button settings-command-button--secondary";
+
+  const installBtn = document.createElement("button");
+  installBtn.type = "button";
+  installBtn.className = "settings-command-button";
+  installBtn.append(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+
+  const terminalBtn = document.createElement("button");
+  terminalBtn.type = "button";
+  terminalBtn.className = "settings-command-button settings-command-button--secondary";
+  terminalBtn.append(createRendererSettingsIcon("external-link", 15), messages.installInTerminal);
+  terminalBtn.title = messages.installInTerminal;
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "settings-command-button settings-command-button--secondary";
+  copyBtn.append(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
 
   copyBtn.addEventListener("click", () => {
-    const text = commandInfo?.command ?? `npm install -g ${agent}`;
+    const text = commandInfo.command;
     const clipboard = document.defaultView?.navigator?.clipboard;
     if (clipboard) {
       void clipboard.writeText(text).then(() => {
@@ -503,8 +538,12 @@ function renderOneClickInstallSection(
     }
   });
 
-  refreshBtn.addEventListener("click", () => {
-    void diagnostics?.refresh();
+  terminalBtn.addEventListener("click", () => {
+    feedback.className = "settings-install-feedback settings-feedback-success";
+    feedback.textContent = messages.terminalInstalling;
+    if (diagnostics?.installHarness) {
+      void diagnostics.installHarness(hostId, agent, { terminal: true });
+    }
   });
 
   installBtn.addEventListener("click", () => {
@@ -516,7 +555,7 @@ function renderOneClickInstallSection(
 
     const run = async () => {
       if (!diagnostics?.installHarness) {
-        const text = commandInfo?.command ?? `npm install -g ${agent}`;
+        const text = commandInfo.command;
         await document.defaultView?.navigator?.clipboard?.writeText(text);
         feedback.className = "settings-install-feedback settings-feedback-warning";
         feedback.textContent = messages.oneClickInstallFailed;
@@ -549,7 +588,7 @@ function renderOneClickInstallSection(
     void run();
   });
 
-  actions.append(installBtn, copyBtn, downloadLink, refreshBtn);
+  actions.append(installBtn, terminalBtn, copyBtn, downloadLink, refreshBtn);
   section.append(head, commandBox, actions, feedback);
   container.append(section);
 }

@@ -25,7 +25,8 @@ const CLAUDE_PERMISSION_MODES = [
 
 function summarizeInput(input) {
   if (!input || typeof input !== "object") return "";
-  const value = input.command ?? input.file_path ?? input.pattern ?? input.description ?? Object.values(input)[0];
+  if (input.agent_type && input.task) return `@${input.agent_type}: ${input.task}`.split("\n")[0].slice(0, 120);
+  const value = input.command ?? input.file_path ?? input.pattern ?? input.task ?? input.description ?? Object.values(input)[0];
   return typeof value === "string" ? value.split("\n")[0].slice(0, 120) : "";
 }
 
@@ -152,7 +153,7 @@ function usageFromResult(event, planLimit) {
   const usage = event?.usage;
   if (!usage || typeof usage !== "object") return undefined;
   const models = Object.values(event.modelUsage ?? {});
-  const window = models.find((m) => Number.isFinite(m?.contextWindow))?.contextWindow ?? null;
+  const window = models.find((m) => Number.isFinite(m?.contextWindow))?.contextWindow ?? 200_000;
   const input = usage.input_tokens;
   const output = usage.output_tokens;
   const cacheRead = usage.cache_read_input_tokens;

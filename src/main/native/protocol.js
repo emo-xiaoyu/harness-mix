@@ -5,8 +5,26 @@ const { prepareInput } = require('./input');
 const { projectUsage, projectAccountCredits } = require('./usage');
 const { exec } = require('node:child_process');
 const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { diff } = require('../workspace/diff');
+const {
+  fetchLatestVersion,
+  remoteState,
+  runUpdateFlow,
+  resolveRegistry,
+} = require('./updater');
+const {
+  detectChannel,
+  compareVersions,
+  readState,
+} = require('./update-state');
+const { nativeEnvironment } = require('./config');
+
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
+
 const ALIASES = { workbuddy: 'codebuddy', 'claude-code': 'claude', 'deepseek-harness': 'dsh', 'codex-harness': 'codex' };
 const externalId = id => ({ workbuddy: 'codebuddy', claude: 'claude-code', dsh: 'deepseek-harness', codex: 'codex-harness' }[id] || id);
 const modelRef = model => ({ id: Buffer.from(JSON.stringify({ id: model.id, provider: model.provider })).toString('base64url') });
@@ -25,10 +43,29 @@ const HARNESS_INSTALL_COMMANDS = {
   'deepseek-harness': { win32: 'pip install deepseek-harness', default: 'pip3 install deepseek-harness' },
   opencode: { win32: 'npm install -g opencode-ai', default: 'npm install -g opencode-ai' },
   grok: { win32: 'npm install -g @xai/grok-cli', default: 'npm install -g @xai/grok-cli' },
-  omp: { win32: 'npm install -g @oh-my-prompt/omp', default: 'npm install -g @oh-my-prompt/omp' },
+  omp: { win32: 'npm install -g @oh-my-pi/pi-coding-agent', default: 'npm install -g @oh-my-pi/pi-coding-agent' },
   antigravity: { win32: 'npm install -g @google/antigravity-cli', default: 'npm install -g @google/antigravity-cli' },
   openclaw: { win32: 'npm install -g openclaw', default: 'npm install -g openclaw' },
   hermes: { win32: 'pip install hermes-agent', default: 'pip3 install hermes-agent' },
+};
+
+const HARNESS_AUTH_INFO = {
+  codex: { name: 'Codex', plan: 'OpenAI / Codex Desktop', label: 'Codex Desktop 内置登录', loginCommand: 'codex login', configHint: 'Codex 官方桌面客户端内置登录状态' },
+  'claude-code': { name: 'Claude Code', plan: 'Anthropic Claude', label: 'Claude Code 授权', loginCommand: 'claude login', configHint: '~/.claude.json 或环境变量 ANTHROPIC_API_KEY' },
+  'deepseek-harness': { name: 'DeepSeek Harness', plan: 'DeepSeek API', label: 'DeepSeek API Key', loginCommand: null, configHint: '环境变量 DEEPSEEK_API_KEY' },
+  antigravity: { name: 'Antigravity CLI', plan: 'Google Gemini', label: 'Google Cloud ADC 认证', loginCommand: 'gcloud auth application-default login', configHint: 'Google Application Default Credentials (ADC) 或 gcloud 认证' },
+  pi: { name: 'Pi', plan: 'Pi Multi-Provider', label: 'Pi 模型凭据配置', loginCommand: null, configHint: '~/.pi/agent/settings.json 或各模型提供商 API Key' },
+  omp: { name: 'Oh My Pi', plan: 'Oh My Pi', label: 'OMP 模型凭据配置', loginCommand: null, configHint: '~/.omp/ 配置文件或各 Provider API 密钥' },
+  grok: { name: 'Grok', plan: 'xAI Grok', label: 'xAI API Key', loginCommand: null, configHint: '环境变量 XAI_API_KEY' },
+  opencode: { name: 'OpenCode', plan: 'OpenCode Providers', label: 'OpenCode Provider 配置', loginCommand: null, configHint: '~/.opencode/ 配置文件' },
+  openclaw: { name: 'OpenClaw', plan: 'OpenClaw Gateway', label: 'OpenClaw Token 认证', loginCommand: null, configHint: '环境变量 OPENCLAW_TOKEN 或 gateway.auth 配置' },
+  'kiro-cli': { name: 'Kiro', plan: 'AWS / Kiro CLI', label: 'Kiro CLI 授权', loginCommand: 'kiro auth login', configHint: '命令行 kiro auth login 或 ~/.kiro/ 目录' },
+  'cursor-cli': { name: 'Cursor', plan: 'Cursor Account', label: 'Cursor 账号认证', loginCommand: 'cursor-cli auth login', configHint: 'Cursor 客户端或 cursor-cli auth 登录' },
+  qoder: { name: 'Qoder', plan: 'Qoder AI', label: 'Qoder CLI 认证', loginCommand: 'qoder auth login', configHint: '命令行 qoder auth login 或 ~/.qoder/ 配置' },
+  codebuddy: { name: 'CodeBuddy', plan: 'CodeBuddy AI', label: 'CodeBuddy 凭据', loginCommand: null, configHint: 'CodeBuddy 客户端或环境变量配置' },
+  hermes: { name: 'Hermes', plan: 'Nous Hermes', label: 'Hermes Agent 配置', loginCommand: null, configHint: '~/.hermes/ 配置文件或各模型 API Key' },
+  zcode: { name: 'ZCode', plan: 'ZCode AI', label: 'ZCode 账号与配置', loginCommand: null, configHint: 'ZCode 客户端或配置文件' },
+  trae: { name: 'Trae', plan: 'Trae AI', label: 'Trae 账号与配置', loginCommand: null, configHint: 'Trae 客户端登录状态' },
 };
 
 const MODEL_REF_ID = /^[A-Za-z0-9._~-]{1,512}$/;
@@ -130,6 +167,11 @@ function projectItem(item) {
       status: terminal(item.status) ? (item.state === 'error' ? 'failed' : 'completed') : 'inProgress',
       senderThreadId: job.parent_thread_id, receiverThreadIds: job.child_thread_id ? [job.child_thread_id] : [],
       prompt: job.task || null, model: null, reasoningEffort: null,
+      childThreadId: job.child_thread_id || null, agentType: job.agent_type || null,
+      diff: job.diff || null, digest: job.digest || null,
+      branch: job.branch || job.workspace?.branch || null,
+      workspaceMode: job.workspace?.mode || 'shared',
+      applied: !!job.appliedDigest || !!job.applied,
       agentsStates: job.child_thread_id ? { [job.child_thread_id]: { status,
         message: job.attention?.message || job.attention?.title || job.result || job.error || null } } : {} };
   }
@@ -236,7 +278,7 @@ class NativeProtocol {
       const defaultSource = sourceModels.find(m => m && m.isDefault === true) || sourceModels[0];
       const result = { status: 'ready', catalog: { models, ...(defaultSource ? { defaultModel: modelRef(defaultSource) } : {}), thinkingOptions,
         ...(defaultThinking ? { defaultThinkingOptionId: defaultThinking } : {}) }, capabilities: this.capabilities(local, catalog) };
-      if (catalog.permissionModes?.length) result.permissionModes = { modes: catalog.permissionModes.map(m => ({ id: m.id, label: m.label || m.name || m.id, ...(m.description ? { description: m.description } : {}) })), defaultModeId: catalog.permissionModes.find(m => m.default)?.id || catalog.permissionModes[0].id };
+      if (catalog.permissionModes?.length) result.permissionModes = { modes: catalog.permissionModes.map(m => ({ id: m.id, label: m.label || m.name || m.id, ...((m.description || m.hint) ? { description: m.description || m.hint } : {}) })), defaultModeId: catalog.permissionModes.find(m => m.default)?.id || catalog.permissionModes[0].id };
       return result;
     } catch (error) { return { status: 'error', error: { code: 'INSPECTION_FAILED', message: error.message, retryable: true } }; }
   }
@@ -282,31 +324,196 @@ class NativeProtocol {
     if (method === 'codexhost/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     const thread = this.thread(params.threadId);
     if (method === 'harness-mix/runtime/inspect') return { owner: 'harness-mix', runtime: 'src/main/host/runtime.js', core: 'src/main/protocol-core/protocol-core.js', threads: this.runtime.threads.length };
+    // Updates
+    if (method === 'codexhost/update/check') {
+      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+      let currentVersion = '0.1.2';
+      try {
+        currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2';
+      } catch { /* fallback */ }
+      const channel = detectChannel(REPO_ROOT);
+      let latestVersion = currentVersion;
+      let updateAvailable = false;
+      let checkError = null;
+
+      if (channel === 'git') {
+        try {
+          const remote = remoteState(REPO_ROOT);
+          if (remote.state === 'available') {
+            updateAvailable = true;
+            latestVersion = `${currentVersion}+git.${remote.remote.slice(0, 7)}`;
+          } else {
+            latestVersion = currentVersion;
+          }
+        } catch (err) {
+          checkError = err.message;
+        }
+      } else {
+        try {
+          const fetched = await fetchLatestVersion({
+            registry: resolveRegistry(),
+            dataDir,
+            timeoutMs: 6000,
+          });
+          if (fetched) {
+            latestVersion = fetched;
+            updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+          }
+        } catch (err) {
+          checkError = err.message;
+        }
+      }
+
+      return {
+        currentVersion,
+        installation: channel === 'npm' ? 'npm' : 'windows-installer',
+        latestVersion,
+        updateAvailable,
+        installationAvailable: true,
+        releaseNotes: updateAvailable ? `发现新版本 ${latestVersion}，支持自动快进更新与安全回滚。` : null,
+        releaseNotesUrl: `https://github.com/emo-xiaoyu/harness-mix/releases/tag/v${currentVersion}`,
+        status: null,
+        error: checkError ? `更新检查失败: ${checkError.slice(0, 450)}` : null,
+      };
+    }
+    if (method === 'codexhost/update/start') {
+      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+      const channel = detectChannel(REPO_ROOT);
+      let currentVersion = '0.1.2';
+      try { currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2'; } catch {}
+      try {
+        const outcome = await runUpdateFlow({
+          root: REPO_ROOT,
+          dataDir,
+          mode: 'apply',
+          log: (msg) => console.log(msg),
+        });
+        return {
+          status: {
+            version: outcome.to || currentVersion,
+            installation: channel === 'npm' ? 'npm' : 'windows-installer',
+            phase: outcome.updated || outcome.repaired ? 'succeeded' : 'failed',
+            updatedAt: Date.now(),
+            error: outcome.failed ? (outcome.reason || '更新失败并已回退') : null,
+          },
+        };
+      } catch (err) {
+        return {
+          status: {
+            version: currentVersion,
+            installation: channel === 'npm' ? 'npm' : 'windows-installer',
+            phase: 'failed',
+            updatedAt: Date.now(),
+            error: err.message.slice(0, 450),
+          },
+        };
+      }
+    }
+    if (method === 'codexhost/update/status') {
+      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+      const state = readState(dataDir);
+      const channel = detectChannel(REPO_ROOT);
+      let currentVersion = '0.1.2';
+      try { currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2'; } catch {}
+      if (state.phase && state.phase !== 'idle') {
+        return {
+          status: {
+            version: state.pendingVersion || state.appliedVersion || currentVersion,
+            installation: channel === 'npm' ? 'npm' : 'windows-installer',
+            phase: state.phase === 'applying' ? 'installing' : 'succeeded',
+            updatedAt: state.appliedAt || Date.now(),
+            error: null,
+          },
+        };
+      }
+      return { status: null };
+    }
+
     // No additional managed accounts: native Codex keeps its own signed-in account.
     if (method === 'codexhost/account/list' || method === 'codexhost/account/refresh') return { accounts: [] };
+    if (method === 'codexhost/harness/account/login') {
+      const extId = params.harnessId;
+      const meta = HARNESS_AUTH_INFO[extId] || HARNESS_AUTH_INFO[ALIASES[extId]];
+      const cmd = meta?.loginCommand;
+      if (!cmd) throw new Error(`Harness ${extId} 暂不支持命令行直接登录，请参考凭据配置指引进行配置`);
+      const title = `登录 ${meta.name || extId}`;
+      const execCmd = `cmd.exe /c start "${title}" cmd.exe /k "echo 正在为 ${meta.name} 启动登录认证... && echo 执行命令: ${cmd} && echo. && ${cmd} && echo. && echo [Harness Mix] 登录操作已完成，请关闭此窗口并返回 Harness Mix 刷新状态"`;
+      exec(execCmd, { windowsHide: false });
+      return { success: true, command: cmd };
+    }
     if (method === 'codexhost/harness/accounts/list') {
       const accounts = [];
       for (const adapter of this.runtime.adapters.values()) {
-        if (typeof adapter.inspectAccount !== 'function') continue;
-        try {
-          const raw = await Promise.race([
-            Promise.resolve().then(() => adapter.inspectAccount()),
-            new Promise((resolve) => setTimeout(() => resolve(null), 10_000)),
-          ]);
-          if (!raw || typeof raw !== 'object') continue;
-          const credits = projectAccountCredits(raw.credits);
-          if (!credits) continue;
-          accounts.push({
-            harnessId: externalId(adapter.manifest.id),
-            harnessName: adapter.manifest.name,
-            ...(typeof raw.email === 'string' && raw.email.trim() ? { email: raw.email.trim() } : {}),
-            ...(typeof raw.label === 'string' && raw.label.trim() ? { label: raw.label.trim() } : {}),
-            ...(typeof raw.plan === 'string' && raw.plan.trim() ? { plan: raw.plan.trim() } : {}),
-            credits,
-          });
-        } catch {
-          // Individual adapter inspection failure must not block the others
+        const id = adapter.manifest.id;
+        const extId = externalId(id);
+        const meta = HARNESS_AUTH_INFO[extId] || HARNESS_AUTH_INFO[id] || { name: adapter.manifest.name };
+        const isAvailable = !!this.runtime.status[id]?.available;
+
+        let email = undefined;
+        let label = meta.label;
+        let plan = meta.plan;
+        let credits = undefined;
+        let status = isAvailable ? 'ready' : 'not_installed';
+
+        if (typeof adapter.inspectAccount === 'function') {
+          try {
+            const raw = await Promise.race([
+              Promise.resolve().then(() => adapter.inspectAccount()),
+              new Promise((resolve) => setTimeout(() => resolve(null), 5_000)),
+            ]);
+            if (raw && typeof raw === 'object') {
+              if (raw.email && typeof raw.email === 'string') email = raw.email.trim();
+              if (raw.label && typeof raw.label === 'string') label = raw.label.trim();
+              if (raw.plan && typeof raw.plan === 'string') plan = raw.plan.trim();
+              if (raw.credits) credits = projectAccountCredits(raw.credits) || undefined;
+              status = 'ready';
+            }
+          } catch {
+            // keep default
+          }
         }
+
+        if (!email) {
+          if (id === 'codex') {
+            status = 'ready';
+            email = 'Codex Desktop 会话已就绪';
+          } else if (id === 'dsh') {
+            if (process.env.DEEPSEEK_API_KEY) {
+              status = 'ready';
+              email = 'API Key (已设置)';
+            } else {
+              status = isAvailable ? 'unconfigured' : 'not_installed';
+            }
+          } else if (id === 'grok') {
+            if (process.env.XAI_API_KEY) {
+              status = 'ready';
+              email = 'xAI API Key (已设置)';
+            } else {
+              status = isAvailable ? 'unconfigured' : 'not_installed';
+            }
+          } else if (id === 'openclaw') {
+            if (process.env.OPENCLAW_TOKEN) {
+              status = 'ready';
+              email = 'Gateway Token (已配置)';
+            } else {
+              status = isAvailable ? 'unconfigured' : 'not_installed';
+            }
+          } else if (!isAvailable) {
+            status = 'not_installed';
+          }
+        }
+
+        accounts.push({
+          harnessId: extId,
+          harnessName: meta.name || adapter.manifest.name,
+          status,
+          ...(email ? { email } : {}),
+          ...(label ? { label } : {}),
+          ...(plan ? { plan } : {}),
+          ...(meta.configHint ? { configHint: meta.configHint } : {}),
+          ...(meta.loginCommand ? { loginCommand: meta.loginCommand } : {}),
+          ...(credits ? { credits } : {}),
+        });
       }
       return { accounts };
     }
@@ -317,6 +524,14 @@ class NativeProtocol {
       const entry = HARNESS_INSTALL_COMMANDS[params.harnessId] || HARNESS_INSTALL_COMMANDS[local];
       if (!entry) throw new Error(`No installation command available for harness: ${params.harnessId}`);
       const command = (process.platform === 'win32' ? entry.win32 : entry.default) || entry.default;
+
+      if (params.terminal) {
+        const title = `安装 ${params.harnessId}`;
+        const cmd = `cmd.exe /c start "${title}" cmd.exe /k "echo 正在安装 ${params.harnessId} (${command})... && ${command} && echo. && echo [Harness Mix] 安装执行完毕，请关闭此窗口并返回 Harness Mix 点击【刷新检测】"`;
+        exec(cmd, { windowsHide: false });
+        return { success: true, command, stdout: '已在独立终端窗口中启动安装' };
+      }
+
       return new Promise((resolve) => {
         exec(command, { timeout: 180000, shell: true }, async (err, stdout, stderr) => {
           const adapter = this.runtime.adapters.get(local);
@@ -345,8 +560,14 @@ class NativeProtocol {
     if (method === 'codexhost/thread/inspect') {
       if (!thread) return { owner: 'codex', locked: true };
       const catalog = await this.runtime.describe(thread.harnessId);
+      const usage = this.runtime.core.getThread(thread.id)?.usage;
+      const adapter = this.runtime.adapters.get(thread.harnessId);
+      const rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
+      const credits = projectAccountCredits(rawCredits);
       return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: routeModel(externalId(thread.harnessId)), locked: true,
-        ...this.configuration(thread), history: this.capabilities(thread.harnessId, catalog).history };
+        ...this.configuration(thread), history: this.capabilities(thread.harnessId, catalog).history,
+        ...(usage ? { usage: projectUsage(usage) } : {}),
+        ...(credits ? { accountCredits: credits } : {}) };
     }
     if (method === 'thread/start') {
       const route = decodeRoute(params.model);
@@ -369,6 +590,8 @@ class NativeProtocol {
     }
     if (method === 'codexhost/thread/workspace/review') return this.runtime.reviewThreadWorkspace(params.threadId);
     if (method === 'codexhost/thread/workspace/apply') return this.runtime.applyThreadWorkspace(params.threadId, params.digest);
+    if (method === 'codexhost/thread/workspace/discard') return this.runtime.discardThreadWorkspace(params.threadId);
+    if (method === 'codexhost/thread/workspace/push') return this.runtime.pushThreadWorkspace(params.threadId, params);
     if (!thread) {
       if (method.startsWith('codexhost/')) throw new Error(`Harness Mix does not implement ${method}`);
       return undefined;
@@ -442,10 +665,13 @@ class NativeProtocol {
     if (method === 'codexhost/thread/usage/inspect') {
       const usage = params.refresh === 'exact' ? await this.runtime.refreshUsage(thread.id) : this.runtime.core.getThread(thread.id)?.usage;
       const adapter = this.runtime.adapters.get(thread.harnessId);
-      if (adapter && params.refresh === 'exact' && typeof adapter.refreshCredits === 'function') {
+      let rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
+      if (!rawCredits && adapter && typeof adapter.refreshCredits === 'function') {
+        try { rawCredits = await adapter.refreshCredits(); } catch {}
+      } else if (adapter && params.refresh === 'exact' && typeof adapter.refreshCredits === 'function') {
         try { await adapter.refreshCredits(); } catch {}
+        rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
       }
-      const rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
       const credits = projectAccountCredits(rawCredits);
       return {
         threadId: thread.id,

@@ -6,7 +6,13 @@ import {
 import {
   createConnectionsSettingsPage,
 } from './settings/connections-page.js';
-import { aboutPage } from './settings/pages.js';
+import {
+  createAccountsSettingsPage,
+} from './settings/accounts-page.js';
+import {
+  aboutPage,
+  updatesPage,
+} from './settings/pages.js';
 import { installRendererSettingsShell, type RendererSettingsShell } from './settings/shell.js';
 import {
   installRendererSettingsHeaderTrigger,
@@ -30,6 +36,8 @@ export function installRendererSettingsLifecycle(
     const messages = rendererSettingsMessages(locale);
     const pages = [
       createConnectionsSettingsPage(messages, options.getConnectionDiagnostics ?? (() => null)),
+      createAccountsSettingsPage(messages, options.getAccountClient ?? (() => null)),
+      updatesPage(messages, options.getUpdateClient ?? (() => null)),
       aboutPage(messages),
     ];
     const nextShell = installRendererSettingsShell(pages, messages, ownerWindow.document);

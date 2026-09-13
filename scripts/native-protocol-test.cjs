@@ -232,6 +232,26 @@ async function main() {
     await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/fork', { threadId, excludeTurns: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true, threadSource: 'thread_description' }), /Ephemeral background thread is not supported/);
+    // Worktree 隔离工作区丢弃与推送协议接口
+    await assert.rejects(bridge.request('codexhost/thread/workspace/discard', { threadId }), /该任务未使用 Worktree 隔离工作区/);
+    await assert.rejects(bridge.request('codexhost/thread/workspace/push', { threadId }), /该任务未使用 Worktree 隔离工作区/);
+    const dummyWorktreeThread = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
+    const dummyThreadId = dummyWorktreeThread.thread.id;
+    const dummyWorkspaceDir = path.join(root, 'dummy-wt');
+    await fs.mkdir(dummyWorkspaceDir, { recursive: true });
+    const dummyTargetThread = runtime.threads.find(t => t.id === dummyThreadId);
+    dummyTargetThread.workspace = {
+      mode: 'worktree',
+      root: dummyWorkspaceDir,
+      cwd: dummyWorkspaceDir,
+      source: root,
+      branch: 'codexhost/test-wt-branch',
+    };
+    await assert.rejects(bridge.request('codexhost/thread/workspace/push', { threadId: dummyThreadId }), /git/i);
+    const discardResult = await bridge.request('codexhost/thread/workspace/discard', { threadId: dummyThreadId });
+    assert.equal(discardResult.discarded, true);
+    assert.equal(discardResult.branch, 'codexhost/test-wt-branch');
+    assert.equal(dummyTargetThread.workspace, undefined, 'Discard deletes thread.workspace');
     console.log('PASS: native protocol, external steering, command execution and Usage projection');
   } finally { bridge.close(); await runtime.close(); }
 }

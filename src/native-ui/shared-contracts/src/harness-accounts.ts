@@ -8,7 +8,10 @@ export const harnessAccountSnapshotSchema = z
     email: z.string().trim().min(1).max(320).optional(),
     label: z.string().trim().min(1).max(256).optional(),
     plan: z.string().trim().min(1).max(128).optional(),
-    credits: accountCreditsSnapshotSchema,
+    status: z.enum(["ready", "unconfigured", "not_installed"]).optional(),
+    configHint: z.string().max(512).optional(),
+    loginCommand: z.string().max(512).optional(),
+    credits: accountCreditsSnapshotSchema.optional(),
   })
   .strict();
 export type HarnessAccountSnapshot = z.infer<typeof harnessAccountSnapshotSchema>;

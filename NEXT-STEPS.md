@@ -18,7 +18,7 @@
 目标：先形成一个可回退、可审查、可交付的稳定基线。
 
 - 审查当前全部差异，移除过期说明和重复实现。
-- 执行 `npm run check`、`npm run test:core-all`、`npm run test:workspace`、`npm run test:git`。
+- 执行 `npm run check`、`npm run test:core-all`、`npm run test:workspace`。
 - 执行 `npm run smoke`、`npm run smoke:workbench`、`npm run smoke:core`、`npm run smoke:app`。
 - 对四个真实 Harness 分别复验创建、发送、取消、恢复、模型目录与用量。
 - 对声明支持的原生能力复验 Fork、Compact、审批和文件变更。

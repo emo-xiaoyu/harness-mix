@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { createWorkspace, reviewWorkspace, applyWorkspace, git } = require('../src/main/host/collaboration-worktree');
+const { createWorkspace, reviewWorkspace, applyWorkspace, discardWorkspace, pushWorkspace, git } = require('../src/main/host/collaboration-worktree');
 const { Collaboration } = require('../src/main/host/collaboration');
 const { HostRuntime } = require('../src/main/host/runtime');
 const { SessionHistory } = require('../src/main/host/session-history');
@@ -29,13 +29,33 @@ async function main() {
   assert.doesNotMatch(review.patch, /untracked.txt/);
   await assert.rejects(applyWorkspace(workspace, 'stale'), /重新审查/);
   await fs.writeFile(path.join(repo, 'file.txt'), 'conflicting edit\n');
-  await assert.rejects(applyWorkspace(workspace, review.digest));
+  const conflictRev = await reviewWorkspace(workspace);
+  assert.equal(conflictRev.hasConflict, true);
+  assert.deepEqual(conflictRev.conflictingFiles, ['file.txt']);
+  await assert.rejects(applyWorkspace(workspace, review.digest), /冲突文件/);
   assert.equal(await fs.readFile(path.join(repo, 'file.txt'), 'utf8'), 'conflicting edit\n');
   assert.equal(await fs.stat(path.join(repo, 'new.txt')).catch(() => null), null, 'Conflict applies no partial patch');
   await fs.writeFile(path.join(repo, 'file.txt'), 'unstaged\n');
   await applyWorkspace(workspace, review.digest);
   assert.equal(await fs.readFile(path.join(repo, 'file.txt'), 'utf8'), 'worker\n');
   assert.equal(await git(repo, ['diff', '--cached', '--binary']), staged);
+
+  // 隔离工作区冲突排查、远程推送与分支丢弃
+  const workspace2 = await createWorkspace(repo, randomUUID());
+  await fs.writeFile(path.join(workspace2.cwd, 'file2.txt'), 'w2 content\n');
+  const review2 = await reviewWorkspace(workspace2);
+  assert.equal(review2.hasConflict, false);
+  const remoteBare = path.join(root, 'remote-bare.git');
+  await git(repo, ['init', '--bare', remoteBare]);
+  await git(repo, ['remote', 'add', 'origin', remoteBare]);
+  const pushRes = await pushWorkspace(workspace2, 'origin');
+  assert.equal(pushRes.pushed, true);
+  assert.equal(pushRes.remote, 'origin');
+  assert.equal(pushRes.branch, workspace2.branch);
+  const discardRes = await discardWorkspace(workspace2);
+  assert.equal(discardRes.discarded, true);
+  assert.equal(discardRes.branch, workspace2.branch);
+  assert.equal(await fs.stat(workspace2.root).catch(() => null), null, 'Worktree directory cleaned');
 
   const rt = new HostRuntime({ dataDirectory: path.join(root, 'data') }); await rt.store.load();
   await rt.collaboration.initialize();
