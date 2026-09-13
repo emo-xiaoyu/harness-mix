@@ -478,7 +478,7 @@ export function restoredThreadOwnership(inspection: ThreadInspection): RestoredT
   if (inspection.harnessId === "kiro-cli") {
     const route = decodeHarnessPluginRoute(inspection.transportModelId);
     if (!route || route.harnessId !== "kiro-cli") {
-      throw new Error("Kiro CLI Thread reported an incompatible transport Model");
+      throw new Error("Kiro Thread reported an incompatible transport Model");
     }
     const model = inspection.effectiveModel ?? route.model;
     const thinkingOptionId =
@@ -2665,7 +2665,9 @@ export function installRendererBindingProbe(
     controller.clearPendingSubmission(composer);
     const mounted = mountedByComposer.get(composer);
     if (mounted && isOwnershipSubmissionBlocked(mounted.ownershipStatus)) return;
-    if (controller.isSwitching(composer) || !applyComposerAgent(composer)) blockEvent(event);
+    // Draft editing must remain available while the native connection recovers.
+    // Submission still goes through prepareComposer and fails closed.
+    if (!controller.isSwitching(composer)) applyComposerAgent(composer);
   };
   const onSubmit = (event: Event): void => {
     const element = eventElement(event.target);
@@ -2687,7 +2689,7 @@ export function installRendererBindingProbe(
       composer &&
       (composerCodexAccounts(composer)?.switching || controller.isSwitching(composer))
     ) {
-      blockEvent(event);
+      if (isComposerSubmissionKey(event)) blockEvent(event);
       return;
     }
     if (composer && mounted && isOwnershipSubmissionBlocked(mounted.ownershipStatus)) {
@@ -2695,7 +2697,7 @@ export function installRendererBindingProbe(
       return;
     }
     if (composer && !applyComposerAgent(composer)) {
-      blockEvent(event);
+      if (isComposerSubmissionKey(event)) blockEvent(event);
       return;
     }
     if (!isComposerSubmissionKey(event) || !composer) return;

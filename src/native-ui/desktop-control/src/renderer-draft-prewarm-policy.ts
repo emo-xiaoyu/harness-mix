@@ -43,6 +43,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Desktop 26.908 stores a connection snapshot in React instead of the manager
+// itself. Only unwrap a ready snapshot for the same native Host.
+export function rendererRequestManagerFromHook(value: unknown): Record<string, any> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const hook = value as Record<string, any>;
+  const manager = "manager" in hook ? hook.manager : hook;
+  if (typeof manager !== "object" || manager === null) return null;
+  if (manager !== hook && (hook.status !== "ready" || typeof hook.hostId !== "string" ||
+    manager.getHostId?.() !== hook.hostId)) return null;
+  if (typeof manager.requestClient?.prewarmThreadStart !== "function" ||
+    typeof manager.requestClient?.sendRequest !== "function" ||
+    typeof manager.requestClient?.enqueueRequest !== "function" ||
+    typeof manager.prewarmedThreadManager?.discardAllPrewarmedThreads !== "function" ||
+    typeof manager.sendRequest !== "function") return null;
+  return manager;
+}
+
 const FIND_REQUEST_MANAGER_EXPRESSION = `(() => {
   const editors = [...document.querySelectorAll(
     '[data-codex-composer], [contenteditable="true"][role="textbox"]',
@@ -71,17 +88,8 @@ const FIND_REQUEST_MANAGER_EXPRESSION = `(() => {
     }
     let hook = fiber.memoizedState;
     for (let index = 0; hook != null && index < 120; index += 1, hook = hook.next) {
-      const value = hook.memoizedState;
-      if (
-        value != null &&
-        typeof value === 'object' &&
-        value.requestClient != null &&
-        typeof value.requestClient.prewarmThreadStart === 'function' &&
-        typeof value.requestClient.sendRequest === 'function' &&
-        typeof value.requestClient.enqueueRequest === 'function' &&
-        typeof value.prewarmedThreadManager?.discardAllPrewarmedThreads === 'function' &&
-        typeof value.sendRequest === 'function'
-      ) {
+      const value = (${rendererRequestManagerFromHook.toString()})(hook.memoizedState);
+      if (value != null) {
         managers.add(value);
       }
     }

@@ -21,6 +21,7 @@ const antigravity = require('../src/main/adapters/antigravity');
   assert.equal(manifest.capabilities.permissionModes, true);
   assert.equal(manifest.capabilities.resume, true);
   assert.equal(manifest.capabilities.fork, true);
+  assert.equal(manifest.capabilities.forkFromMessage, true);
   assert.equal(manifest.capabilities.attachments, true);
 
   // 2. parseModelsOutput
@@ -164,10 +165,111 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.ok(fs.existsSync(prepared.imageEntries[1].path));
   await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
 
-  // 12. Close session
+  // 12. mergePendingStep
+  const { mergePendingStep, cloneDatabase } = antigravity;
+  const activeStep = {
+    step_index: 2,
+    state: 'ACTIVE',
+    step_type: 'tool',
+    tool_name: 'write_to_file',
+    tool_info: {
+      name: 'write_to_file',
+      parameters: { TargetFile: 'test.txt', Description: 'create file' },
+    },
+  };
+  const doneStep = {
+    step_index: 2,
+    state: 'DONE',
+    step_type: 'tool',
+    tool_info: {
+      output: 'File written successfully',
+    },
+  };
+  const merged = mergePendingStep(activeStep, doneStep);
+  assert.equal(merged.state, 'DONE');
+  assert.equal(merged.tool_name, 'write_to_file');
+  assert.equal(merged.tool_info.name, 'write_to_file');
+  assert.equal(merged.tool_info.parameters.TargetFile, 'test.txt');
+  assert.equal(merged.tool_info.output, 'File written successfully');
+
+  // 13. cloneDatabase with message turn pruning and summaries.db
+  const mockHome = path.join(os.tmpdir(), `agy-mock-home-${Date.now()}`);
+  const convDir = path.join(mockHome, '.gemini', 'antigravity-cli', 'conversations');
+  await fs.promises.mkdir(convDir, { recursive: true });
+  const { DatabaseSync } = require('node:sqlite');
+  const sourceDbPath = path.join(convDir, 'source-conv.db');
+  const db = new DatabaseSync(sourceDbPath);
+  db.exec(`
+    CREATE TABLE trajectory_meta (cascade_id TEXT);
+    INSERT INTO trajectory_meta VALUES ('source-conv');
+    CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER);
+    INSERT INTO steps VALUES (1, 14), (2, 1), (3, 14), (4, 1);
+    CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY);
+    INSERT INTO gen_metadata VALUES (0), (1);
+    CREATE TABLE executor_metadata (idx INTEGER PRIMARY KEY);
+    INSERT INTO executor_metadata VALUES (0), (1);
+    CREATE TABLE parent_references (idx INTEGER PRIMARY KEY);
+    INSERT INTO parent_references VALUES (0), (1);
+    CREATE TABLE battle_mode_infos (idx INTEGER PRIMARY KEY);
+    INSERT INTO battle_mode_infos VALUES (0), (1);
+  `);
+  db.close();
+
+  const sumDbPath = path.join(mockHome, '.gemini', 'antigravity-cli', 'conversation_summaries.db');
+  const sumDb = new DatabaseSync(sumDbPath);
+  sumDb.exec(`
+    CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, step_count INTEGER, last_modified_time TEXT);
+    INSERT INTO conversation_summaries VALUES ('source-conv', 'Test Session', 4, '2026-09-01T00:00:00.000Z');
+  `);
+  sumDb.close();
+
+  const clonedOk = await cloneDatabase('source-conv', 'derived-conv', 1, mockHome);
+  assert.equal(clonedOk, true);
+
+  const derivedDb = new DatabaseSync(path.join(convDir, 'derived-conv.db'));
+  const meta = derivedDb.prepare('SELECT cascade_id FROM trajectory_meta').get();
+  assert.equal(meta.cascade_id, 'derived-conv');
+  const remainingSteps = derivedDb.prepare('SELECT count(*) as c FROM steps').get();
+  assert.equal(remainingSteps.c, 2); // only first turn retained
+  derivedDb.close();
+
+  const sumDbCheck = new DatabaseSync(sumDbPath);
+  const sumRow = sumDbCheck.prepare('SELECT * FROM conversation_summaries WHERE conversation_id = ?').get('derived-conv');
+  assert.ok(sumRow);
+  assert.equal(sumRow.title, 'Test Session');
+  assert.equal(sumRow.step_count, 2);
+  sumDbCheck.close();
+
+  await fs.promises.rm(mockHome, { recursive: true, force: true }).catch(() => {});
+
+  // 14. Quota and Credits parsing
+  const mockUsageCommand = {
+    name: 'usage',
+    data: {
+      groups: [
+        {
+          name: 'Gemini Models',
+          buckets: [
+            { id: 'gemini-weekly', name: 'Weekly Limit', window: 'weekly', remaining_fraction: 0.45, reset_time: '2026-09-16T01:12:46Z' },
+            { id: 'gemini-5h', name: '5-Hour Limit', window: '5h', remaining_fraction: 0.80, reset_time: '2026-09-12T14:45:59Z' },
+          ],
+        },
+      ],
+    },
+  };
+  const { parseAntigravityUsageCommand } = antigravity;
+  const quotaSnapshot = parseAntigravityUsageCommand(mockUsageCommand);
+  assert.ok(quotaSnapshot);
+  assert.equal(quotaSnapshot.periodType, 'weekly');
+  assert.equal(quotaSnapshot.usedPercent, 55); // (1 - 0.45) * 100
+  assert.equal(quotaSnapshot.resetsAt, '2026-09-16T01:12:46Z');
+  assert.ok(Array.isArray(quotaSnapshot.productUsage));
+  assert.equal(quotaSnapshot.productUsage[0].usagePercent, 20); // (1 - 0.8) * 100
+
+  // 15. Close session
   await adapter.close(session);
 
-  console.log('antigravity adapter: manifest, models catalog, usage projection, prompt formatting, image attachments, session lifecycle, model switching, describe and fork passed');
+  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, and turn pruning passed');
 })().catch((err) => {
   console.error(err);
   process.exitCode = 1;

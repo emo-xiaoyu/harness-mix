@@ -130,7 +130,10 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
         };
       },
 
-      async send(session, text, _hooks, attachments) {
+      async send(session, text, hooks, attachments) {
+        if (typeof text === 'string' && text.trim() === '/compact') {
+          return this.executeCommand(session, 'compact', hooks);
+        }
         // 图片走 RPC 原生 images 字段（base64）；文本附件由 Host 内联进 text
         const images = (attachments?.images ?? []).map((a) => ({ type: 'image', data: a.data, mimeType: a.mime }));
         session.process.harnessMixAnswer = '';
@@ -148,9 +151,16 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
       },
       async executeCommand(session, commandId, { emit }) {
         if (commandId !== 'compact') throw new Error(`未知 ${name} 指令`);
-        await session.process.command({ type: 'compact' });
-        emit({ kind: 'text-delta', text: `上下文已由 ${name} 压缩。` });
-        emit({ kind: 'completed', finalAnswer: true });
+        const result = await session.process.command({ type: 'compact' });
+        emit({
+          kind: 'compaction',
+          state: 'completed',
+          outcome: result?.cancelled ? 'cancelled' : 'succeeded',
+          tokensBefore: result?.tokensBefore,
+          tokensAfter: result?.tokensAfter ?? result?.estimatedTokensAfter,
+          summary: `上下文已由 ${name} 压缩。`,
+        });
+        emit({ kind: 'completed', finalAnswer: !result?.cancelled });
       },
 
       async listModels() {
@@ -313,9 +323,12 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
       case "auto_retry_end":
         return event.success ? { kind: "status", text: "重试成功" } : { kind: "error", message: `自动重试失败：${event.finalError || "未知错误"}` };
       case "compaction_start":
-        return { kind: "status", text: "上下文压缩中…" };
+        return { kind: "compaction", state: "running" };
       case "compaction_end":
-        return event.result ? { kind: "status", text: `压缩完成（${event.result.tokensBefore} → ${event.result.estimatedTokensAfter} tokens）` } : null;
+        return [
+          { kind: "status", text: `压缩完成（${event.result?.tokensBefore ?? ''} → ${event.result?.estimatedTokensAfter ?? ''} tokens）` },
+          ...(event.result ? [{ kind: "compaction", state: "completed", outcome: "succeeded", tokensBefore: event.result.tokensBefore, tokensAfter: event.result.estimatedTokensAfter }] : []),
+        ];
       case "extension_error":
         return { kind: "notice", level: "error", text: `扩展错误：${event.error}` };
       default:

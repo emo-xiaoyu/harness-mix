@@ -179,7 +179,7 @@ function projectNotification(message, session, emit) {
         emitTool(item, session, emit, toolState(item));
         emit({ kind: 'file-change', source: 'native', changes: nativeChanges(item, true), nativeRef });
       } else if (item?.type === 'contextCompaction') {
-        emit({ kind: 'status', text: '上下文已压缩', nativeRef });
+        emit({ kind: 'compaction', state: 'completed', outcome: 'succeeded', nativeRef });
         session.state.compaction?.resolve();
       } else if (item && !['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction', 'hookPrompt'].includes(item.type)) {
         emitTool(item, session, emit, toolState(item));
@@ -196,7 +196,7 @@ function projectNotification(message, session, emit) {
       break;
     }
     case 'thread/compacted':
-      emit({ kind: 'status', text: '上下文已压缩', nativeRef });
+      emit({ kind: 'compaction', state: 'completed', outcome: 'succeeded', nativeRef });
       session.state.compaction?.resolve();
       break;
     case 'warning':
@@ -209,6 +209,16 @@ function projectNotification(message, session, emit) {
       break;
     case 'turn/completed': {
       const turn = params.turn ?? {};
+      if (turn.usage || params.usage) {
+        const u = turn.usage || params.usage;
+        session.state.usage = {
+          inputTokens: u.inputTokens ?? u.input_tokens,
+          outputTokens: u.outputTokens ?? u.output_tokens,
+          cachedInputTokens: u.cachedInputTokens ?? u.cache_read_tokens,
+          totalTokens: u.totalTokens ?? u.total_tokens,
+        };
+        emit({ kind: 'usage', usage: session.state.usage, nativeRef: { ...nativeRef, checkpointId: turn.id } });
+      }
       if (session.state.compaction) {
         session.state.compaction.turnId = turn.id;
         if (turn.status === 'failed') session.state.compaction.reject(new Error(turn.error?.message ?? 'Codex 压缩失败'));

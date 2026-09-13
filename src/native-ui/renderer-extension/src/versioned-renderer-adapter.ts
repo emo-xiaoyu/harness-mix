@@ -724,6 +724,16 @@ function findComposerDraftIds(composer: Element): Set<string> {
     const memoCache = isRecord(updateQueue) ? updateQueue.memoCache : null;
     const data = isRecord(memoCache) && Array.isArray(memoCache.data) ? memoCache.data : [];
     for (const value of data) {
+      // 26.908's draft-settings hook caches a route-derived ID and its public
+      // settings result (13 slots), replacing the earlier seven-slot atom hook.
+      if (Array.isArray(value) && value.length === 13 &&
+        typeof value[5] === "string" && value[5].startsWith("client-new-thread:") &&
+        value[5] === value[6] && value[10] === true && typeof value[11] === "function" &&
+        isRecord(value[9]) && "modelSettings" in value[9] && "isManuallyChanged" in value[9] &&
+        isRecord(value[12]) && value[12].draftSettings === value[9] &&
+        value[12].isNewThreadDraft === true && value[12].updateDraftSettings === value[11]) {
+        draftIds.add(value[5]);
+      }
       if (
         isCurrentDraftWrapper(value) &&
         typeof value[2] === "string" &&

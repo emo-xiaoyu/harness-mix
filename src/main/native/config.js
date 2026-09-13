@@ -29,6 +29,9 @@ function nativeEnvironment(environment = process.env) {
   }
   env.CODEXHOST_DEFAULT_AGENT ||= 'codex';
   env.HARNESS_MIX_NODE_PATH = process.execPath;
+  if (!env.NODE_OPTIONS || !env.NODE_OPTIONS.includes('--max-old-space-size')) {
+    env.NODE_OPTIONS = [env.NODE_OPTIONS, '--max-old-space-size=8192'].filter(Boolean).join(' ');
+  }
   if (!env.CODEXHOST_DEEPSEEK_HARNESS_COMMAND && process.platform === 'win32') {
     env.CODEXHOST_DEEPSEEK_HARNESS_COMMAND = path.join(root, 'scripts', 'dsh-native.cmd');
   }

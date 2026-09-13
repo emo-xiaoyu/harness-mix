@@ -46,8 +46,8 @@ const githubReleaseNotesUrlSchema = z
   .string()
   .max(300)
   .regex(
-    /^https:\/\/github\.com\/BytePioneer-AI\/codex-host\/releases\/tag\/v[0-9A-Za-z.+-]+$/u,
-    "release notes URL must identify a codexhost GitHub Release",
+    /^https:\/\/github\.com\/(?:BytePioneer-AI\/codex-host|emo-xiaoyu\/harness-mix)\/releases\/tag\/v[0-9A-Za-z.+-]+$/u,
+    "release notes URL must identify a Harness Mix GitHub Release",
   );
 
 export const updateCheckResultSchema = z.strictObject({

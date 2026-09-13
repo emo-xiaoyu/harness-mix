@@ -34,7 +34,7 @@ export interface RendererHostRequestBridge {
 export interface RendererHostRequestManager {
   onNotification(method: string, parameters: unknown): void;
   onRequest(request: Record<string, unknown>): void;
-  dispatchAppServerResponse(method: string, response: Record<string, unknown>): unknown;
+  dispatchAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
 }
 
 export interface RendererPrewarmedThreadManager {
@@ -76,6 +76,9 @@ export function installDraftPrewarmPolicyBridge(
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && !Array.isArray(value);
   const isRemoteControlHost = hostId.startsWith("remote-control:");
+  if (isRemoteControlHost && typeof originalDispatchAppServerResponse !== "function") {
+    throw new Error("Renderer Remote Control approval response bridge is unavailable");
+  }
   const knownExternalThreadIds = new Set<string>();
   const knownOfficialThreadIds = new Set<string>();
   const threadOwnershipResolutions = new Map<string, Promise<"external" | "codex">>();
@@ -582,10 +585,10 @@ export function installDraftPrewarmPolicyBridge(
       }
       if (response.id.startsWith(bridgeServerRequestIdPrefix)) return undefined;
     }
-    return originalDispatchAppServerResponse.call(manager, method, response);
+    return originalDispatchAppServerResponse?.call(manager, method, response);
   };
   if (!observesWindowNotifications) manager.onNotification = routedOnNotification;
-  manager.dispatchAppServerResponse = routedDispatchAppServerResponse;
+  if (originalDispatchAppServerResponse) manager.dispatchAppServerResponse = routedDispatchAppServerResponse;
 
   const policy = Object.freeze({
     state: "ready" as const,
@@ -636,7 +639,7 @@ export function installDraftPrewarmPolicyBridge(
       } else if (manager.onNotification === routedOnNotification) {
         manager.onNotification = originalOnNotification;
       }
-      if (manager.dispatchAppServerResponse === routedDispatchAppServerResponse) {
+      if (originalDispatchAppServerResponse && manager.dispatchAppServerResponse === routedDispatchAppServerResponse) {
         manager.dispatchAppServerResponse = originalDispatchAppServerResponse;
       }
       if (bridgeReadyTimeout !== null) globalThis.clearTimeout(bridgeReadyTimeout);

@@ -5,17 +5,20 @@ const { snapshot, resolveFile, readText } = require('./files');
 const { diff } = require('./diff');
 
 class ReviewStore {
-  constructor(directory) { this.directory = path.join(directory, 'reviews'); this.locks = new Set(); }
+  constructor(directory) { this.directory = path.join(directory, 'reviews'); this.locks = new Set(); this.cache = new Map(); }
   file(id) { if (!/^[\da-f-]{36}$/.test(id)) throw Error('无效审查 ID'); return path.join(this.directory, id + '.json'); }
   async save(record) {
+    this.cache.set(record.id, record);
     await fs.mkdir(this.directory, { recursive: true });
     const file = this.file(record.id);
     await fs.writeFile(file + '.tmp', JSON.stringify(record));
     await fs.rename(file + '.tmp', file);
   }
   async load(id) {
+    if (this.cache.has(id)) return this.cache.get(id);
     const record = JSON.parse(await fs.readFile(this.file(id), 'utf8'));
     for (const change of record.changes) change.path = change.path.replace(/\\/g, '/');
+    this.cache.set(id, record);
     return record;
   }
   async begin(root) {
@@ -27,7 +30,8 @@ class ReviewStore {
   async preview(id) {
     const record = await this.load(id);
     if (!record.baseline) return record;
-    const after = await snapshot(record.root);
+    const after = await snapshot(record.root, record.lastSnapshot?.files || record.baseline.files);
+    record.lastSnapshot = after;
     record.changes = [];
     const previousNames = new Set(record.baseline.names), currentNames = new Set(after.names);
     for (const file of new Set([...record.baseline.names, ...after.names])) {
@@ -44,6 +48,7 @@ class ReviewStore {
   async finish(id) {
     const record = await this.preview(id);
     delete record.baseline;
+    delete record.lastSnapshot;
     record.endedAt = Date.now();
     await this.save(record);
     return this.summary(record);

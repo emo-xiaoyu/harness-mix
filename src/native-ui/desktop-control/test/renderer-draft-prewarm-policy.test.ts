@@ -4,6 +4,7 @@ import {
   installRendererDraftPrewarmPolicy,
   installRendererDraftPrewarmPolicyDirect,
   selectRendererRequestManager,
+  rendererRequestManagerFromHook,
 } from "../src/renderer-draft-prewarm-policy.js";
 import {
   installDraftPrewarmPolicyBridge,
@@ -15,13 +16,46 @@ import {
   type RendererWebContents,
 } from "../src/renderer-draft-prewarm-runtime.js";
 
-function requestManagerFixture(): RendererHostRequestManager {
+function requestManagerFixture(): Required<RendererHostRequestManager> {
   return {
     onNotification: vi.fn(),
     onRequest: vi.fn(),
     dispatchAppServerResponse: vi.fn(),
   };
 }
+
+describe("Desktop connection snapshot discovery", () => {
+  const manager = {
+    getHostId: () => "local",
+    sendRequest: vi.fn(),
+    requestClient: { sendRequest: vi.fn(), prewarmThreadStart: vi.fn(), enqueueRequest: vi.fn() },
+    prewarmedThreadManager: { discardAllPrewarmedThreads: vi.fn() },
+  };
+  it("supports both legacy managers and ready 26.908 connection snapshots", () => {
+    expect(rendererRequestManagerFromHook(manager)).toBe(manager);
+    expect(rendererRequestManagerFromHook({ manager, hostId: "local", status: "ready" })).toBe(manager);
+  });
+  it("rejects disconnected, mismatched and incomplete native connections", () => {
+    expect(rendererRequestManagerFromHook({ manager, hostId: "local", status: "connecting" })).toBeNull();
+    expect(rendererRequestManagerFromHook({ manager, hostId: "remote", status: "ready" })).toBeNull();
+    expect(rendererRequestManagerFromHook({ manager: {}, hostId: "local", status: "ready" })).toBeNull();
+  });
+  it("preserves the new local approval transport without adding a phantom handler", () => {
+    const nativeManager = { onNotification: vi.fn(), onRequest: vi.fn() };
+    const target = {};
+    installDraftPrewarmPolicyBridge(nativeManager, requestBridgeFixture(), "local", target,
+      { discardAllPrewarmedThreads: vi.fn() });
+    expect("dispatchAppServerResponse" in nativeManager).toBe(false);
+  });
+  it("explicitly rejects unsupported remote approval hooks before changing transport", () => {
+    const bridge = requestBridgeFixture();
+    const send = bridge.sendRequest;
+    expect(() => installDraftPrewarmPolicyBridge({ onNotification: vi.fn(), onRequest: vi.fn() },
+      bridge, "remote-control:test", {}, { discardAllPrewarmedThreads: vi.fn() }))
+      .toThrow("approval response bridge is unavailable");
+    expect(bridge.sendRequest).toBe(send);
+  });
+});
 
 function requestBridgeFixture(
   input: {
@@ -276,10 +310,7 @@ describe("Renderer draft prewarm policy", () => {
     expect(evaluate).toHaveBeenCalledOnce();
     const expression = evaluate.mock.calls[0]?.[0] ?? "";
     expect(expression).toContain("webContents.fromId(17)");
-    expect(expression).toContain("typeof value.requestClient.enqueueRequest === 'function'");
-    expect(expression).toContain(
-      "typeof value.prewarmedThreadManager?.discardAllPrewarmedThreads === 'function'",
-    );
+    expect(expression).toContain("rendererRequestManagerFromHook");
     expect(expression).toContain("executionTargetHostId");
     expect(expression).toContain("permissionsHostId");
   });

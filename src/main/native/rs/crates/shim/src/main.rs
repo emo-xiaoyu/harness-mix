@@ -121,6 +121,7 @@ fn run() -> io::Result<i32> {
 
     let mut command = if server {
         let mut command = Command::new(&node);
+        command.arg("--max-old-space-size=8192");
         command.arg(root.join("scripts").join("native-host.cjs"));
         command
     } else {

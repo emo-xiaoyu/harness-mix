@@ -65,6 +65,9 @@ class EventNormalizer {
           this.#event({ type: 'item.completed', itemId }),
           ...(this.interactions.size ? [] : [this.#event({ type: 'turn.resumed' })])];
       }
+      case 'compaction':
+      case 'context-compaction':
+        return this.#compaction(legacy);
       case 'plan':
         return [this.#event({ type: 'plan.updated', payload: { entries: legacy.entries ?? [] } })];
       case 'file-change':
@@ -226,6 +229,22 @@ class EventNormalizer {
     return [
       this.#event({ type: 'item.started', itemId, payload: { type: 'notice', level: legacy.level ?? 'info', content: text } }),
       this.#event({ type: 'item.completed', itemId }),
+    ];
+  }
+
+  #compaction(legacy) {
+    const closed = this.activeSlot ? this.#closeSegment() : [];
+    const itemId = `item_compaction_${this.turnId ?? this.threadId}_${++this.segmentSequence}`;
+    const payload = {
+      type: 'context_compaction',
+      ...(legacy.tokensBefore != null ? { tokensBefore: legacy.tokensBefore } : {}),
+      ...(legacy.tokensAfter != null ? { tokensAfter: legacy.tokensAfter } : {}),
+      ...(legacy.summary ? { summary: legacy.summary } : {}),
+    };
+    return [
+      ...closed,
+      this.#event({ type: 'item.started', itemId, payload }),
+      this.#event({ type: 'item.completed', itemId, payload }),
     ];
   }
 }

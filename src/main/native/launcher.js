@@ -30,13 +30,27 @@ function cacheCodexRuntime(resources, cache) {
 function powershell(source) {
   return execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', source], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
 }
-function inspect() {
+
+// Stream a file into a sha256 digest. Avoids loading multi-hundred-MB binaries
+// into a single buffer via Buffer.allocUnsafe, which Node rejects with
+// ERR_MEMORY_ALLOCATION_FAILED on 64-bit Windows once the file outgrows the
+// internal pool size (Codex Desktop's bundled codex.exe is ~295 MB).
+function sha256OfFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath, { highWaterMark: 1 << 20 });
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+async function inspect() {
   if (process.platform !== 'win32') throw new Error('The local native Launcher currently supports Windows');
   const installation = JSON.parse(powershell("$p = Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1; if (-not $p) { throw 'Codex Desktop not installed' }; $m = Get-AppxPackageManifest $p; @{ root=$p.InstallLocation; fullName=$p.PackageFullName; appId=($p.PackageFamilyName + '!' + @($m.Package.Applications.Application)[0].Id); version=$p.Version.ToString() } | ConvertTo-Json -Compress"));
   const packaged = path.join(installation.root, 'app/resources/codex.exe');
   if (!fs.existsSync(packaged)) throw new Error('Packaged Codex CLI not found');
   // An executable outside WindowsApps avoids package ACL/activation constraints.
-  const digest = crypto.createHash('sha256').update(fs.readFileSync(packaged)).digest('hex').slice(0, 16);
+  const digest = (await sha256OfFile(packaged)).slice(0, 16);
   const cache = path.join(process.env.LOCALAPPDATA, 'Harness Mix/codex', digest);
   const stock = cacheCodexRuntime(path.dirname(packaged), cache);
   return { ...installation, stock, executable: path.join(installation.root, 'app/ChatGPT.exe') };
@@ -61,7 +75,7 @@ async function launch(args = []) {
   if (!flags.has('--check') && !skipUpdate) {
     await autoUpdate({ root, hooks: defaultHooks(root) });
   }
-  const installation = inspect();
+  const installation = await inspect();
   const compatibility = evaluateDesktopCompatibility(installation.version);
   const paths = nativePaths();
   for (const file of Object.values(paths)) if (!fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);

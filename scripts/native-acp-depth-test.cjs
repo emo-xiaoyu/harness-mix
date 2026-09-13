@@ -142,6 +142,12 @@ if (process.argv.includes('--fixture')) {
     const tool = { sessionUpdate: 'tool_call', toolCallId: 't', status: 'completed', content: [{ type: 'diff', path: 'a', oldText: 'old', newText: 'new' }] };
     update(tool); update(tool);
     assert.equal(emitted.filter(e => e.kind === 'file-change').length, 1);
+    // CodeBuddy Bash output: start has description content, completed update has rawOutput with stdout:
+    update({ sessionUpdate: 'tool_call', toolCallId: 'bash-1', title: '`ls`', status: 'in_progress', rawInput: { command: 'ls' }, content: [{ type: 'content', content: { type: 'text', text: 'List files' } }] });
+    update({ sessionUpdate: 'tool_call_update', toolCallId: 'bash-1', status: 'completed', rawOutput: { type: 'text', text: 'Command: ls\nStdout: a.js\nb.js\nExit Code: 0' } });
+    const bashTool = emitted.filter(e => e.kind === 'tool' && e.toolCallId === 'bash-1').at(-1);
+    assert.equal(bashTool?.state, 'completed');
+    assert.equal(bashTool?.output, 'Command: ls\nStdout: a.js\nb.js\nExit Code: 0');
     update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'CHILD' }, _meta: { 'codebuddy.ai/parentToolCallId': 't' } });
     assert.equal(emitted.filter(e => e.kind === 'text-delta').length, 0);
     const usage = historyUsage([{ providerData: { messageId: 'one', rawUsage: { credit: 2, prompt_tokens: 3 } } }, { providerData: { messageId: 'one', rawUsage: { credit: 2, prompt_tokens: 3 } } }]);

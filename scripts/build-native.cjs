@@ -37,8 +37,15 @@ async function main() {
     const source = path.join(target, exe);
     const destination = path.join(out, exe);
     // An unchanged executable may be running while UI-only fixes are built.
-    if (fs.existsSync(destination) && fs.readFileSync(source).equals(fs.readFileSync(destination))) continue;
-    fs.copyFileSync(source, destination);
+    try {
+      fs.copyFileSync(source, destination);
+    } catch (err) {
+      if (err && err.code === 'EBUSY') {
+        console.warn(`[build:native] Notice: ${exe} is in use, keeping existing binary.`);
+      } else {
+        throw err;
+      }
+    }
   }
   fs.writeFileSync(path.join(out, 'node-path.txt'), process.execPath);
   console.log('Harness Mix local Renderer, Desktop Controller and Shim built.');

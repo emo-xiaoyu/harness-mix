@@ -17,7 +17,7 @@ import { createRendererSettingsIcon } from "./icons.js";
 import type { RendererSettingsMessages } from "./localization.js";
 
 export const CODEXHOST_GITHUB_ISSUES_NEW_URL =
-  "https://github.com/BytePioneer-AI/codex-host/issues/new";
+  "https://github.com/emo-xiaoyu/harness-mix/issues/new";
 
 export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererAgent, { command: string }>>> = Object.freeze({
   qoder: { command: "npm install -g @qoder-ai/qodercli" },
@@ -495,7 +495,7 @@ function renderOneClickInstallSection(
     const clipboard = document.defaultView?.navigator?.clipboard;
     if (clipboard) {
       void clipboard.writeText(text).then(() => {
-        copyBtn.textContent = messages.installCommandCopied;
+        copyBtn.replaceChildren(createRendererSettingsIcon("check", 15), messages.installCommandCopied);
         document.defaultView?.setTimeout(() => {
           copyBtn.replaceChildren(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
         }, 2000);

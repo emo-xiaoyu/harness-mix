@@ -1185,49 +1185,64 @@ button {
 }
 
 .settings-connection-install-callout {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 9px;
-  padding: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
   background: var(--settings-surface);
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid var(--settings-border);
+  border-radius: 10px;
+}
+
+.settings-connection-install-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-connection-install-head > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .settings-connection-install-callout__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
+  flex: none;
   color: var(--settings-focus);
   background: var(--settings-active);
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .settings-connection-install-callout strong,
+.settings-connection-install-head strong,
 .settings-connection-error-summary strong,
 .settings-connection-state-summary strong {
   display: block;
   margin: 0 0 4px;
   color: var(--settings-text);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 19px;
 }
 
 .settings-connection-install-callout p,
+.settings-connection-install-head p,
 .settings-connection-error-summary p,
 .settings-connection-state-summary p,
 .settings-connection-issue-note {
   margin: 0;
   color: var(--settings-muted);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .settings-connection-install-button {
-  width: fit-content;
+  width: 100%;
 }
 
 .settings-connection-error-summary {
@@ -2109,7 +2124,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 8px 0;
+  min-width: 0;
+  margin: 0;
 }
 
 .settings-install-command-label {
@@ -2125,25 +2141,36 @@ button {
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid var(--settings-border);
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .settings-install-command-row code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  line-height: 18px;
   color: var(--settings-text);
   user-select: all;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .settings-install-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 4px;
+}
+
+.settings-install-actions .settings-command-button {
+  width: 100%;
+  justify-content: center;
 }
 
 .settings-install-feedback {
   font-size: 12px;
   font-weight: 500;
-  margin-top: 6px;
+  line-height: 18px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
 }
