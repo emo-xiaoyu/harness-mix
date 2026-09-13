@@ -7,11 +7,12 @@ const { NativeProtocol } = require('./protocol');
 const { mergeThreadPage } = require('./thread-list');
 const { terminateTree } = require('./process-utils');
 const { redact } = require('./redact');
+const { dataDirectory } = require('./platform');
 
 async function runNativeHost() {
   const stock = process.env.CODEXHOST_STOCK_CODEX_PATH;
   if (!stock || !fs.existsSync(stock)) throw new Error('Official Codex CLI path is missing');
-  const directory = path.join(process.env.CODEXHOST_DATA_DIR || path.join(process.env.APPDATA, 'harness-mix/native'), 'mix-core');
+  const directory = path.join(dataDirectory(), 'mix-core');
   const trafficLog = path.join(path.dirname(directory), 'host-traffic.jsonl');
   const slim = value => {
     if (typeof value === 'string') return value.length > 1500 ? `${value.slice(0, 1500)}…[${value.length}]` : value;

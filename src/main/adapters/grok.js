@@ -19,7 +19,7 @@ function catalog(session) {
 }
 
 function grokAdapter() {
-  const id = 'grok', name = 'Grok', bin = process.env.HARNESS_MIX_GROK_EXECUTABLE || 'grok.exe', args = ['agent', 'stdio'], executable = true, images = true, fork = true, thinking = true, permissions = false;
+  const id = 'grok', name = 'Grok', bin = process.env.HARNESS_MIX_GROK_EXECUTABLE || (process.platform === 'win32' ? 'grok.exe' : 'grok'), args = ['agent', 'stdio'], executable = true, images = true, fork = true, thinking = true, permissions = false;
   const manifest = { id, name, icon: `${id}-color.svg`, aliases: [id], capabilities: { collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true,
     questions: false, models: true, thinkingLevels: thinking, permissionModes: permissions, resume: true, fork, forkFromMessage: false,
     compaction: true, usage: true, contextUsage: false, attachments: images } };

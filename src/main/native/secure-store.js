@@ -12,6 +12,7 @@ class SecureStoreUnavailableError extends Error {
 }
 
 function helperPath() {
+  if (process.platform !== 'win32') throw new SecureStoreUnavailableError('Harness Mix secret storage is unavailable on this platform; credentials remain managed by each native harness. No plaintext fallback is used.');
   return process.env.HARNESS_MIX_SECRET_EXE || nativePaths().secret;
 }
 

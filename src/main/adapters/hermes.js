@@ -10,7 +10,7 @@ module.exports = acpAdapter({
   id: "hermes",
   name: "Hermes",
   // Windows 上为 uv/pip 生成的 hermes.exe 启动器；可用 HARNESS_MIX_HERMES_EXECUTABLE 覆盖
-  bin: process.env.HARNESS_MIX_HERMES_EXECUTABLE || "hermes.exe",
+  bin: process.env.HARNESS_MIX_HERMES_EXECUTABLE || (process.platform === 'win32' ? 'hermes.exe' : 'hermes'),
   args: ["acp"],
   executable: true,
   images: true,

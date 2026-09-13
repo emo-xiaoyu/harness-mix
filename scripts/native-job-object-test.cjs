@@ -6,6 +6,10 @@ const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+if (process.platform !== 'win32') {
+  console.log('SKIP native-job-object: Windows-only kill-on-close guarantee; Unix lifecycle is tested by test:platform');
+  process.exit(0);
+}
 
 const root = path.resolve(__dirname, '..');
 const candidates = [

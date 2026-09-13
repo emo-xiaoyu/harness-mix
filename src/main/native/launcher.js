@@ -6,6 +6,7 @@ const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const { nativePaths, nativeEnvironment, saveNativeSettings } = require('./config');
 const { runUpdateFlow, reexecLauncher } = require('./updater');
 const { markBootOk, pidAlive } = require('./update-state');
+const { inspectPosix, assertDesktopStopped } = require('./platform');
 const {
   evaluateDesktopCompatibility,
   enforceDesktopCompatibility,
@@ -34,6 +35,7 @@ function powershell(source) {
 
 // Match the verified installation executable; never terminate unrelated apps.
 function stopDesktopProcesses(installation) {
+  if (process.platform !== 'win32') return assertDesktopStopped(installation);
   const target = installation.executable.replace(/'/g, "''");
   powershell(`Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '${target}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
 }
@@ -42,6 +44,7 @@ function stopDesktopProcesses(installation) {
 // sessions before a new desktop is activated. Only processes that belong to this
 // project (shim binary path or our known entry scripts) are touched.
 function sweepLeftovers(root, dataDir) {
+  if (process.platform !== 'win32') return;
   try {
     const instanceFile = path.join(dataDir, 'runtime', 'instance.json');
     let instance = null;
@@ -77,7 +80,7 @@ function sha256OfFile(filePath) {
   });
 }
 async function inspect() {
-  if (process.platform !== 'win32') throw new Error('The local native Launcher currently supports Windows');
+  if (process.platform !== 'win32') return inspectPosix();
   const installation = JSON.parse(powershell("$p = Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1; if (-not $p) { throw 'Codex Desktop not installed' }; $m = Get-AppxPackageManifest $p; @{ root=$p.InstallLocation; fullName=$p.PackageFullName; appId=($p.PackageFamilyName + '!' + @($m.Package.Applications.Application)[0].Id); version=$p.Version.ToString() } | ConvertTo-Json -Compress"));
   const packaged = path.join(installation.root, 'app/resources/codex.exe');
   if (!fs.existsSync(packaged)) throw new Error('Packaged Codex CLI not found');
@@ -111,11 +114,13 @@ async function launch(args = []) {
     return;
   }
   const installation = await inspect();
-  const compatibility = evaluateDesktopCompatibility(installation.version);
+  const compatibility = installation.version === 'unknown'
+    ? { state: 'unverified', desktopVersion: 'unknown', evidence: null }
+    : evaluateDesktopCompatibility(installation.version);
   const paths = nativePaths();
   for (const file of Object.values(paths)) if (!fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);
   if (flags.has('--check')) {
-    console.log(`desktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
+    console.log(`platform=${process.platform}\narchitecture=${process.arch}\ndesktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
     return;
   }
   const skipUpdate = flags.has('--no-update') || process.env.HARNESS_MIX_AUTO_UPDATE === '0';
@@ -150,13 +155,30 @@ async function launch(args = []) {
   stopDesktopProcesses(installation);
   await new Promise(resolve => setTimeout(resolve, 1000));
   sweepLeftovers(root, dataDir);
-  const pid = execFileSync(paths.activation, [installation.fullName, installation.appId, block, `--remote-debugging-port=${port}`], { encoding: 'utf8', windowsHide: true }).trim();
+  let desktop;
+  let pid;
+  if (process.platform === 'win32') {
+    pid = execFileSync(paths.activation, [installation.fullName, installation.appId, block, `--remote-debugging-port=${port}`], { encoding: 'utf8', windowsHide: true }).trim();
+  } else {
+    desktop = spawn(installation.executable, [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'],
+      { env: { ...env, ...overrides }, stdio: 'ignore' });
+    await new Promise((resolve, reject) => { desktop.once('spawn', resolve); desktop.once('error', reject); });
+    pid = desktop.pid;
+  }
   console.log(`[Harness Mix] Desktop PID ${pid}, CDP ${port}`);
   const controller = spawn(process.execPath, [paths.controller, '--renderer-cdp-endpoint', `http://127.0.0.1:${port}`,
     '--renderer', paths.renderer, '--default-agent', 'codex', '--attachment-port', String(attachmentPort), '--attachment-nonce', nonce],
   { env, stdio: 'inherit', windowsHide: true });
   controller.on('error', error => { console.error(error.message); process.exitCode = 1; });
   controller.on('exit', code => { process.exitCode = code || 0; });
+  if (desktop) {
+    desktop.once('exit', () => controller.kill('SIGTERM'));
+    // The GUI may remain open after controller failure; do not hold the launcher alive.
+    controller.once('exit', () => desktop.unref());
+    const stop = () => { controller.kill('SIGTERM'); desktop.kill('SIGTERM'); };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  }
   // A healthy boot = the controller still alive after 20s; then a freshly applied
   // update is marked good and the crash-loop counter resets.
   const bootTimer = setTimeout(() => { if (controller.exitCode === null) markBootOk(dataDir); }, 20000);
