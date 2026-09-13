@@ -639,27 +639,21 @@ class QuestionBridge {
       CODEXHOST_AGY_QUESTION_CLIENT: `"${clientPath.replaceAll('\\', '/')}"`,
     };
 
-    if (options.collaboration) {
+    if (options.collaboration || options.managedMcp?.length) {
       const pluginDir = path.join(dir, '.agents', 'plugins', 'harness-mix');
       const plainPluginDir = path.join(dir, 'plugins', 'harness-mix');
       await fs.promises.mkdir(pluginDir, { recursive: true });
       await fs.promises.mkdir(plainPluginDir, { recursive: true });
       const pluginManifest = JSON.stringify({ name: 'harness-mix-collaboration', description: 'Harness Mix Multi-agent Collaboration' }, null, 2);
       const mcpConfig = JSON.stringify({
-        mcpServers: {
-          'harness-mix': {
-            command: options.collaboration.command,
-            args: options.collaboration.args,
-            env: options.collaboration.env,
-          },
-        },
+        mcpServers: require('./managed-mcp').namedServers(options.managedMcp, options.collaboration),
       }, null, 2);
       await fs.promises.writeFile(path.join(pluginDir, 'plugin.json'), pluginManifest, 'utf8');
       await fs.promises.writeFile(path.join(pluginDir, 'mcp_config.json'), mcpConfig, 'utf8');
       await fs.promises.writeFile(path.join(plainPluginDir, 'plugin.json'), pluginManifest, 'utf8');
       await fs.promises.writeFile(path.join(plainPluginDir, 'mcp_config.json'), mcpConfig, 'utf8');
       await fs.promises.writeFile(path.join(dir, '.agents', 'mcp_config.json'), mcpConfig, 'utf8');
-      Object.assign(bridge.environment, options.collaboration.env || {});
+      Object.assign(bridge.environment, options.collaboration?.env || {});
     }
 
     return bridge;
@@ -823,7 +817,7 @@ function create(emit, options = {}) {
       });
     },
 
-    async open({ thread, emit: emitEvent, diagnostic, collaboration }) {
+    async open({ thread, emit: emitEvent, diagnostic, collaboration, managedMcp = [] }) {
       // Do not start a second agy process while a real turn may be starting.
       // Quota is loaded only by the explicit account/usage refresh path below.
       await restoreLegacyClipboardAttachments(thread);
@@ -837,6 +831,7 @@ function create(emit, options = {}) {
         thinkingLevel,
         permissionMode,
         collaboration: collaboration || null,
+        managedMcp,
         collaborationEnabled: !!collaboration,
         activeTurn: null,
         bridge: null,
@@ -859,6 +854,7 @@ function create(emit, options = {}) {
         approvals,
         emit: emitEvent,
         collaboration: session.collaboration,
+        managedMcp: session.managedMcp,
       });
       session.bridge = bridge;
 
@@ -1349,6 +1345,7 @@ function create(emit, options = {}) {
   };
 }
 
+manifest.integrations = { mcp: true };
 module.exports = {
   manifest,
   create,

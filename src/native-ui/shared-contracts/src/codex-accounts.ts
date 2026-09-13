@@ -38,6 +38,8 @@ export const codexAccountSchema = z
     codexHome: nonBlankTextSchema.max(16_384),
     active: z.boolean(),
     isDefault: z.boolean(),
+    authenticated: z.boolean().optional(),
+    management: z.enum(["native", "isolated"]).optional(),
   })
   .strict();
 export type CodexAccountSummary = z.infer<typeof codexAccountSchema>;

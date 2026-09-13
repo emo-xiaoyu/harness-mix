@@ -2236,3 +2236,16 @@ button {
 .settings-install-steps li {
   margin-bottom: 2px;
 }
+/* MCP / Skills share the existing settings shell and its theme. */
+.settings-integrations-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0; }
+.settings-integrations-controls input { flex: 1; min-width: 180px; }
+.settings-integrations-controls input[hidden] { display: none; }
+.settings-integrations-controls select, .settings-integrations-controls input,
+.settings-integrations-field input, .settings-integrations-field textarea { box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border, #8885); border-radius: 7px; color: inherit; background: transparent; font: inherit; }
+.settings-integrations-body p { font-size: 12px; line-height: 1.6; opacity: .8; }
+.settings-integrations-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border: 1px solid var(--border, #8885); padding: 14px; margin: 10px 0; border-radius: 10px; }
+.settings-integrations-row > div { flex: 1; min-width: 180px; }
+.settings-integrations-row code { display: block; overflow-wrap: anywhere; font-size: 11px; }
+.settings-integrations-form { display: grid; gap: 12px; margin: 16px 0 28px; }
+.settings-integrations-field { display: grid; gap: 6px; font-size: 12px; }
+.settings-integrations-form > button { justify-self: start; }

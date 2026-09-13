@@ -21,6 +21,7 @@ const {
   readState,
 } = require('./update-state');
 const { nativeEnvironment } = require('./config');
+const { CodexAccountManager } = require('./codex-accounts');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
@@ -33,7 +34,6 @@ const routeModel = harnessId => ['pi', 'claude-code', 'deepseek-harness', 'antig
   : `codexhost/plugin-v1@${Buffer.from(JSON.stringify({ harnessId })).toString('hex')}`;
 const terminal = status => ['completed', 'cancelled', 'error', 'failed'].includes(status);
 const turnStatus = status => ({ cancelled: 'interrupted', error: 'failed', failed: 'failed', completed: 'completed' }[status] || 'inProgress');
-
 const HARNESS_INSTALL_COMMANDS = {
   qoder: { win32: 'npm install -g @qoder-ai/qodercli', default: 'npm install -g @qoder-ai/qodercli' },
   codex: { win32: 'npm install -g @openai/codex', default: 'npm install -g @openai/codex' },
@@ -193,6 +193,11 @@ class NativeProtocol {
     this.runtime = runtime;
     this.emit = emit;
     this.requestOfficial = requestOfficial;
+    this.codexAccounts = new CodexAccountManager({
+      dataDirectory: nativeEnvironment().CODEXHOST_DATA_DIR,
+      requestOfficial,
+      emit,
+    });
     this.approvals = new Map();
     this.published = new Map();
     this.steering = new Map();      // threadId -> in-flight steer promise
@@ -318,12 +323,33 @@ class NativeProtocol {
     return model;
   }
   async request(method, params = {}) {
+    if (method === 'codexhost/integrations/catalog') return this.runtime.integrations.catalog();
+    if (method === 'codexhost/integrations/list') return this.runtime.integrations.list(params);
+    if (method === 'codexhost/integrations/mcp/save') return this.runtime.integrations.save(params);
+    if (method === 'codexhost/integrations/mcp/remove') return this.runtime.integrations.remove(params);
+    if (method === 'codexhost/integrations/skill/change') return this.runtime.integrations.skillChange(params);
     if (method === 'codexhost/harness/session-import/sources') return this.runtime.history.sources();
     if (method === 'codexhost/harness/session-import/list') return this.runtime.history.list(params);
     if (method === 'codexhost/harness/session-import/import') return this.runtime.history.import(params);
     if (method === 'codexhost/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     const thread = this.thread(params.threadId);
-    if (method === 'harness-mix/runtime/inspect') return { owner: 'harness-mix', runtime: 'src/main/host/runtime.js', core: 'src/main/protocol-core/protocol-core.js', threads: this.runtime.threads.length };
+    if (method === 'harness-mix/runtime/inspect') return {
+      owner: 'harness-mix',
+      runtime: 'src/main/host/runtime.js',
+      core: 'src/main/protocol-core/protocol-core.js',
+      threads: this.runtime.threads.length,
+      codex: {
+        mode: 'official-passthrough',
+        // `codex` remains owned by the stock app-server. Only the explicit
+        // `codex-harness` route creates a HostRuntime-managed Codex worker.
+        managedRoute: 'codex-harness',
+      },
+    };
+    if (method === 'harness-mix/runtime/version') {
+      let version = '0.0.0';
+      try { version = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || version; } catch {}
+      return { version };
+    }
     // Updates
     if (method === 'codexhost/update/check') {
       const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
@@ -429,8 +455,22 @@ class NativeProtocol {
       return { status: null };
     }
 
-    // No additional managed accounts: native Codex keeps its own signed-in account.
-    if (method === 'codexhost/account/list' || method === 'codexhost/account/refresh') return { accounts: [] };
+    // Each extra Account is an isolated native CODEX_HOME. Harness Mix stores
+    // only the profile label/path; auth.json and token refresh remain owned by Codex.
+    if (method === 'codexhost/account/list') return this.codexAccounts.list(false);
+    if (method === 'codexhost/account/refresh') return this.codexAccounts.list(true);
+    if (method === 'codexhost/account/create') return this.codexAccounts.create(params.label);
+    if (method === 'codexhost/account/delete') return this.codexAccounts.delete(params.accountId);
+    if (method === 'codexhost/account/activate') return this.codexAccounts.activate(params.accountId);
+    if (method === 'codexhost/account/usage/inspect') return this.codexAccounts.usage(params.accountId);
+    if (method === 'codexhost/account/login/start') return this.codexAccounts.startLogin(params.accountId);
+    if (method === 'codexhost/account/login/cancel') return this.codexAccounts.cancelLogin(params.loginId);
+    if (method === 'codexhost/account/logout') {
+      if (!this.requestOfficial) throw new Error('Official Codex logout is unavailable');
+      await this.requestOfficial('account/logout', undefined);
+      return this.codexAccounts.signedOutOfficial();
+    }
+    if (method === 'codexhost/account/rate-limit-reset/consume') return this.codexAccounts.consumeReset(params.accountId, params.idempotencyKey);
     if (method === 'codexhost/harness/account/login') {
       const extId = params.harnessId;
       const meta = HARNESS_AUTH_INFO[extId] || HARNESS_AUTH_INFO[ALIASES[extId]];
@@ -571,15 +611,22 @@ class NativeProtocol {
     }
     if (method === 'thread/start') {
       const route = decodeRoute(params.model);
-      if (!route) return undefined;
-      const id = ALIASES[route.harnessId] || route.harnessId;
+      const accountContext = typeof params.__codexhostAccountId === 'string'
+        ? this.codexAccounts.executionContext(params.__codexhostAccountId) : null;
+      if (!route && !accountContext) return undefined;
+      const effectiveRoute = route || { harnessId: 'codex-harness', ...(typeof params.model === 'string' ? { model: { id: params.model } } : {}) };
+      const id = ALIASES[effectiveRoute.harnessId] || effectiveRoute.harnessId;
       if (!this.runtime.adapters.has(id)) throw new Error(`Unsupported Harness: ${id}`);
       if (params.ephemeral && params.threadSource) throw new Error('Ephemeral background thread is not supported');
       const isWorktree = params.worktree === true || params.options?.worktree === true;
+      const selectedModel = accountContext && typeof params.model === 'string'
+        ? (await this.runtime.describe(id)).models.find(model => model.id === params.model)
+        : await this.resolveModel(id, effectiveRoute.model);
       const created = await this.runtime.createThread({ harnessId: id, cwd: params.cwd, ephemeral: params.ephemeral === true,
         worktree: isWorktree,
         options: {
-          model: await this.resolveModel(id, route.model), thinking: route.thinkingOptionId, permissionMode: route.permissionModeId,
+          model: selectedModel, thinking: effectiveRoute.thinkingOptionId, permissionMode: effectiveRoute.permissionModeId,
+          ...(accountContext || {}),
           ...(isWorktree ? { worktree: true } : {}),
         } });
       if (created.error) throw new Error(created.error);
@@ -697,8 +744,12 @@ class NativeProtocol {
     }
     // 原地切换 Harness：会话历史保留，下条消息携带一次性上下文信封（/switch 指令的 RPC 等价物）
     if (method === 'codexhost/thread/harness/switch') {
-      await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, { note: typeof params.note === 'string' ? params.note : undefined });
-      return { threadId: thread.id };
+      await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, {
+        note: typeof params.note === 'string' ? params.note : undefined,
+        intent: params.intent,
+        includes: params.includes,
+      });
+      return { threadId: thread.id, checkpointId: thread.pendingHandoff.checkpointId };
     }
     if (method === 'thread/fork' || method === 'codexhost/thread/fork') {
       if (params.ephemeral || params.threadSource || params.excludeTurns) {
@@ -831,6 +882,6 @@ class NativeProtocol {
     this.approvals.delete(message.id);
     return true;
   }
-  close() { this.unsubscribe(); this.unsubscribeRuntime(); }
+  close() { this.codexAccounts.close(); this.unsubscribe(); this.unsubscribeRuntime(); }
 }
 module.exports = { NativeProtocol, decodeRoute, projectItem, externalId, routeModel };

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { RendererCodexAccountState } from "../src/renderer-codex-account-state.js";
+import {
+  codexAccountRouteOverride,
+  RendererCodexAccountState,
+} from "../src/renderer-codex-account-state.js";
 import { createRendererModelClient } from "../src/renderer-model-client.js";
 
 const account = (accountId: string, active = false) => ({
@@ -17,6 +20,15 @@ function createState(sendRequest: (method: string, params: unknown) => Promise<u
 }
 
 describe("Host-scoped Codex Account state", () => {
+  it("routes isolated Accounts through Harness Mix even when they are the active default", () => {
+    const accounts = [
+      { ...account("official"), management: "native" as const },
+      { ...account("work", true), management: "isolated" as const },
+    ];
+    expect(codexAccountRouteOverride(accounts, "work")).toBe("work");
+    expect(codexAccountRouteOverride(accounts, "official")).toBeNull();
+  });
+
   it("coalesces concurrent refreshes on the same concrete client", async () => {
     const response = Promise.withResolvers<unknown>();
     const sendRequest = vi.fn(() => response.promise);

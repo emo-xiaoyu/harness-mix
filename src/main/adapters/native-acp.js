@@ -237,13 +237,12 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
       async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
       async describeFor(s) { return catalog(s); },
       async listModelsFor(s) { return catalog(s).models; },
-      async open({ thread, emit, diagnostic = () => {}, collaboration }) {
+      async open({ thread, emit, diagnostic = () => {}, collaboration, managedMcp = [] }) {
         const s = { vendor: id, cwd: thread.cwd, nativeSessionId: thread.restore ? thread.nativeSessionId : null,
           generation: 0, loading: true, active: false, closed: false, fault: null, emit, diagnostic,
           environment: thread.environment || {}, tools: new Map(), charges: new Map(), confirmed: {},
           state: { configOptions: [], models: null, modes: null, commands: [], usage: {} },
-          mcpServers: collaboration ? [{ name: 'harness-mix', command: collaboration.command, args: collaboration.args,
-            env: Object.entries(collaboration.env).map(([name, value]) => ({ name, value })) }] : [],
+          mcpServers: require('./managed-mcp').acpServers(managedMcp, collaboration),
           collaborationEnabled: !!collaboration,
         };
         s.interactions = new AcpInteractions(s, id);
@@ -430,6 +429,7 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
     };
     return adapter;
   }
+  manifest.integrations = { mcp: true };
   return { manifest, create };
 }
 module.exports = { nativeAcp, catalog, project };

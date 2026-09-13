@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5 — 2026-09-13
+
+- Added graphical cross-Harness task handoff in the native Codex Desktop composer, with continue, execute-plan, independent-review, and reanalyze modes.
+- Added persistent, hashed handoff checkpoints with bounded redacted conversation, plan, file, Git, test, build, command, and error evidence.
+- Added task-scoped read-only MCP access for capable Harnesses while preserving bounded-summary fallback for other native protocols.
+- Added native Codex account management and Harness-scoped MCP/Skills integration controls.
+- Preserved native ownership of sessions, models, tools, credentials, permissions, and approvals across handoffs.
+
 ## 0.1.3 — 2026-09-13
 
 - Added multi-agent collaboration support (@ mentions composer, thread delegation, worktree isolation).

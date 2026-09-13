@@ -278,12 +278,13 @@ describe("Renderer fixed Model request client", () => {
         },
       })
       .mockResolvedValueOnce({ status: null })
-      .mockResolvedValueOnce({ threadId: "thread-1" });
+      .mockResolvedValueOnce({ threadId: "thread-1", checkpointId: "handoff-1" });
     const client = createRendererModelClient([{ addNotificationCallback, sendRequest }]);
     if (!client) throw new Error("Synthetic Model client was not created");
     expect(Object.keys(client).sort()).toEqual([
       "activateCodexAccount",
       "cancelCodexAccountLogin",
+      "changeSkill",
       "checkUpdate",
       "consumeCodexAccountResetCredit",
       "createCodexAccount",
@@ -299,18 +300,24 @@ describe("Renderer fixed Model request client", () => {
       "inspectThreadCommands",
       "inspectThreadUsage",
       "installHarness",
+      "integrationCatalog",
       "listCodexAccounts",
       "listCollaborationAgents",
       "listHarnessAccounts",
       "listHarnessPlugins",
       "listHarnessSessions",
+      "listIntegrations",
       "listSessionImportSources",
       "listThreadOwnership",
       "loginHarnessAccount",
+      "logoutCodexAccount",
       "messageThread",
       "openHarnessWebUi",
+      "readCurrentVersion",
       "readUpdateStatus",
       "refreshCodexAccounts",
+      "removeMcp",
+      "saveMcp",
       "selectThreadModel",
       "selectThreadPermissionMode",
       "selectThreadThinking",
@@ -444,7 +451,7 @@ describe("Renderer fixed Model request client", () => {
         harnessId: "claude-code",
         note: "继续补测试",
       }),
-    ).resolves.toEqual({ threadId: "thread-1" });
+    ).resolves.toEqual({ threadId: "thread-1", checkpointId: "handoff-1" });
     expect(sendRequest).toHaveBeenNthCalledWith(13, THREAD_HARNESS_SWITCH_METHOD, {
       threadId: "thread-1",
       harnessId: "claude-code",

@@ -245,7 +245,7 @@ async function loadSdk() {
 }
 
 /** 建立一个常驻 SDK 会话（open 与 fork 共用）：构造 query、启动事件泵 */
-function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration, onPlanLimit }) {
+function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration, managedMcp = [], onPlanLimit }) {
   const input = new MessageQueue();
   const session = {
     nativeSessionId: resumeId || newSessionId,
@@ -265,7 +265,8 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
     prompt: input,
     options: {
       cwd,
-      ...(collaboration ? { mcpServers: { 'harness-mix': collaboration } } : {}),
+      mcpServers: require('./managed-mcp').namedServers(managedMcp, collaboration),
+      settingSources: ['user', 'project', 'local'],
       ...(resumeId ? { resume: resumeId } : {}),
       ...(!resumeId && newSessionId ? { sessionId: newSessionId } : {}),
       ...(effort ? { effort } : {}),
@@ -373,7 +374,11 @@ function create() {
         : { available: true, detail: "Agent SDK 就绪（内置原生 CLI；未检测到独立 claude 命令）" };
     },
 
-    async open({ thread, emit, collaboration }) {
+    async inspectIntegrations(session) {
+      const rows = await session.query.mcpServerStatus();
+      return rows.map(row => ({ name: row.name, status: row.status, tools: (row.tools || []).map(t => t.name) }));
+    },
+    async open({ thread, emit, collaboration, managedMcp }) {
       const sdk = await loadSdk();
       return spawnSession(sdk, {
         cwd: thread.cwd,
@@ -384,6 +389,7 @@ function create() {
         modelId: thread.options?.model?.id,
         emit,
         collaboration,
+        managedMcp,
         onPlanLimit,
       });
     },
@@ -509,6 +515,7 @@ function create() {
   };
 }
 
+manifest.integrations = { mcp: true, skills: { global: ['.claude/skills'], project: ['.claude/skills'], overrides: { '.claude/skills': { env: 'CLAUDE_CONFIG_DIR', suffix: 'skills' } } } };
 module.exports = {
   manifest,
   create,

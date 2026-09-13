@@ -127,10 +127,17 @@ export {
 } from "./external-thread-fork.js";
 export type { ExternalThreadForkParams, ExternalThreadForkResult } from "./external-thread-fork.js";
 export {
+  harnessHandoffIncludesSchema,
+  harnessHandoffIntentSchema,
   threadHarnessSwitchParamsSchema,
   threadHarnessSwitchResultSchema,
 } from "./thread-harness-switch.js";
-export type { ThreadHarnessSwitchParams, ThreadHarnessSwitchResult } from "./thread-harness-switch.js";
+export type {
+  HarnessHandoffIncludes,
+  HarnessHandoffIntent,
+  ThreadHarnessSwitchParams,
+  ThreadHarnessSwitchResult,
+} from "./thread-harness-switch.js";
 export {
   HARNESS_PERMISSION_MODE_CATALOG_MAX_LENGTH,
   HARNESS_PERMISSION_MODE_DESCRIPTION_MAX_LENGTH,

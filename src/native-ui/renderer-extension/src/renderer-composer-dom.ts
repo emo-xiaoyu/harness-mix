@@ -48,6 +48,11 @@ import {
   mountRendererHarnessCommandControl,
   type RendererHarnessCommandControl,
 } from "./renderer-harness-command-control.js";
+import {
+  mountRendererHarnessHandoff,
+  type RendererHarnessHandoffControl,
+  type RendererHarnessHandoffRequest,
+} from "./renderer-harness-handoff.js";
 
 export { CONTROL_ATTRIBUTE };
 export type ExternalModelControlView = RendererModelControlView;
@@ -93,6 +98,7 @@ export interface ComposerAgentControl {
   usage: RendererUsageControl | null;
   composerId: string;
   harnessCommands: RendererHarnessCommandControl;
+  harnessHandoff: RendererHarnessHandoffControl;
   sendButton: HTMLButtonElement;
   sendDisabledBeforeSwitch: boolean | null;
 }
@@ -610,6 +616,7 @@ export function mountComposerAgentControl(
   onSelectThinking: (thinkingOptionId: string) => void,
   onSelectPermissionMode: (permissionModeId: string) => void,
   onSelectCommand: (command: HarnessCommandDescriptor) => void,
+  onConfirmHandoff: (request: RendererHarnessHandoffRequest) => void,
 ): ComposerAgentControl {
   const nativeModelControl = captureNativeControl(nativeModelControlForComposer(composer));
   const nativeContextUsageControl = captureNativeControl(
@@ -642,6 +649,7 @@ export function mountComposerAgentControl(
     trailingActionAnchor(sendButton),
     onSelectCommand,
   );
+  const harnessHandoff = mountRendererHarnessHandoff(composerId, onConfirmHandoff);
 
   const permissionParent = nativePermissionModeControl?.element.parentElement;
   if (permissionParent && nativePermissionModeControl && nativePermissionModeControlVerified) {
@@ -665,6 +673,7 @@ export function mountComposerAgentControl(
     credits,
     usage: null,
     harnessCommands,
+    harnessHandoff,
     sendButton,
     sendDisabledBeforeSwitch: null,
   } satisfies ComposerAgentControl;
@@ -776,6 +785,7 @@ export function disposeComposerAgentControl(control: ComposerAgentControl): void
   control.usage?.dispose();
   control.usage = null;
   control.harnessCommands.dispose();
+  control.harnessHandoff.dispose();
   control.permissionModePicker.dispose();
   control.modelPicker.dispose();
   control.picker.dispose();

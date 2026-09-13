@@ -79,7 +79,7 @@ describe("Renderer Agent picker presentation", () => {
           isDefault: false,
         },
       ),
-    ).toBe("Agent: Codex · reviewer@example.com (locked)");
+    ).toBe("Agent: Codex（官方原生） · reviewer@example.com (locked)");
     expect(rendererAgentPickerTooltip({ agent: "claude-code", phase: "locked" }, undefined)).toBe(
       "Agent: Claude Code (locked)",
     );
@@ -94,7 +94,7 @@ describe("Renderer Agent picker presentation", () => {
         "grok",
       ]),
     ).toEqual({
-      label: "Codex",
+      label: "Codex（官方原生）",
       triggerDisabled: false,
       nativeModelHidden: false,
       optionDisabled: { codex: false, pi: true, "claude-code": true, grok: true },
@@ -107,25 +107,56 @@ describe("Renderer Agent picker presentation", () => {
     expect(
       rendererAgentPickerView({ agent: "codex", phase: "draft" }, "ready", false, ["codex"], {}, 2),
     ).toMatchObject({
-      label: "Codex",
+      label: "Codex（官方原生）",
       triggerDisabled: false,
       optionDisabled: { codex: false },
     });
   });
 
-  it("hides the native Model for an external Agent and locks submitted selection", () => {
+  it("turns a submitted external Agent picker into a Harness handoff picker", () => {
     expect(
-      rendererAgentPickerView({ agent: "pi", phase: "locked" }, "ready", false, ["codex", "pi"], {
-        pi: "ready",
-      }),
+      rendererAgentPickerView(
+        { agent: "pi", phase: "locked" },
+        "ready",
+        false,
+        ["codex", "pi", "claude-code"],
+        { pi: "ready", "claude-code": "ready" },
+      ),
     ).toEqual({
       label: "Pi",
-      triggerDisabled: true,
+      triggerDisabled: false,
       nativeModelHidden: true,
-      optionDisabled: { codex: true, pi: true },
-      downloadVisible: { pi: false },
-      errorVisible: { pi: false },
+      optionDisabled: { codex: true, pi: true, "claude-code": false },
+      downloadVisible: { pi: false, "claude-code": false },
+      errorVisible: { pi: false, "claude-code": false },
     });
+  });
+
+  it("offers another ready external Harness while keeping official Codex unavailable", () => {
+    expect(
+      rendererAgentPickerView(
+        { agent: "pi", phase: "locked" },
+        "ready",
+        false,
+        ["codex", "pi", "claude-code", "grok"],
+        { pi: "ready", "claude-code": "ready", grok: "unavailable" },
+      ),
+    ).toMatchObject({
+      triggerDisabled: false,
+      optionDisabled: { codex: true, pi: true, "claude-code": false, grok: true },
+    });
+  });
+
+  it("keeps an official Codex conversation locked because HostRuntime does not own it", () => {
+    expect(
+      rendererAgentPickerView(
+        { agent: "codex", phase: "locked" },
+        "ready",
+        false,
+        ["codex", "pi"],
+        { pi: "ready" },
+      ),
+    ).toMatchObject({ triggerDisabled: true, optionDisabled: { codex: true, pi: true } });
   });
 
   it("hides the native Model and disables all choices while switching", () => {
@@ -145,7 +176,7 @@ describe("Renderer Agent picker presentation", () => {
         pi: "notInstalled",
       }),
     ).toEqual({
-      label: "Codex",
+      label: "Codex（官方原生）",
       triggerDisabled: false,
       nativeModelHidden: false,
       optionDisabled: { codex: false, pi: true },
@@ -160,7 +191,7 @@ describe("Renderer Agent picker presentation", () => {
         pi: "error",
       }),
     ).toEqual({
-      label: "Codex",
+      label: "Codex（官方原生）",
       triggerDisabled: false,
       nativeModelHidden: false,
       optionDisabled: { codex: false, pi: true },

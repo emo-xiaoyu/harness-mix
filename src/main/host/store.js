@@ -3,9 +3,9 @@ const path = require("node:path");
 
 /** 线程记录的 JSON 持久化：折叠排队保存 + tmp 文件原子替换，避免中间状态内存堆积 */
 class Store {
-  constructor(directory) {
+  constructor(directory, filename = "threads.json") {
     this.directory = directory;
-    this.file = path.join(directory, "threads.json");
+    this.file = path.join(directory, filename);
     this.writing = false;
     this.pendingData = null;
     this.pendingResolvers = [];

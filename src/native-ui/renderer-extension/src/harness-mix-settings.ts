@@ -14,6 +14,7 @@ import {
   updatesPage,
 } from './settings/pages.js';
 import { installRendererSettingsShell, type RendererSettingsShell } from './settings/shell.js';
+import { createIntegrationsSettingsPage } from './settings/integrations-page.js';
 import {
   installRendererSettingsHeaderTrigger,
   type RendererSettingsHeaderTriggerControl,
@@ -37,8 +38,9 @@ export function installRendererSettingsLifecycle(
     const pages = [
       createConnectionsSettingsPage(messages, options.getConnectionDiagnostics ?? (() => null)),
       createAccountsSettingsPage(messages, options.getAccountClient ?? (() => null)),
+      createIntegrationsSettingsPage(messages, options.getIntegrationsClient ?? (() => null)),
       updatesPage(messages, options.getUpdateClient ?? (() => null)),
-      aboutPage(messages),
+      aboutPage(messages, options.getUpdateClient ?? (() => null)),
     ];
     const nextShell = installRendererSettingsShell(pages, messages, ownerWindow.document);
     const nextTrigger = installRendererSettingsHeaderTrigger({

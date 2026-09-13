@@ -10,7 +10,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
   ⭐ 如果这个项目对你有帮助，请给我们一个 <a href="https://github.com/emo-xiaoyu/harness-mix">Star</a>！ ⭐
 </p>
 
-<p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness。</strong></p>
+<p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness，并让任务在它们之间无缝接力。</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
@@ -68,14 +68,27 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - 在 Codex Desktop 原生输入框中选择 Harness 并发起会话。
 - 流式呈现回答、思考、命令执行、工具调用、文件变更和上下文压缩。
 - 调用每个 Harness 原生提供的模型、权限、上下文用量和快捷指令。
-- 会话中原地切换 Harness（`/switch <Harness 名> [备注]` 或 `codexhost/thread/harness/switch`）：会话历史与文件现场保留在 Host 线程上，切换后首轮自动携带一次性上下文信封；切回旧 Harness 时按其原生机制（Pi `--session` / Claude `resume`）恢复原会话。
+- 会话中可从原生 Harness 选择器图形化“接力当前任务”：选择目标、接力模式、交接内容和可选说明后确认；会话历史与文件现场保留在 Host 线程上。Host 会持久化脱敏的接力检查点，首轮发送紧凑摘要；支持原生 MCP 的 Harness 还可按当前任务作用域读取历史、计划、文件与测试证据。`/switch <Harness 名> [备注]` 保留为键盘入口；切回旧 Harness 时按其原生机制（Pi `--session` / Claude `resume`）恢复原会话。
 - 原生 Diff、审批与提问组件直接渲染，审批路由回原生 Harness，不代替用户作出权限决定。
 - CodeBuddy、Kiro 和 Cursor 使用原生 ACP 加厂商专用接口：提问、计划确认、配置确认、取消恢复、上下文与历史按各自协议处理。功能和验证范围见下表，不将通用 ACP 能力视为所有 CLI 都已支持。
 - 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
+- 在原生设置中的「MCP / Skills」按 Harness 管理全局/项目 MCP 和已确认的原生 Skills 目录；配置在下一次原生会话打开时生效，凭据和审批继续由原生 Harness 管理。
 
 <p align="center">
   <img src="docs/images/codex-desktop-session.png" width="960" alt="Codex Desktop 原生会话中的 Harness Mix">
 </p>
+
+## 特色功能：跨 Harness 任务接力
+
+一个 Harness 负责分析，另一个执行方案，再切回原 Harness 复核——整个过程都留在同一个 Codex Desktop 原生任务窗口中。点击输入框旁带接力角标的 Harness 图标，选择目标 Harness 和接力方式即可，不需要复制 Prompt、另开终端或重新整理上下文。
+
+- **现场不丢**：保留任务标题、对话记录、工作目录、未提交文件、Git 状态和 Review 记录。
+- **上下文可追溯**：Host 创建持久化、带内容哈希的接力检查点；目标先收到紧凑摘要，支持原生 MCP 时还可按需读取历史、计划、文件与脱敏测试证据。
+- **四种接力方式**：继续执行、执行上一方案、独立审查、重新分析，可在确认弹窗中选择要交接的内容并补充说明。
+- **可以切回来**：每个 Harness 的原生 Session、模型和选项独立保存；切回时使用其原生恢复能力继续原会话。
+- **原生安全边界不变**：不迁移账号凭据、审批决定、待审批状态、原始 Tool Call ID 或私有协议对象；目标 Harness 必须重新核对真实工作区并自行发起权限请求。
+
+不支持按需读取工具的 Harness 会明确退化为有界摘要，不会伪装成完整上下文迁移。完整流程、数据结构和验收边界见 [跨 Harness 接力设计](docs/harness-handoff-design.md) 与 [Harness 管理说明](docs/harness-management.md)。
 
 ## 原生接入
 

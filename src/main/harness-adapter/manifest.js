@@ -1,3 +1,4 @@
+const path = require('node:path');
 const { CAPABILITY_GROUPS, createCapabilities } = require('../shared-contracts');
 
 // Adapter Manifest 校验与能力归一化（§22）。
@@ -17,6 +18,20 @@ function validateManifest(manifest) {
   if (typeof manifest.id !== 'string' || !manifest.id) errors.push('manifest.id is required');
   if (typeof manifest.name !== 'string' || !manifest.name) errors.push('manifest.name is required');
   if (manifest.icon != null && typeof manifest.icon !== 'string') errors.push('manifest.icon must be a string');
+  if (manifest.integrations != null) {
+    const integrations = manifest.integrations;
+    if (!integrations || typeof integrations !== 'object' || Array.isArray(integrations)) errors.push('manifest.integrations must be an object');
+    else {
+      if (typeof integrations.mcp !== 'boolean') errors.push('manifest.integrations.mcp must be a boolean');
+      if (integrations.skills != null) {
+        const skills = integrations.skills;
+        if (!skills || typeof skills !== 'object' || Array.isArray(skills)) errors.push('manifest.integrations.skills must be an object');
+        else for (const scope of ['global', 'project']) {
+          if (!Array.isArray(skills[scope]) || skills[scope].some(value => typeof value !== 'string' || path.isAbsolute(value) || value.includes('..'))) errors.push(`manifest.integrations.skills.${scope} must contain safe relative paths`);
+        }
+      }
+    }
+  }
   const caps = manifest.capabilities;
   if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
     errors.push('manifest.capabilities must be an object');

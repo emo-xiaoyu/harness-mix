@@ -41,7 +41,9 @@ async function main() {
     const ownership = await request('harness-mix/runtime/inspect', {});
     assert.equal(ownership.owner, 'harness-mix');
     assert.equal(ownership.core, 'src/main/protocol-core/protocol-core.js');
+    assert.deepEqual(ownership.codex, { mode: 'official-passthrough', managedRoute: 'codex-harness' });
     report.checks.push('Harness Mix HostRuntime and ProtocolCore own external execution');
+    report.checks.push('official Codex route is separate from the managed Codex worker');
     const plugins = await request('codexhost/harness/plugins/list', {});
     assert.ok(plugins.plugins.some(plugin => (plugin.id || plugin.manifest?.id) === 'pi'), 'Pi plugin registered');
     report.checks.push('external harness plugins registered');
@@ -54,6 +56,43 @@ async function main() {
     const officialModels = await request('model/list', {});
     assert.ok(Array.isArray(officialModels.data), 'Official model/list passes through');
     report.checks.push('official model/list passthrough');
+    const codexAccounts = await request('codexhost/account/refresh', {});
+    const officialAccount = codexAccounts.accounts?.find(account => account.management === 'native');
+    assert.ok(officialAccount, 'Official Codex account is projected into Account management');
+    assert.equal(officialAccount.authenticated, true, 'Current official Codex login is detected');
+    assert.ok(officialAccount.email, 'Current ChatGPT account identity is available from account/read');
+    const officialAccountUsage = await request('codexhost/account/usage/inspect', { accountId: officialAccount.accountId });
+    assert.ok(officialAccountUsage.accountCredits, 'Official Codex rate limits are projected');
+    report.account = {
+      authenticated: officialAccount.authenticated,
+      planType: officialAccount.planType || null,
+      fiveHourUsedPercent: officialAccountUsage.usage?.planFiveHourUsedPercent ?? null,
+      sevenDayUsedPercent: officialAccountUsage.usage?.planSevenDayUsedPercent ?? null,
+    };
+    report.checks.push('real official Codex account and rate-limit projection');
+    if (process.argv.includes('--live-codex')) {
+      const native = await request('thread/start', { cwd: directory });
+      const nativeThreadId = native.thread?.id;
+      assert.ok(nativeThreadId, 'Official Codex thread/start returns a native Thread');
+      const nativeTurn = await request('turn/start', {
+        threadId: nativeThreadId,
+        input: [{ type: 'text', text: 'Reply with exactly HARNESS_MIX_CODEX_PASSTHROUGH_OK. Do not use tools.' }],
+      });
+      const nativeTurnId = nativeTurn.turn?.id;
+      assert.ok(nativeTurnId, 'Official Codex turn/start returns a native Turn');
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline && !events.some(event => event.method === 'turn/completed' && event.params?.threadId === nativeThreadId && event.params?.turn?.id === nativeTurnId)) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      const completed = events.find(event => event.method === 'turn/completed' && event.params?.threadId === nativeThreadId && event.params?.turn?.id === nativeTurnId);
+      assert.equal(completed?.params?.turn?.status, 'completed', 'Official Codex Turn completes through the passthrough path');
+      const text = events.filter(event => event.params?.threadId === nativeThreadId && event.params?.turnId === nativeTurnId)
+        .map(event => event.params?.delta || event.params?.item?.text || '').join('');
+      assert.ok(text.includes('HARNESS_MIX_CODEX_PASSTHROUGH_OK'), 'Official Codex response reaches Desktop protocol unchanged');
+      await request('thread/delete', { threadId: nativeThreadId }).catch(() => {});
+      report.codex = { threadId: nativeThreadId, turnId: nativeTurnId, status: completed.params.turn.status };
+      report.checks.push('real official Codex thread/turn passthrough');
+    }
     // Real Host + stock-server section catalog, with test threads isolated in output/.
     const sidebarThread = await request('thread/start', { cwd: directory, model: 'codexhost/pi-native' });
     const sidebarId = sidebarThread.thread.id;

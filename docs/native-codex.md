@@ -5,22 +5,31 @@
 ## 调用链
 
 ```text
-Codex Desktop 原生输入框 / Harness 选择器
-  → 本地编译的 Harness Mix CLI Shim (harness-mix-shim.exe)
-  → Harness Mix 原生 Host 入口 (src/main/native/host.js)
-  → Harness Mix 本地 HostRuntime (src/main/host/runtime.js) & ProtocolCore
-  → 本地 Harness 适配器（Pi / Claude Code / DeepSeek / Antigravity / Codex / CodeBuddy / Kiro / Cursor / Qoder）
-  → Codex app-server 事件投影 (src/main/native/protocol.js)
-  → Codex Desktop 原生流式文本、工具、审批和 Diff 组件
+官方 Codex：
+Codex Desktop → Harness Mix Shim/Host 多路复用器 → 官方 Codex app-server
+
+其他 Harness 与显式的 Codex 协作 Worker：
+Codex Desktop → Harness Mix Shim/Host → HostRuntime/ProtocolCore → 原生 Harness
 ```
+
+选择器中的 `Codex（官方原生）` 使用第一条路径。它的 `thread/start`、`thread/resume`、`turn/start`、`turn/interrupt`、Fork、压缩、工具、审批、模型和 Usage 请求不进入 HostRuntime，由官方 app-server 处理。Host 只负责把同一连接上的官方消息转发给 Desktop，并在 `thread/list` 首页加入其他 Harness 的任务。
+
+`Codex（Harness Mix 协作）` 是显式的受管 Worker 路由，用于跨 Harness 委派；它通过 Codex Adapter 进入 HostRuntime。两个入口名称和线程所有权分开，避免把协作 Worker 误认为官方 Codex 主路径。
+
+## Codex 多账号
+
+「设置 → 账号」保留官方 Codex Desktop 账号，并允许添加最多 127 个附加账号。每个附加账号使用 `%APPDATA%\harness-mix\codexhost\codex-accounts\profiles\<account-id>` 作为独立 `CODEX_HOME`；设备码登录、`auth.json`、令牌刷新、额度与原生会话均由该目录对应的 Codex app-server 所有。Harness Mix 的 `accounts.json` 只记录账号档案 ID、显示名、创建时间和默认选择，不读取或复制认证内容。
+
+账号页会从每个账号的原生 `account/read` 与 `account/rateLimits/read` 读取套餐、5 小时/7 天已用或剩余额度及刷新时间。编辑器 Agent 菜单可直接选择账号；官方账号仍走官方直通路径，附加账号的新任务进入同一套 Desktop Thread/Turn/工具/审批/Diff 界面并固定到所选账号。更改默认账号不会迁移或中断已运行任务。
 
 外部 Thread 支持「调整方向」：会话运行中发送新消息会取消当前 Turn、等待其完全终结（含文件快照结算），再将新输入作为独立新 Turn 启动；超时、目标过期或并发冲突一律失败，绝不自动启动非预期 Turn。
 
-这是完全内化于本项目的自研自建架构：
+Harness Mix 的多 Harness 部分是本项目自研自建架构：
 - **无上游 npm 依赖**：Launcher、Shim、Host Runtime 与 Renderer 扩展源码均维护在本项目（`src/main/native` 与 `src/native-ui`），不依赖任何上游 npm 包。
-- **内核 100% 属于 Harness Mix**：由本项目的 `HostRuntime`、`ProtocolCore` 与原生适配器（`src/main/adapters`）直接管理会话生命周期、模型调用、多轮对话、交互审批与文件差异。
+- **官方 Codex 保持官方所有权**：账号、凭据、会话、模型调用、工具、审批和权限由官方 app-server 管理；Harness Mix 不把官方 Codex Thread 导入自己的 HostRuntime。
+- **外部 Harness 由本地内核管理**：`HostRuntime`、`ProtocolCore` 与原生适配器管理外部 Harness 的会话映射、事件投影和协作。
 - **图标与资源自主集成**：Harness 品牌图标及各厂商模型图标直接从 `src/assets/icons` 提取并在本地编译时嵌入 Renderer 扩展。
-- **单内核**：原生模式接入 Codex 原生 UI，会话内核只有 HostRuntime + ProtocolCore 一套。
+- **同一套 UI**：两条执行路径都复用 Codex Desktop 的会话、工具、审批和 Diff 组件。
 
 ## 启动与配置
 
@@ -52,6 +61,8 @@ npm start
 ## Shim 与原生组件（Rust）
 
 `harness-mix-shim.exe`、`harness-mix-appx.exe` 与 `harness-mix-secret.exe` 由 `src/main/native/rs` 下的 Rust workspace 构建（`npm run build:native`），零外部 crate 依赖：Shim 仅用 std 并给自身挂 kill-on-close Job Object，AppX 手写 COM 声明，Secret 手写 DPAPI/kernel32 声明；任意干净的 Rust 工具链即可构建。Shim 产物经 e2e:native 全链路验证，Job Object 级联清理由 `npm run test:native-job-object` 验证。
+
+Shim 只接管作为 Desktop 协议端点的普通 `app-server`。`app-server proxy`、`app-server daemon`、普通 Codex 命令、参数值中的同名文本以及未知的新命令形态都直接交给官方 CLI；未知语法默认保持 Codex 可用，不猜测为 Harness Mix 路由。
 
 ## 进程监管
 

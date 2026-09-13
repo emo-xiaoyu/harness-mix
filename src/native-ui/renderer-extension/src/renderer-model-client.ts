@@ -1,3 +1,4 @@
+import { createRendererIntegrationsClient, type RendererIntegrationsClient } from './renderer-integrations-client.js';
 import {
   harnessAccountListResultSchema,
   type HarnessAccountListResult,
@@ -127,6 +128,7 @@ export const THREAD_TOKEN_USAGE_UPDATED_METHOD = "thread/tokenUsage/updated";
 export const UPDATE_CHECK_METHOD = "codexhost/update/check";
 export const UPDATE_START_METHOD = "codexhost/update/start";
 export const UPDATE_STATUS_METHOD = "codexhost/update/status";
+export const RUNTIME_VERSION_METHOD = "harness-mix/runtime/version";
 export const CODEX_ACCOUNT_LIST_METHOD = "codexhost/account/list";
 export const CODEX_ACCOUNT_REFRESH_METHOD = "codexhost/account/refresh";
 export const CODEX_ACCOUNT_CREATE_METHOD = "codexhost/account/create";
@@ -171,7 +173,7 @@ function notificationTarget(manager: RequestManagerCandidate): RequestManagerCan
   return nested && typeof nested.addNotificationCallback === "function" ? nested : null;
 }
 
-export interface RendererModelClient extends Partial<RendererSessionImportClient> {
+export interface RendererModelClient extends Partial<RendererSessionImportClient>, Partial<RendererIntegrationsClient> {
   listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>>;
   currentHostId?(): string | null;
   listHarnessPlugins?(): Promise<HarnessPluginListResult>;
@@ -197,6 +199,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   checkUpdate(): Promise<UpdateCheckResult>;
   startUpdate(): Promise<UpdateStartResult>;
   readUpdateStatus(): Promise<UpdateStatusResult>;
+  readCurrentVersion?(): Promise<{ version: string }>;
   inspectCodexAccountUsage?(input: CodexAccountUsageParams): Promise<CodexAccountUsageResult>;
   consumeCodexAccountResetCredit?(
     input: CodexAccountResetCreditConsumeParams,
@@ -213,6 +216,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   cancelCodexAccountLogin(
     input: CodexAccountLoginCancelParams,
   ): Promise<CodexAccountLoginCancelResult>;
+  logoutCodexAccount?(): Promise<CodexAccountMutationResult>;
   subscribeCodexAccountLogin(listener: (result: CodexAccountLoginCompleted) => void): () => void;
 }
 
@@ -331,6 +335,7 @@ export function createRendererModelClient(
       if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');
       return result;
     },
+    ...createRendererIntegrationsClient((method, params) => manager.sendRequest(method, params)),
     ...createRendererSessionImportClient(async (method, params) =>
       manager.sendRequest(method, params),
     ),
@@ -477,6 +482,13 @@ export function createRendererModelClient(
       );
       return updateStatusResultSchema.parse(result);
     },
+    async readCurrentVersion(): Promise<{ version: string }> {
+      const result = await manager.sendRequest(RUNTIME_VERSION_METHOD, {});
+      if (!isRecord(result) || typeof result.version !== "string" || !result.version.trim()) {
+        throw new Error("Invalid Harness Mix version response");
+      }
+      return { version: result.version.trim() };
+    },
     async inspectCodexAccountUsage(
       input: CodexAccountUsageParams,
     ): Promise<CodexAccountUsageResult> {
@@ -548,6 +560,10 @@ export function createRendererModelClient(
         codexAccountLoginCancelParamsSchema.parse(input),
       );
       return codexAccountLoginCancelResultSchema.parse(result);
+    },
+    async logoutCodexAccount(): Promise<CodexAccountMutationResult> {
+      const result = await manager.sendRequest("codexhost/account/logout", {});
+      return codexAccountMutationResultSchema.parse(result);
     },
     subscribeCodexAccountLogin(listener: (result: CodexAccountLoginCompleted) => void): () => void {
       const notifications = notificationTarget(source);

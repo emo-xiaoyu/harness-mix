@@ -24,6 +24,7 @@ const UPDATE_CHECK_TIMEOUT_MS = 5_000;
 const UPDATE_RETRY_DELAYS_MS = [1_000, 3_000, 10_000, 30_000] as const;
 
 export interface RendererSettingsLifecycleOptions {
+  getIntegrationsClient?(): import('./renderer-integrations-client.js').RendererIntegrationsClient | null;
   getUpdateClient?(): RendererUpdateClient | null;
   getConnectionDiagnostics?(): RendererConnectionDiagnostics | null;
   getAccountClient?(): RendererCodexAccountClient | null;
@@ -74,6 +75,7 @@ export function installRendererSettingsLifecycle(
         await options.openImportedThread(threadId, signal);
         if (!disposed && !signal.aborted) shell?.close();
       },
+      options.getIntegrationsClient,
     );
     const nextShell = installRendererSettingsShell(definitions, messages, ownerWindow.document);
     const nextTrigger = installRendererSettingsHeaderTrigger({

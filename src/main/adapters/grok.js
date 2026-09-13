@@ -31,7 +31,7 @@ function grokAdapter() {
         return new Promise(resolve => execFile(cli.command, cli.args, { windowsHide: true, timeout: 10000 }, (error, out) => resolve({ available: !error, detail: error ? `${name} CLI 不可用` : out.trim() })));
       },
       async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
-      async open({ thread, emit, diagnostic = () => {}, collaboration }) {
+      async open({ thread, emit, diagnostic = () => {}, collaboration, managedMcp = [] }) {
         const cli = command(args);
         const session = { cwd: thread.cwd, nativeSessionId: null, collaborationEnabled: !!collaboration, state: { configOptions: [], models: null, modes: null, commands: [], usage: undefined, loading: true }, pendingApprovals: new Map(), tools: new Map(), emit };
         session.process = new JsonlProcess(cli.command, cli.args, { cwd: thread.cwd }, {
@@ -105,7 +105,7 @@ function grokAdapter() {
           session.state.agentCapabilities = init.agentCapabilities;
           session.state.commands = init._meta?.availableCommands || [];
           // L1 会话级注入：Grok 原生协议的 session/new 自带 mcpServers 槽（ACP 形态 stdio 定义）
-          const mcpServers = collaboration ? [{ name: 'harness-mix', command: collaboration.command, args: collaboration.args, env: Object.entries(collaboration.env).map(([envName, value]) => ({ name: envName, value })) }] : [];
+          const mcpServers = require('./managed-mcp').acpServers(managedMcp, collaboration);
           const result = await session.process.request(thread.restore ? 'session/load' : 'session/new', { cwd: thread.cwd, mcpServers, ...(thread.restore ? { sessionId: thread.nativeSessionId } : {}) });
           session.nativeSessionId = result.sessionId || thread.nativeSessionId;
           session.state.configOptions = result.configOptions || result._meta?.['x.ai/sessionConfig']?.options || [];
@@ -275,3 +275,4 @@ async function doGrokCompact(session, userContext, hooks) {
   hooks?.emit?.({ kind: 'completed', finalAnswer: outcome !== 'cancelled' });
 }
 module.exports = { ...grokAdapter(), projectUsage, parseGrokCompactionUpdate, doGrokCompact };
+module.exports.manifest.integrations = { mcp: true };
