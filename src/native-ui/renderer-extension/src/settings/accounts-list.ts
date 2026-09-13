@@ -12,6 +12,10 @@ import type { RendererSettingsMessages } from "./localization.js";
 
 let resetDetailsSequence = 0;
 
+export function isCodexAccountAuthenticated(account: CodexAccountSummary): boolean {
+  return account.authenticated ?? Boolean(account.email);
+}
+
 function accountPlanLabel(planType: CodexAccountSummary["planType"]): string | null {
   if (!planType || planType === "unknown") return null;
   if (planType === "free") return "Free";
@@ -90,6 +94,7 @@ export function renderAccountRows(
     resetExpanded: boolean;
     onActivate: () => void;
     onSignIn: () => void;
+    onSignOut?: () => void;
     onDelete: () => void;
     onRetry: () => void;
     onUseReset?: () => void;
@@ -176,7 +181,7 @@ export function renderAccountRows(
     activate.addEventListener("click", input.onActivate);
     actions.append(activate);
   }
-  if (!account.email) {
+  if (!isCodexAccountAuthenticated(account)) {
     const signIn = document.createElement("button");
     signIn.type = "button";
     signIn.className = "settings-account-action";
@@ -185,6 +190,16 @@ export function renderAccountRows(
     signIn.disabled = input.actionsDisabled;
     signIn.addEventListener("click", input.onSignIn);
     actions.append(signIn);
+  }
+  if (account.management === "native" && isCodexAccountAuthenticated(account) && input.onSignOut) {
+    const signOut = document.createElement("button");
+    signOut.type = "button";
+    signOut.className = "settings-account-action";
+    signOut.textContent = messages.accountSignOut;
+    signOut.dataset.accountFocus = `${account.accountId}:logout`;
+    signOut.disabled = input.actionsDisabled;
+    signOut.addEventListener("click", input.onSignOut);
+    actions.append(signOut);
   }
   // isDefault protects the native Account home; active selects the Account for
   // new tasks. Preserve these distinct Host semantics when exposing deletion.

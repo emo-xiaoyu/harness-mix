@@ -19,6 +19,7 @@ import { requestConnectionsPageFocus } from "./settings/connections-page.js";
 import {
   rendererSettingsMessages,
   resolveRendererSettingsLocale,
+  type RendererSettingsLocale,
 } from "./settings/localization.js";
 import type { RendererAdapterStatus } from "./versioned-renderer-adapter.js";
 
@@ -30,6 +31,7 @@ function pickerGroupMessages(): Pick<
   ReturnType<typeof rendererSettingsMessages>,
   "pickerMoreAgentsLabel" | "pickerManageLink" | "pickerHideUnusedAgentsCta"
 > & {
+  readonly locale: RendererSettingsLocale;
   readonly codexAccountsLabel: string;
   readonly manageCodexAccountsLabel: string;
   readonly ownershipErrorLabel: string;
@@ -114,6 +116,8 @@ export interface RendererAgentPickerControl {
   iconSlot: HTMLElement;
   spinner: HTMLElement;
   ownershipError: HTMLElement;
+  handoffBadge: HTMLElement;
+  modeHeading: HTMLElement;
   menu: HTMLElement;
   agents: readonly RendererAgent[];
   options: Partial<Record<RendererAgent, AgentOptionControl>>;
@@ -173,11 +177,13 @@ export function rendererAgentPickerView(
   availability: AgentAvailability = {},
   codexAccountCount = 0,
 ): RendererAgentPickerView {
+  const handoffMode = state.phase === "locked" && state.agent !== "codex";
   const optionDisabled = Object.fromEntries(
     agents.map((agent) => [
       agent,
       switching ||
-        state.phase === "locked" ||
+        (state.phase === "locked" &&
+          (!handoffMode || agent === "codex" || agent === state.agent)) ||
         (agent !== "codex" && (adapterState !== "ready" || availability[agent] !== "ready")),
     ]),
   ) as Partial<Record<RendererAgent, boolean>>;
@@ -194,7 +200,10 @@ export function rendererAgentPickerView(
   return {
     label: RENDERER_AGENT_LABELS[state.agent],
     triggerDisabled:
-      switching || state.phase === "locked" || (agents.length < 2 && codexAccountCount < 2),
+      switching ||
+      (state.phase === "locked"
+        ? !handoffMode || !agents.some((agent) => optionDisabled[agent] === false)
+        : agents.length < 2 && codexAccountCount < 2),
     nativeModelHidden: switching || state.agent !== "codex",
     optionDisabled,
     downloadVisible,
@@ -291,7 +300,21 @@ export function mountRendererAgentPicker(
   ownershipError.setAttribute("aria-hidden", "true");
   ownershipError.style.display = "none";
   ownershipError.style.font = "bold 16px/1 system-ui, sans-serif";
-  trigger.append(iconSlot, spinner, ownershipError);
+  const handoffBadge = document.createElement("span");
+  handoffBadge.textContent = "↗";
+  handoffBadge.setAttribute("aria-hidden", "true");
+  handoffBadge.style.display = "none";
+  handoffBadge.style.position = "absolute";
+  handoffBadge.style.right = "1px";
+  handoffBadge.style.bottom = "0";
+  handoffBadge.style.width = "11px";
+  handoffBadge.style.height = "11px";
+  handoffBadge.style.borderRadius = "999px";
+  handoffBadge.style.background = "#4f7ff0";
+  handoffBadge.style.color = "white";
+  handoffBadge.style.font = "700 9px/11px system-ui, sans-serif";
+  handoffBadge.style.textAlign = "center";
+  trigger.append(iconSlot, spinner, ownershipError, handoffBadge);
 
   const menu = document.createElement("div");
   menu.id = `${composerId}-agent-menu`;
@@ -318,6 +341,11 @@ export function mountRendererAgentPicker(
   const options: Partial<Record<RendererAgent, AgentOptionControl>> = {};
   const rowsByAgent = new Map<RendererAgent, HTMLDivElement>();
   const groupMessages = pickerGroupMessages();
+  const modeHeading = document.createElement("div");
+  modeHeading.hidden = true;
+  modeHeading.style.padding = "6px 8px 7px";
+  modeHeading.style.font = "600 11px/1 system-ui, sans-serif";
+  modeHeading.style.opacity = "0.58";
 
   const close = (): void => {
     if (!popoverOpen(menu)) return;
@@ -634,7 +662,7 @@ export function mountRendererAgentPicker(
   regroup();
   const unsubscribeGroup = groupPreference.subscribe(regroup);
 
-  menu.append(mainGroup, moreToggle, morePanel, cta);
+  menu.append(modeHeading, mainGroup, moreToggle, morePanel, cta);
   root.append(trigger, menu);
 
   const onTriggerClick = (): void => {
@@ -692,6 +720,8 @@ export function mountRendererAgentPicker(
     iconSlot,
     spinner,
     ownershipError,
+    handoffBadge,
+    modeHeading,
     menu,
     agents: [...enabledAgents],
     options,
@@ -747,7 +777,9 @@ export function renderRendererAgentPicker(
     ownershipError
       ? pickerGroupMessages().ownershipErrorLabel
       : state.phase === "locked"
-        ? `Agent: ${view.label}`
+        ? state.agent === "codex"
+          ? `Agent: ${view.label}`
+          : `Hand off task from ${view.label}`
         : `Select Agent, current ${view.label}`,
   );
   const activeAccount = codexAccounts.find(({ active }) => active);
@@ -759,12 +791,20 @@ export function renderRendererAgentPicker(
   });
   control.trigger.title = ownershipError
     ? pickerGroupMessages().ownershipErrorLabel
-    : rendererAgentPickerTooltip(state, activeAccount);
+    : state.phase === "locked" && state.agent !== "codex"
+      ? `Hand off this task from ${view.label} to another Harness`
+      : rendererAgentPickerTooltip(state, activeAccount);
   control.trigger.style.cursor = control.trigger.disabled ? "not-allowed" : "pointer";
   control.trigger.style.opacity = control.trigger.disabled && !switching ? "0.72" : "1";
   control.iconSlot.style.display = switching || ownershipError ? "none" : "inline-flex";
   control.spinner.style.display = switching ? "block" : "none";
   control.ownershipError.style.display = ownershipError && !switching ? "block" : "none";
+  const handoffMode = state.phase === "locked" && state.agent !== "codex";
+  control.handoffBadge.style.display = handoffMode && !switching && !ownershipError ? "block" : "none";
+  control.modeHeading.hidden = !handoffMode;
+  control.modeHeading.textContent = pickerGroupMessages().locale === "zh-CN"
+    ? `接力到其他 Harness`
+    : "Hand off to another Harness";
   if (control.trigger.disabled) control.close();
 
   for (const agent of control.agents) {

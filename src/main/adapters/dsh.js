@@ -431,7 +431,7 @@ function create() {
   }).create();
   const openWeb = web.open.bind(web);
   web.open = async context => {
-    if (!context.collaboration) return openWeb(context);
+    if (!context.collaboration && !context.managedMcp?.length) return openWeb(context);
     const session = await acp.open(context);
     session.dshAcpLead = true;
     return session;
@@ -443,4 +443,5 @@ function create() {
   return web;
 }
 
+manifest.integrations = { mcp: true };
 module.exports = { manifest, create, projectWireEvent, flattenCatalog };

@@ -20,8 +20,8 @@ const helper = [
   assert.equal(redactText('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), '[redacted]');
   assert.equal(redactText('skeleton key'), 'skeleton key'); // no false positive on prose
   assert.deepEqual(
-    redact({ token: 'x', name: 'ok', nested: { api_key: 'y', list: ['Bearer zzzzzzzzzzzz'] } }),
-    { token: '[redacted]', name: 'ok', nested: { api_key: '[redacted]', list: ['[redacted]'] } },
+    redact({ token: 'x', name: 'ok', userCode: 'ABCD-EFGH', loginId: 'login-1', verificationUrl: 'https://auth.example/device', nested: { api_key: 'y', list: ['Bearer zzzzzzzzzzzz'] } }),
+    { token: '[redacted]', name: 'ok', userCode: '[redacted]', loginId: '[redacted]', verificationUrl: '[redacted]', nested: { api_key: '[redacted]', list: ['[redacted]'] } },
   );
 
   if (!helper) {

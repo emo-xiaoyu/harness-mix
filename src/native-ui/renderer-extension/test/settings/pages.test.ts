@@ -636,6 +636,67 @@ describe("Renderer Codex Accounts page", () => {
     scope.dispose();
   });
 
+  it("shows the native official Codex account and signs it out through the native client", async () => {
+    const account = {
+      accountId: "official-codex",
+      label: "native@example.com",
+      email: "native@example.com",
+      planType: "plus" as const,
+      codexHome: "/tmp/native-codex",
+      active: true,
+      isDefault: true,
+      authenticated: true,
+      management: "native" as const,
+    };
+    const logoutCodexAccount = vi.fn(async () => ({
+      account: { ...account, email: undefined, authenticated: false, label: "Official Codex Account" },
+    }));
+    const client = {
+      listCodexAccounts: vi.fn(async () => ({ accounts: [account] })),
+      createCodexAccount: vi.fn(),
+      deleteCodexAccount: vi.fn(),
+      activateCodexAccount: vi.fn(),
+      startCodexAccountLogin: vi.fn(),
+      cancelCodexAccountLogin: vi.fn(),
+      logoutCodexAccount,
+    };
+    const page = createDefaultRendererSettingsPages(
+      rendererSettingsMessages("en"),
+      () => null,
+      () => null,
+      () => client,
+    ).find(({ id }) => id === "accounts");
+    if (!page) throw new Error("Accounts page is not registered");
+
+    const document = new FakeDocument();
+    document.defaultView.confirm = vi.fn(() => true);
+    const content = document.createElement("main");
+    const scope = new RendererSettingsPageScope();
+    page.mount({
+      content: content as unknown as HTMLElement,
+      signal: scope.signal,
+      runLatest: (operation, handlers) => scope.runLatest(operation, handlers),
+    });
+
+    await vi.waitFor(() => expect(visibleText(content)).toContain("native"));
+    expect(visibleText(content)).toContain("Plus");
+    const add = descendants(content).find(
+      ({ tagName, children }) => tagName === "button" && children.includes("Add Account"),
+    );
+    expect(add?.hidden).toBe(false);
+    const signOut = descendants(content).find(
+      ({ tagName, textContent }) => tagName === "button" && textContent === "Sign out",
+    );
+    signOut?.dispatch("click");
+    await vi.waitFor(() => expect(logoutCodexAccount).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(visibleText(content)).toContain("Signed out of official Codex."));
+    expect(document.defaultView.confirm).toHaveBeenCalledWith(
+      "Sign out of the current official Codex account?",
+    );
+
+    scope.dispose();
+  });
+
   it("allows deleting only non-default Accounts", async () => {
     const deleteCodexAccount = vi.fn(async ({ accountId }: { accountId: string }) => ({
       deletedAccountId: accountId,
@@ -874,7 +935,7 @@ describe("Renderer Codex Accounts page", () => {
     });
     await vi.waitFor(() => expect(visibleText(content)).toContain("Personal"));
     expect(visibleText(content)).toContain(
-      "Existing tasks keep the account they were created with",
+      "Signing in or switching accounts does not affect tasks already running",
     );
     expect(visibleText(content)).toContain("Enable device code authorization for Codex");
     expect(visibleText(content)).not.toContain("token");
@@ -1131,8 +1192,14 @@ describe("Renderer Updates page", () => {
     scope.dispose();
   });
 
-  it("renders the open-source project introduction on the About page", () => {
-    const page = createDefaultRendererSettingsPages(rendererSettingsMessages("zh-CN")).find(
+  it("renders the live package version and open-source project introduction on the About page", async () => {
+    const client = {
+      checkUpdate: vi.fn(async () => updateCheck()),
+      startUpdate: vi.fn(),
+      readUpdateStatus: vi.fn(async () => ({ status: null })),
+      readCurrentVersion: vi.fn(async () => ({ version: "0.1.4" })),
+    };
+    const page = createDefaultRendererSettingsPages(rendererSettingsMessages("zh-CN"), () => client).find(
       ({ id }) => id === "about",
     );
     if (!page) throw new Error("About page is not registered");
@@ -1153,6 +1220,8 @@ describe("Renderer Updates page", () => {
     expect(visibleText(content)).toContain("Claude Code");
     expect(visibleText(content)).toContain("Harness Mix 是一个开源项目");
     expect(visibleText(content)).toContain("请给我们一个 Star");
+    await vi.waitFor(() => expect(visibleText(content)).toContain("v0.1.4"));
+    expect(client.readCurrentVersion).toHaveBeenCalledOnce();
     const repository = descendants(content).find(
       ({ tagName, href }) =>
         tagName === "a" && href === "https://github.com/emo-xiaoyu/harness-mix",

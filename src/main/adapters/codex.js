@@ -356,10 +356,11 @@ function create() {
         : { available: true, detail: String(result.stdout).trim() };
     },
 
-    async open({ thread, emit, diagnostic, collaboration }) {
-      const host = await CodexAppServer.acquire(diagnostic);
+    async open({ thread, emit, diagnostic, collaboration, managedMcp = [] }) {
+      const host = await CodexAppServer.acquire(diagnostic, thread.options?.codexHome);
       try {
-        const options = { ...threadOptions(thread), ...(collaboration ? { config: { 'mcp_servers.harness-mix': collaboration } } : {}) };
+        const servers = require('./managed-mcp').namedServers(managedMcp, collaboration);
+        const options = { ...threadOptions(thread), ...(Object.keys(servers).length ? { config: Object.fromEntries(Object.entries(servers).map(([name, value]) => [`mcp_servers.${name}`, value])) } : {}) };
         const result = thread.restore
           ? await host.request('thread/resume', { threadId: thread.nativeSessionId, ...options })
           : await host.request('thread/start', options);
@@ -521,7 +522,7 @@ function create() {
     async fork(source, { emit, diagnostic, message }) {
       const lastTurnId = message?.coreTurn?.nativeTurnRef?.turnId ?? message?.coreTurn?.nativeTurnRef?.checkpointId;
       if (message && !lastTurnId) throw new Error('这条回复缺少 Codex 原生 Turn ID，无法精确分支');
-      const host = await CodexAppServer.acquire(diagnostic);
+      const host = await CodexAppServer.acquire(diagnostic, source.options?.codexHome);
       try {
         const result = await host.request('thread/fork', {
           threadId: source.nativeSessionId,
@@ -556,4 +557,5 @@ function create() {
   };
 }
 
+manifest.integrations = { mcp: true, skills: { global: ['.agents/skills'], project: ['.agents/skills'] } };
 module.exports = { manifest, create, projectNotification, queueRequest, usageView, modelView };

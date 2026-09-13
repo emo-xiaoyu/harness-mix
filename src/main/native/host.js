@@ -148,6 +148,6 @@ async function runNativeHost() {
   official.on('error', error => { console.error(error); void close(); });
   official.on('exit', () => { void close(); });
   await ready;
-  console.error('[Harness Mix] native protocol -> local HostRuntime -> local ProtocolCore');
+  console.error('[Harness Mix] official Codex passthrough + external Harness routes via HostRuntime/ProtocolCore');
 }
 module.exports = { runNativeHost };

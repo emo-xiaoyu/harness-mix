@@ -46,6 +46,15 @@ export {
 } from "./renderer-model-client.js";
 export type { RendererModelClient } from "./renderer-model-client.js";
 export {
+  HARNESS_HANDOFF_NOTE_MAX_LENGTH,
+  mountRendererHarnessHandoff,
+  rendererHarnessHandoffMessages,
+} from "./renderer-harness-handoff.js";
+export type {
+  RendererHarnessHandoffControl,
+  RendererHarnessHandoffRequest,
+} from "./renderer-harness-handoff.js";
+export {
   TRANSCRIPT_ITEM_IDS_ATTRIBUTE,
   TRANSCRIPT_ITEM_SELECTOR,
   TRANSCRIPT_TEXT_BODY_SELECTOR,

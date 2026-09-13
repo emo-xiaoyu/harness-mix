@@ -89,6 +89,11 @@ export interface RendererSettingsMessages {
   readonly accountActive: string;
   readonly accountUse: string;
   readonly accountSignIn: string;
+  readonly accountSignOut: string;
+  readonly accountSignOutConfirm: string;
+  readonly accountSigningOut: string;
+  readonly accountSignedOut: string;
+  readonly accountSignOutFailed: string;
   readonly accountSigningIn: string;
   readonly accountDeviceCodePrerequisite: string;
   readonly accountVerificationDescription: string;
@@ -299,9 +304,9 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   sessionImportRetrying: "Opening...",
   connectionsDescription:
     "View runtime status by Host. Select an item to inspect details or complete its setup.",
-  accountsDescription: "Choose the default account for new Codex tasks and check account limits.",
+  accountsDescription: "Manage isolated native Codex accounts and compare each account's live limits.",
   accountTaskHint:
-    "Existing tasks keep the account they were created with. Multi-account is currently available for Codex.",
+    "Signing in or switching accounts does not affect tasks already running. New tasks use the selected account.",
   accountConnected: "Connected accounts",
   accountDefaultBadge: "Default",
   accountAdd: "Add Account",
@@ -328,6 +333,11 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   accountActive: "Default",
   accountUse: "Set as default",
   accountSignIn: "Sign in",
+  accountSignOut: "Sign out",
+  accountSignOutConfirm: "Sign out of the current official Codex account?",
+  accountSigningOut: "Signing out of official Codex...",
+  accountSignedOut: "Signed out of official Codex.",
+  accountSignOutFailed: "Could not sign out of official Codex.",
   accountSigningIn: "Starting device sign-in...",
   accountDeviceCodePrerequisite:
     "Before signing in, enable “Enable device code authorization for Codex” in Web Settings → Account security & sign-in.",
@@ -501,6 +511,7 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   pageLabels: Object.freeze({
     connections: "Connections",
     accounts: "Accounts",
+    integrations: 'MCP / Skills',
     "session-import": "Session Import",
     updates: "Updates",
     about: "About",
@@ -554,8 +565,8 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   sessionImportRetryOpen: "重试打开",
   sessionImportRetrying: "正在打开……",
   connectionsDescription: "按 Host 查看运行时状态。选择一项，在右侧检查详情或完成配置。",
-  accountsDescription: "选择新建 Codex 任务的默认账号，并查看各账号额度。",
-  accountTaskHint: "切换默认账号不会影响已开始的任务。目前仅支持 Codex 多账号。",
+  accountsDescription: "管理相互隔离的原生 Codex 账号，并对比每个账号的实时额度。",
+  accountTaskHint: "登录或切换账号不会影响已开始的任务；新任务使用当前选中的账号。",
   accountConnected: "已连接账号",
   accountDefaultBadge: "默认",
   accountAdd: "添加账号",
@@ -582,6 +593,11 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   accountActive: "默认账号",
   accountUse: "设为默认",
   accountSignIn: "登录",
+  accountSignOut: "退出登录",
+  accountSignOutConfirm: "确定退出当前官方 Codex 账号吗？",
+  accountSigningOut: "正在退出官方 Codex...",
+  accountSignedOut: "已退出官方 Codex。",
+  accountSignOutFailed: "退出官方 Codex 失败。",
   accountSigningIn: "正在启动设备登录...",
   accountDeviceCodePrerequisite:
     "登录前，请先在 Web 端的“设置 → 账号安全与登录”中开启“为 Codex 启用设备代码授权”。",
@@ -751,6 +767,7 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   pageLabels: Object.freeze({
     connections: "连接",
     accounts: "账号",
+    integrations: 'MCP / Skills',
     "session-import": "会话导入",
     updates: "更新",
     about: "关于",

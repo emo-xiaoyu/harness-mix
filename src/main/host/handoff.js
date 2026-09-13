@@ -9,13 +9,35 @@
  *   与 #send 里 [Harness Mix referenced sessions] 的注入模式一致。
  * - 历史内容一律标注 untrusted，防止旧会话内容成为高优先级指令。
  */
-const CAP = { turns: 6, charsPerTurn: 800, files: 20 };
+const CAP = {
+  messages: 10,
+  totalChars: 24_000,
+  charsPerMessage: 4_000,
+  latestAssistantChars: 12_000,
+  files: 20,
+};
+
+function conversationTail(messages) {
+  const candidates = messages
+    .filter(message => ['user', 'assistant'].includes(message.role) && typeof message.text === 'string' && message.text.trim())
+    .slice(-CAP.messages);
+  const latestAssistant = candidates.findLastIndex(message => message.role === 'assistant');
+  let remaining = CAP.totalChars;
+  const selected = [];
+  for (let index = candidates.length - 1; index >= 0 && remaining > 0; index--) {
+    const message = candidates[index];
+    const allowance = index === latestAssistant ? CAP.latestAssistantChars : CAP.charsPerMessage;
+    const text = message.text.trim().slice(0, Math.min(allowance, remaining));
+    if (!text) continue;
+    selected.push({ role: message.role, text });
+    remaining -= text.length;
+  }
+  return selected.reverse();
+}
 
 /** 从线程的 Core 同步视图提取紧凑的接续上下文（全部截断到 CAP 上限内） */
 function buildHandoffContext(thread) {
   const messages = (thread.messages ?? []).filter(m => !m.streaming);
-  const users = messages.filter(m => m.role === 'user').map(m => m.text ?? '').filter(Boolean);
-  const assistants = messages.filter(m => m.role === 'assistant').map(m => m.text ?? '').filter(Boolean);
   // file_change item 每文件一条（path/changeType 直接挂在 item 上，见 protocol-core/file-change-projector）
   const filesChanged = [...new Set(messages.flatMap(m => (m.coreItems ?? [])
     .filter(i => i.type === 'file_change' && typeof i.path === 'string')
@@ -25,9 +47,9 @@ function buildHandoffContext(thread) {
     .find(Boolean);
   return {
     cwd: thread.cwd,
+    title: thread.title ?? null,
     messageCount: messages.length,
-    userTurns: users.slice(-CAP.turns).map(t => t.slice(0, CAP.charsPerTurn)),
-    assistantTurns: assistants.slice(-CAP.turns).map(t => t.slice(0, CAP.charsPerTurn)),
+    conversationTail: conversationTail(messages),
     filesChanged,
     plan: lastPlan?.entries ?? null,
   };
@@ -43,4 +65,4 @@ function composeHandoffEnvelope({ fromHarnessId, context, note }) {
     + (note ? `\nUser note for this handoff: ${note}` : '');
 }
 
-module.exports = { buildHandoffContext, composeHandoffEnvelope };
+module.exports = { CAP, buildHandoffContext, composeHandoffEnvelope, conversationTail };

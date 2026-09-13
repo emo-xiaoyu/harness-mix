@@ -20,6 +20,16 @@ export function resolveCodexAccountSelection(
   };
 }
 
+export function codexAccountRouteOverride(
+  accounts: readonly CodexAccountSummary[],
+  accountId: string | null | undefined,
+): string | null {
+  if (!accountId) return null;
+  return accounts.find((account) => account.accountId === accountId)?.management === "isolated"
+    ? accountId
+    : null;
+}
+
 /** Owned by one Host and one concrete request client, never the active-route facade. */
 export class RendererCodexAccountState {
   accounts: readonly CodexAccountSummary[] = [];

@@ -27,6 +27,8 @@ import {
   type RendererImportedThreadOpener,
 } from "./session-import-page.js";
 import { createReleaseNotesElement } from "./release-notes.js";
+import { createIntegrationsSettingsPage } from './integrations-page.js';
+import type { RendererIntegrationsClient } from '../renderer-integrations-client.js';
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
 
 export type {
@@ -72,6 +74,7 @@ function windowsInstallerDownloadUrl(window: Window | null | undefined, version:
 export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "connections",
   "accounts",
+  "integrations",
   "session-import",
   "updates",
   "about",
@@ -83,6 +86,7 @@ export interface RendererUpdateClient {
   checkUpdate(): Promise<UpdateCheckResult>;
   startUpdate(): Promise<UpdateStartResult>;
   readUpdateStatus(): Promise<UpdateStatusResult>;
+  readCurrentVersion?(): Promise<{ version: string }>;
 }
 
 function panelIconName(view: string): RendererSettingsIconName {
@@ -154,7 +158,10 @@ function formatUpdateBytes(value: number): string {
   return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${unit}`;
 }
 
-export function aboutPage(messages: RendererSettingsMessages): RendererSettingsPageDefinition {
+export function aboutPage(
+  messages: RendererSettingsMessages,
+  getClient: () => RendererUpdateClient | null = () => null,
+): RendererSettingsPageDefinition {
   return Object.freeze({
     id: "about",
     label: messages.pageLabels.about,
@@ -177,7 +184,7 @@ export function aboutPage(messages: RendererSettingsMessages): RendererSettingsP
       versionRow.className = "settings-about-version-row";
       const versionBadge = document.createElement("span");
       versionBadge.className = "settings-about-version-badge";
-      versionBadge.textContent = "v0.1.2";
+      versionBadge.textContent = "v…";
       const checkUpdateBtn = document.createElement("button");
       checkUpdateBtn.type = "button";
       checkUpdateBtn.className = "settings-command-button settings-command-button--secondary";
@@ -219,6 +226,24 @@ export function aboutPage(messages: RendererSettingsMessages): RendererSettingsP
       repositorySection.append(openSource, repository);
       panel.append(product, tagline, versionRow, introduction, starCallout, repositorySection);
       context.content.append(heading, panel);
+      const client = getClient();
+      const readVersion = client?.readCurrentVersion
+        ? () => client.readCurrentVersion!()
+        : client
+          ? () => client.checkUpdate().then(({ currentVersion }) => ({ version: currentVersion }))
+          : null;
+      if (readVersion) {
+        void context.runLatest(readVersion, {
+          success(result) {
+            versionBadge.textContent = `v${result.version}`;
+          },
+          failure() {
+            versionBadge.textContent = "v—";
+          },
+        });
+      } else {
+        versionBadge.textContent = "v—";
+      }
       return undefined;
     },
   });
@@ -599,13 +624,15 @@ export function createDefaultRendererSettingsPages(
   getSessionImportClient: () => RendererSessionImportClient | null = () => null,
   openImportedThread: RendererImportedThreadOpener = () =>
     Promise.reject(new Error("Imported Thread navigation is unavailable")),
+  getIntegrationsClient: () => RendererIntegrationsClient | null = () => null,
 ): readonly RendererSettingsPageDefinition[] {
   return Object.freeze([
     createConnectionsSettingsPage(messages, getDiagnostics),
     createAccountsSettingsPage(messages, getAccountClient),
+    createIntegrationsSettingsPage(messages, getIntegrationsClient),
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
     updatesPage(messages, getUpdateClient),
-    aboutPage(messages),
+    aboutPage(messages, getUpdateClient),
   ]);
 }
 
@@ -616,6 +643,7 @@ export function createDefaultRendererSettingsRegistry(
   getAccountClient: () => RendererCodexAccountClient | null = () => null,
   getSessionImportClient: () => RendererSessionImportClient | null = () => null,
   openImportedThread?: RendererImportedThreadOpener,
+  getIntegrationsClient?: () => RendererIntegrationsClient | null,
 ): RendererSettingsPageRegistry {
   return createRendererSettingsPageRegistry(
     createDefaultRendererSettingsPages(
@@ -625,6 +653,7 @@ export function createDefaultRendererSettingsRegistry(
       getAccountClient,
       getSessionImportClient,
       openImportedThread,
+      getIntegrationsClient,
     ),
   );
 }

@@ -8,7 +8,7 @@ import openCodeAgentIconUrl from "./assets/opencode-agent.png";
 import type { RendererAgent } from "./agent-selection-state.js";
 
 export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
-  codex: "Codex",
+  codex: "Codex（官方原生）",
   pi: "Pi",
   "claude-code": "Claude Code",
   "deepseek-harness": "DeepSeek Harness",
@@ -24,7 +24,7 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   zcode: "ZCode",
   trae: "Trae",
   'cursor-cli': "Cursor",
-  'codex-harness': 'Codex（协作）',
+  'codex-harness': 'Codex（Harness Mix 协作）',
 };
 
 const PI_PATHS = [

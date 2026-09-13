@@ -53,11 +53,10 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
         }
       },
       async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
-      async open({ thread, emit, diagnostic = () => {}, collaboration }) {
+      async open({ thread, emit, diagnostic = () => {}, collaboration, managedMcp = [] }) {
         const cli = command(args);
         const session = { cwd: thread.cwd, nativeSessionId: null, collaborationEnabled: !!collaboration,
-          mcpServers: collaboration ? [{ name: 'harness-mix', command: collaboration.command, args: collaboration.args,
-            env: Object.entries(collaboration.env).map(([name, value]) => ({ name, value })) }] : [],
+          mcpServers: require('./managed-mcp').acpServers(managedMcp, collaboration),
           state: { configOptions: [], models: null, modes: null, commands: [], usage: undefined, loading: true }, pendingApprovals: new Map(), tools: new Map(), emit };
         session.process = new JsonlProcess(cli.command, cli.args, { cwd: thread.cwd }, {
           onDiagnostic: diagnostic,
@@ -186,6 +185,7 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
     };
     return adapter;
   }
+  manifest.integrations = { mcp: true };
   return { manifest, create };
 }
 module.exports = { acpAdapter, catalog };

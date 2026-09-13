@@ -1,6 +1,6 @@
 const { JsonlProcess, cliSpawn } = require('../host/jsonl');
 
-let shared;
+const shared = new Map();
 
 /**
  * A single native Codex app-server connection shared by every Codex thread.
@@ -8,16 +8,18 @@ let shared;
  * traffic to the Adapter session that registered the native thread id.
  */
 class CodexAppServer {
-  constructor(diagnostic) {
+  constructor(diagnostic, codexHome) {
     this.refs = 0;
     this.routes = new Map();
     this.notifications = new Set();
     this.diagnostics = new Set(diagnostic ? [diagnostic] : []);
     this.closed = false;
+    this.codexHome = codexHome ? require('node:path').resolve(codexHome) : null;
     // The Desktop-bundled CLI and the PATH CLI can be different versions.
     const executable = process.env.HARNESS_MIX_CODEX_EXECUTABLE || process.env.CODEXHOST_STOCK_CODEX_PATH;
     const { command, args } = executable ? { command: executable, args: ['app-server', '--listen', 'stdio://'] } : cliSpawn('codex', ['app-server', '--stdio']);
-    this.process = new JsonlProcess(command, args, {}, {
+    const env = { ...process.env, ...(this.codexHome ? { CODEX_HOME: this.codexHome } : {}) };
+    this.process = new JsonlProcess(command, args, { env }, {
       onEvent: (message) => this.#notification(message),
       onRequest: (message) => this.#request(message),
       onDiagnostic: (line) => this.#diagnostic(line),
@@ -36,16 +38,21 @@ class CodexAppServer {
     });
   }
 
-  static async acquire(diagnostic) {
-    if (!shared || shared.closed) shared = new CodexAppServer(diagnostic);
-    else if (diagnostic) shared.diagnostics.add(diagnostic);
-    shared.refs++;
+  static async acquire(diagnostic, codexHome) {
+    const key = codexHome ? require('node:path').resolve(codexHome).toLowerCase() : '<default>';
+    let server = shared.get(key);
+    if (!server || server.closed) {
+      server = new CodexAppServer(diagnostic, codexHome);
+      server.sharedKey = key;
+      shared.set(key, server);
+    } else if (diagnostic) server.diagnostics.add(diagnostic);
+    server.refs++;
     try {
-      await shared.ready;
-      return shared;
+      await server.ready;
+      return server;
     } catch (error) {
-      shared.refs--;
-      if (shared.refs === 0) shared.stop();
+      server.refs--;
+      if (server.refs === 0) server.stop();
       throw error;
     }
   }
@@ -78,7 +85,7 @@ class CodexAppServer {
     this.routes.clear();
     this.notifications.clear();
     this.process.stop();
-    if (shared === this) shared = undefined;
+    if (this.sharedKey && shared.get(this.sharedKey) === this) shared.delete(this.sharedKey);
   }
 
   #route(message) {
@@ -112,7 +119,7 @@ class CodexAppServer {
     this.closed = true;
     for (const route of this.routes.values()) route.onExit?.(error);
     this.routes.clear();
-    if (shared === this) shared = undefined;
+    if (this.sharedKey && shared.get(this.sharedKey) === this) shared.delete(this.sharedKey);
   }
 }
 

@@ -21,9 +21,23 @@ async function main() {
   runtime.adapters.set('pi', adapter); runtime.status.pi = { available: true };
   const events = [];
   const section = { id: 'test-pinned-section', name: 'Pinned', appearance: null };
-  const bridge = new NativeProtocol(runtime, event => events.push(event), async method => {
-    assert.equal(method, 'threadSection/list');
-    return { data: [section], nextCursor: null };
+  const officialRequests = [];
+  const bridge = new NativeProtocol(runtime, event => events.push(event), async (method, params) => {
+    officialRequests.push({ method, params });
+    if (method === 'threadSection/list') return { data: [section], nextCursor: null };
+    if (method === 'account/read') return { account: { type: 'chatgpt', email: 'native@example.com', planType: 'plus' }, requiresOpenaiAuth: true };
+    if (method === 'account/rateLimits/read') return {
+      rateLimits: {
+        primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+        secondary: { usedPercent: 29, windowDurationMins: 10080, resetsAt: 1_800_604_800 },
+      },
+      rateLimitResetCredits: { availableCount: 0, credits: [] },
+    };
+    if (method === 'account/login/start') return { type: 'chatgptDeviceCode', loginId: 'native-login', verificationUrl: 'https://auth.example.com/device', userCode: 'ABCD-EFGH' };
+    if (method === 'account/login/cancel') return { status: 'canceled' };
+    if (method === 'account/logout') return {};
+    if (method === 'account/rateLimitResetCredit/consume') return { outcome: 'reset' };
+    throw new Error(`Unexpected official request: ${method}`);
   });
   try {
     const catalogModels = [{ id: 'shared', provider: 'a' }, { id: 'shared', provider: 'b' }, { id: 'unique', provider: 'a' }];
@@ -51,6 +65,48 @@ async function main() {
     const schemaPath = path.join(root, 'schemas.cjs');
     await esbuild.build({ entryPoints: ['src/native-ui/shared-contracts/src/index.ts'], outfile: schemaPath, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
     const schemas = require(schemaPath);
+    const version = await bridge.request('harness-mix/runtime/version');
+    assert.equal(version.version, require('../package.json').version, 'About page reads the installed package version');
+    const accounts = await bridge.request('codexhost/account/list');
+    schemas.codexAccountListResultSchema.parse(accounts);
+    assert.equal(accounts.accounts[0].email, 'native@example.com', 'Official account/read is projected into Account management');
+    assert.equal(accounts.accounts[0].authenticated, true);
+    assert.equal(accounts.accounts[0].management, 'native');
+    const accountUsage = await bridge.request('codexhost/account/usage/inspect', { accountId: 'official-codex' });
+    schemas.codexAccountUsageResultSchema.parse(accountUsage);
+    assert.equal(accountUsage.usage.planFiveHourUsedPercent, 33);
+    assert.equal(accountUsage.usage.planSevenDayUsedPercent, 29);
+    assert.equal(accountUsage.accountCredits.periodType, 'five_hour');
+    assert.equal(accountUsage.accountCredits.productUsage[0].product, '7-day window');
+    const login = await bridge.request('codexhost/account/login/start', { accountId: 'official-codex' });
+    schemas.codexAccountLoginStartResultSchema.parse(login);
+    assert.equal(login.userCode, 'ABCD-EFGH');
+    assert.deepEqual(await bridge.request('codexhost/account/login/cancel', { accountId: 'official-codex', loginId: 'native-login' }), { cancelled: true });
+    const loggedOut = await bridge.request('codexhost/account/logout');
+    schemas.codexAccountMutationResultSchema.parse(loggedOut);
+    assert.equal(loggedOut.account.authenticated, false);
+    let openedCodexThread = null;
+    const codexAdapter = {
+      manifest: { id: 'codex', name: 'Codex', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true } },
+      async describe() { return { models: [{ id: 'gpt-test', name: 'GPT Test', provider: 'openai' }], thinkingLevels: [], permissionModes: [] }; },
+      async open(input) { openedCodexThread = input.thread; return { nativeSessionId: 'isolated-native-session', model: input.thread.options.model }; },
+      async send() {}, async cancel() {}, async close() {},
+    };
+    runtime.adapters.set('codex', codexAdapter);
+    runtime.status.codex = { available: true };
+    bridge.codexAccounts.close();
+    bridge.codexAccounts = {
+      executionContext(accountId) {
+        assert.equal(accountId, 'account-work');
+        return { accountId, codexHome: path.join(root, 'isolated-codex-home') };
+      },
+      close() {},
+    };
+    const isolated = await bridge.request('thread/start', { cwd: root, model: 'gpt-test', __codexhostAccountId: 'account-work' });
+    assert.equal(decodeRoute(isolated.thread.model).harnessId, 'codex-harness', 'An isolated Codex Account becomes an owned Codex adapter Thread');
+    assert.equal(openedCodexThread.options.accountId, 'account-work');
+    assert.equal(openedCodexThread.options.codexHome, path.join(root, 'isolated-codex-home'));
+    assert.equal(openedCodexThread.options.model.id, 'gpt-test');
     const inspection = await bridge.inspect('pi');
     schemas.harnessInspectionSchema.parse(inspection);
     assert.equal(inspection.catalog.defaultThinkingOptionId, 'high', 'Declared default thinking level projects to the catalog');
@@ -142,7 +198,25 @@ async function main() {
     assert.ok(runtime.execution.isRunning(threadId) && runtime.threads.find(t => t.id === threadId).currentTurn.id === current, 'Stale steering never cancels the running Turn');
     emit({ kind: 'completed', finalAnswer: true });
     await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
-    assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex requests pass through');
+    assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex thread/start passes through');
+    for (const [method, params] of [
+      ['thread/read', { threadId: 'official-thread', includeTurns: true }],
+      ['thread/resume', { threadId: 'official-thread' }],
+      ['turn/start', { threadId: 'official-thread', input: [{ type: 'text', text: 'continue' }] }],
+      ['turn/interrupt', { threadId: 'official-thread', turnId: 'official-turn' }],
+      ['thread/fork', { threadId: 'official-thread', lastTurnId: 'official-turn' }],
+      ['thread/compact/start', { threadId: 'official-thread' }],
+    ]) {
+      assert.equal(await bridge.request(method, params), undefined, `Official Codex ${method} passes through`);
+    }
+    assert.deepEqual(await bridge.request('codexhost/thread/ownership/list', { threadIds: ['official-thread', threadId] }), {
+      threads: [
+        { threadId: 'official-thread', owner: 'codex' },
+        { threadId, owner: 'external', harnessId: 'pi' },
+      ],
+    }, 'Official and Harness-managed threads keep separate ownership');
+    const runtimeInspection = await bridge.request('harness-mix/runtime/inspect');
+    assert.deepEqual(runtimeInspection.codex, { mode: 'official-passthrough', managedRoute: 'codex-harness' });
     adapter.listCommands = async () => [{ id: 'compact', action: 'execute', label: 'Compact' }];
     let compactCalls = 0;
     adapter.executeCommand = async (_session, id, hooks) => {

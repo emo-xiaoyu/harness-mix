@@ -20,6 +20,7 @@ import type {
 import {
   accountListFocusRestorer,
   createAccountsTable,
+  isCodexAccountAuthenticated,
   renderAccountRows,
 } from "./accounts-list.js";
 import { mountHarnessAccounts, type RendererHarnessAccountClient } from "./harness-accounts.js";
@@ -44,6 +45,7 @@ export interface RendererCodexAccountClient extends RendererHarnessAccountClient
   cancelCodexAccountLogin(
     input: CodexAccountLoginCancelParams,
   ): Promise<CodexAccountLoginCancelResult>;
+  logoutCodexAccount?(): Promise<CodexAccountMutationResult>;
   subscribeCodexAccountLogin?(listener: (result: CodexAccountLoginCompleted) => void): () => void;
 }
 
@@ -224,13 +226,13 @@ export function createAccountsSettingsPage(
         const restoreFocus = accountListFocusRestorer(list, search);
         body.replaceChildren();
         status.textContent = loginMessage ?? "";
-        connectedCount.textContent = String(accounts.filter((account) => account.email).length);
+        connectedCount.textContent = String(accounts.filter(isCodexAccountAuthenticated).length);
         search.disabled = login !== null || loginStartingAccountId !== null;
         for (const [display, button] of displayButtons) {
           button.setAttribute("aria-pressed", String(display === usageDisplay));
         }
         refreshUsage.disabled =
-          ((!getClient()?.inspectCodexAccountUsage || !accounts.some((account) => account.email)) &&
+          ((!getClient()?.inspectCodexAccountUsage || !accounts.some(isCodexAccountAuthenticated)) &&
             !getClient()?.listHarnessAccounts) ||
           harnessAccounts?.refreshing === true ||
           [...usageByAccountId.values()].some((usage) => usage.status === "loading") ||
@@ -249,6 +251,9 @@ export function createAccountsSettingsPage(
           emptyRow.append(emptyCell);
           body.append(emptyRow);
         }
+        // The stock Codex account remains protected, while additional Accounts
+        // are native Codex profiles isolated by CODEX_HOME.
+        add.hidden = false;
         add.disabled = accountBusy();
         for (const account of visibleAccounts) {
           body.append(
@@ -262,6 +267,9 @@ export function createAccountsSettingsPage(
               onActivate: () =>
                 mutate(() => client().activateCodexAccount({ accountId: account.accountId })),
               onSignIn: () => startLogin(account.accountId),
+              ...(account.management === "native" && getClient()?.logoutCodexAccount
+                ? { onSignOut: () => signOut() }
+                : {}),
               onDelete: () => deleteAccount(account.accountId),
               onRetry: () => {
                 usageByAccountId.delete(account.accountId);
@@ -341,7 +349,7 @@ export function createAccountsSettingsPage(
       };
       const loadUsage = (nextAccounts: readonly CodexAccountSummary[]): void => {
         const inspect = getClient()?.inspectCodexAccountUsage;
-        const signedIn = nextAccounts.filter((account) => account.email);
+        const signedIn = nextAccounts.filter(isCodexAccountAuthenticated);
         const keep = new Set(signedIn.map((account) => account.accountId));
         for (const accountId of [...usageByAccountId.keys()]) {
           if (!keep.has(accountId)) usageByAccountId.delete(accountId);
@@ -451,6 +459,27 @@ export function createAccountsSettingsPage(
           failure(error) {
             loginStartingAccountId = null;
             loginMessage = errorMessage(error, messages.accountLoginFailed);
+            render();
+          },
+        });
+      };
+      const signOut = (): void => {
+        const logout = getClient()?.logoutCodexAccount;
+        if (!logout || accountBusy()) return;
+        if (document.defaultView?.confirm?.(messages.accountSignOutConfirm) === false) return;
+        accountActivating = true;
+        loginMessage = messages.accountSigningOut;
+        render();
+        void context.runLatest(() => logout(), {
+          success(result) {
+            accountActivating = false;
+            loginMessage = messages.accountSignedOut;
+            usageByAccountId.clear();
+            setAccounts([result.account]);
+          },
+          failure(error) {
+            accountActivating = false;
+            loginMessage = errorMessage(error, messages.accountSignOutFailed);
             render();
           },
         });

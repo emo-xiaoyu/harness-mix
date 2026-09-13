@@ -120,7 +120,7 @@ async function launch(args = []) {
   const paths = nativePaths();
   for (const file of Object.values(paths)) if (!fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);
   if (flags.has('--check')) {
-    console.log(`platform=${process.platform}\narchitecture=${process.arch}\ndesktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
+    console.log(`platform=${process.platform}\narchitecture=${process.arch}\ndesktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\ncodex_mode=official-passthrough\ncodex_managed_route=codex-harness\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
     return;
   }
   const skipUpdate = flags.has('--no-update') || process.env.HARNESS_MIX_AUTO_UPDATE === '0';
@@ -151,7 +151,7 @@ async function launch(args = []) {
     CODEXHOST_DATA_DIR: env.CODEXHOST_DATA_DIR, HARNESS_MIX_NODE_PATH: process.execPath,
     CODEXHOST_DEFAULT_AGENT: 'codex' };
   const block = Buffer.from(Object.entries(overrides).map(([k, v]) => `${k}=${v}`).join('\0') + '\0\0', 'utf16le').toString('base64');
-  console.log('[Harness Mix] Restarting Codex Desktop with the local Shim and ProtocolCore.');
+  console.log('[Harness Mix] Restarting Codex Desktop: official Codex passthrough + Harness Mix routes.');
   stopDesktopProcesses(installation);
   await new Promise(resolve => setTimeout(resolve, 1000));
   sweepLeftovers(root, dataDir);

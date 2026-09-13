@@ -1,8 +1,8 @@
 // Harness Mix executable bridge, built from this source by build-native.cjs.
 // Rust port of the original shim.cs: identical routing and stdio contract.
 //
-// - `... app-server ...`  -> node scripts/native-host.cjs (Harness Mix kernel)
-// - anything else         -> stock codex.exe passthrough
+// - a plain `app-server` invocation -> node scripts/native-host.cjs
+// - management subcommands and every other invocation -> stock Codex passthrough
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -110,6 +110,91 @@ fn setting(env_name: &str, file: &Path) -> io::Result<String> {
     }
 }
 
+// Locate the real Codex subcommand without mistaking a prompt or config value
+// for one. Unknown global options deliberately fall back to the stock CLI, so
+// native Codex remains usable when a newer CLI adds syntax unknown to the Shim.
+fn app_server_subcommand_index(args: &[String]) -> Option<usize> {
+    const VALUE_OPTIONS: &[&str] = &[
+        "-c",
+        "--config",
+        "--enable",
+        "--disable",
+        "--profile",
+    ];
+    const FLAG_OPTIONS: &[&str] = &["--search", "--no-alt-screen", "--oss"];
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(String::as_str) {
+        if arg == "app-server" {
+            return Some(index);
+        }
+        if arg == "--" {
+            return None;
+        }
+        if VALUE_OPTIONS.contains(&arg) {
+            args.get(index + 1)?;
+            index += 2;
+            continue;
+        }
+        if VALUE_OPTIONS
+            .iter()
+            .any(|option| arg.strip_prefix(option).is_some_and(|rest| rest.starts_with('=')))
+            || FLAG_OPTIONS.contains(&arg)
+        {
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
+// Only the app-server form used as the Desktop protocol endpoint belongs to
+// Harness Mix. `proxy`, `daemon`, and future management forms stay entirely
+// with the official CLI. Unknown app-server options also pass through.
+fn should_start_host_runtime(args: &[String]) -> bool {
+    const VALUE_OPTIONS: &[&str] = &[
+        "-c",
+        "--config",
+        "--enable",
+        "--disable",
+        "--listen",
+        "--ws-auth",
+        "--ws-token-file",
+        "--ws-token-sha256",
+        "--ws-shared-secret-file",
+        "--ws-issuer",
+        "--ws-audience",
+        "--ws-max-clock-skew-seconds",
+    ];
+    const FLAG_OPTIONS: &[&str] = &[
+        "--strict-config",
+        "--stdio",
+        "--analytics-default-enabled",
+    ];
+    let Some(mut index) = app_server_subcommand_index(args).map(|index| index + 1) else {
+        return false;
+    };
+    while let Some(arg) = args.get(index).map(String::as_str) {
+        if VALUE_OPTIONS.contains(&arg) {
+            if args.get(index + 1).is_none() {
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+        if VALUE_OPTIONS
+            .iter()
+            .any(|option| arg.strip_prefix(option).is_some_and(|rest| rest.starts_with('=')))
+            || FLAG_OPTIONS.contains(&arg)
+        {
+            index += 1;
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
 #[cfg(not(unix))]
 fn pump<R: Read + Send + 'static, W: Write + Send + 'static>(
     mut source: R,
@@ -129,7 +214,7 @@ fn run() -> io::Result<i32> {
     // Path.GetFullPath equivalent: normalize without resolving symlinks or adding \\?\.
     let root = std::path::absolute(exe_dir.join("../.."))?;
     let args: Vec<String> = env::args().skip(1).collect();
-    let server = args.iter().any(|arg| arg == "app-server");
+    let server = should_start_host_runtime(&args);
 
     rotate_log(exe_dir);
     // Kill-on-close job: the node host, every harness CLI it spawns and any
@@ -253,5 +338,63 @@ fn main() {
             eprintln!("Harness Mix Shim: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{app_server_subcommand_index, should_start_host_runtime};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn finds_only_the_real_app_server_subcommand() {
+        assert_eq!(app_server_subcommand_index(&args(&["app-server"])), Some(0));
+        assert_eq!(
+            app_server_subcommand_index(&args(&[
+                "-c",
+                "features.code_mode_host=true",
+                "app-server",
+                "--stdio",
+            ])),
+            Some(2)
+        );
+        assert_eq!(
+            app_server_subcommand_index(&args(&["exec", "say app-server"])),
+            None
+        );
+        assert_eq!(
+            app_server_subcommand_index(&args(&["-c", "app-server", "exec"])),
+            None
+        );
+        assert_eq!(app_server_subcommand_index(&args(&["--", "app-server"])), None);
+    }
+
+    #[test]
+    fn routes_only_plain_desktop_app_server_to_the_host() {
+        assert!(should_start_host_runtime(&args(&["app-server", "--stdio"])));
+        assert!(should_start_host_runtime(&args(&[
+            "-c",
+            "features.code_mode_host=true",
+            "app-server",
+            "--listen",
+            "stdio://",
+            "--analytics-default-enabled",
+        ])));
+        assert!(should_start_host_runtime(&args(&[
+            "app-server",
+            "--listen=ws://127.0.0.1:0",
+            "--ws-auth",
+            "token",
+        ])));
+        assert!(!should_start_host_runtime(&args(&["app-server", "proxy"])));
+        assert!(!should_start_host_runtime(&args(&["app-server", "daemon"])));
+        assert!(!should_start_host_runtime(&args(&[
+            "app-server",
+            "--future-option",
+        ])));
+        assert!(!should_start_host_runtime(&args(&["exec", "app-server"])));
     }
 }

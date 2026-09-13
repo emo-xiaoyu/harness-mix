@@ -1,6 +1,6 @@
 {
   "name": "@harness-mix/cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
@@ -69,6 +69,9 @@
     "node": ">=22.19.0 <23 || >=24 <25"
   },
   "scripts": {
+    "test:integrations": "node scripts/integrations-test.cjs",
+    "smoke:integrations-ui": "electron scripts/integrations-ui-smoke.cjs",
+    "e2e:integrations": "node scripts/e2e-integrations.cjs",
     "health:harnesses": "node scripts/harness-health-check.cjs",
     "test:dsh-collaboration-acp": "node scripts/dsh-collaboration-acp-test.cjs",
     "test:codebuddy-migration": "node scripts/codebuddy-migration-test.cjs",
@@ -95,6 +98,7 @@
     "test:native-config": "node scripts/native-config-test.cjs",
     "test:native-compatibility": "node scripts/native-compatibility-test.cjs",
     "e2e:native": "node scripts/e2e-native-host.cjs",
+    "e2e:native:codex": "node scripts/e2e-native-host.cjs --live-codex",
     "e2e:native:pi": "node scripts/e2e-native-host.cjs --live --harness=pi",
     "e2e:native:dsh": "node scripts/e2e-native-host.cjs --live --harness=deepseek-harness",
     "e2e:native:claude": "node scripts/e2e-native-host.cjs --live --harness=claude-code",
@@ -114,7 +118,10 @@
     "test:openclaw-adapter": "node scripts/openclaw-adapter-test.cjs",
     "test:core-concurrency": "node scripts/core-concurrency-test.cjs",
     "test:thread-title": "node scripts/thread-title-test.cjs",
-    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-update-apply-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs && node scripts/thread-title-test.cjs && node scripts/native-job-object-test.cjs",
+    "test:handoff": "node scripts/handoff-checkpoint-test.cjs && node scripts/switch-harness-test.cjs",
+    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/codex-accounts-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-update-apply-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/handoff-checkpoint-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs && node scripts/thread-title-test.cjs && node scripts/native-job-object-test.cjs && node scripts/integrations-test.cjs",
+    "test:codex-accounts": "node scripts/codex-accounts-test.cjs",
+    "smoke:codex-accounts-ui": "electron scripts/codex-accounts-ui-smoke.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
     "e2e:pi": "node scripts/e2e-pi.cjs",

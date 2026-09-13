@@ -45,7 +45,10 @@ import {
   type ExternalPermissionModeControlView,
 } from "./renderer-composer-dom.js";
 import { rendererHarnessMessages } from "./renderer-harness-localization.js";
-import { RendererCodexAccountState } from "./renderer-codex-account-state.js";
+import {
+  codexAccountRouteOverride,
+  RendererCodexAccountState,
+} from "./renderer-codex-account-state.js";
 import {
   decodeAntigravityTransportModelId,
   decodeClaudeTransportModelId,
@@ -88,6 +91,7 @@ import type {
   RendererConnectionDiagnostics,
   RendererConnectionSnapshot,
 } from "./settings/pages.js";
+import type { RendererHarnessHandoffRequest } from "./renderer-harness-handoff.js";
 
 const externalHarnessIds = {
   pi: harnessIdSchema.parse("pi"),
@@ -539,6 +543,7 @@ interface MountedComposer {
   hostId: string | null;
   usageRequestGeneration: number;
   commandRequestGeneration: number;
+  harnessSwitching: boolean;
 }
 
 interface PendingComposerReplacement {
@@ -739,6 +744,11 @@ export function installRendererBindingProbe(
     getUpdateClient: () => modelControl,
     getAccountClient: () => modelControl,
     getConnectionDiagnostics: () => connectionDiagnostics,
+    getIntegrationsClient: () => {
+      const client = modelClientForHost('local');
+      if (!client?.integrationCatalog || !client.listIntegrations || !client.saveMcp || !client.removeMcp || !client.changeSkill) return null;
+      return { integrationCatalog: () => client.integrationCatalog!(), listIntegrations: input => client.listIntegrations!(input), saveMcp: input => client.saveMcp!(input), removeMcp: input => client.removeMcp!(input), changeSkill: input => client.changeSkill!(input) };
+    },
     getSessionImportClient: () => {
       const client = modelClientForHost("local");
       const sources = client?.listSessionImportSources;
@@ -885,6 +895,7 @@ export function installRendererBindingProbe(
       adapterStatus.state,
       accounts?.switching === true ||
         controller.isSwitching(mounted.composer) ||
+        mounted.harnessSwitching ||
         mounted.ownershipStatus === "loading",
       activeHarnessAvailabilityState().availability,
       mounted.modelView,
@@ -1259,6 +1270,69 @@ export function installRendererBindingProbe(
             scheduleThreadUsageRefresh(mounted);
           }
         }
+      }
+    }
+  };
+
+  const handoffComposerThread = async (
+    mounted: MountedComposer,
+    request: RendererHarnessHandoffRequest,
+  ): Promise<void> => {
+    const threadId = threadIdFromComposerModelTarget(mounted.modelTarget);
+    const current = controller.get(mounted.composer);
+    if (
+      !threadId ||
+      current.phase !== "locked" ||
+      current.agent === "codex" ||
+      current.agent !== request.from ||
+      request.to === current.agent ||
+      mounted.harnessSwitching
+    ) {
+      return;
+    }
+    const client = modelClientForHostFrom(modelControl, mounted.hostId);
+    if (!client?.switchHarness) {
+      mounted.control.harnessHandoff.showError(
+        settingsLifecycle.locale === "zh-CN" ? "当前任务无法使用 Harness 接力。" : "Harness handoff is unavailable for this task.",
+      );
+      return;
+    }
+    mounted.harnessSwitching = true;
+    mounted.control.harnessHandoff.setSubmitting(true);
+    renderMounted(mounted);
+    try {
+      await client.switchHarness({
+        threadId,
+        harnessId: externalHarnessIds[request.to],
+        ...(request.note ? { note: request.note } : {}),
+        intent: request.intent,
+        includes: request.includes,
+      });
+      if (
+        disposed ||
+        mountedByComposer.get(mounted.composer) !== mounted ||
+        threadIdFromComposerModelTarget(mounted.modelTarget) !== threadId
+      ) {
+        return;
+      }
+      mounted.harnessSwitching = false;
+      mounted.control.harnessHandoff.setSubmitting(false);
+      mounted.control.harnessHandoff.close();
+      mounted.modelView = { status: "loading" };
+      mounted.permissionModeView = { status: "loading" };
+      mounted.threadConfiguration = undefined;
+      mounted.usage = null;
+      mounted.accountCredits = null;
+      await loadThreadOwnership(mounted);
+    } catch (error) {
+      mounted.control.harnessHandoff.showError(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      if (mountedByComposer.get(mounted.composer) === mounted) {
+        mounted.harnessSwitching = false;
+        mounted.control.harnessHandoff.setSubmitting(false);
+        renderMounted(mounted);
       }
     }
   };
@@ -2099,9 +2173,9 @@ export function installRendererBindingProbe(
       await policy.clear();
       if (!isCurrent() || window.__codexhostDraftPrewarmPolicyV1 !== policy) return;
       if (!policy.selectAccount) throw new Error("Codex Account selection is unavailable");
-      const override = accountId === accounts.selection.activeAccountId ? null : accountId;
-      policy.selectAccount(override);
-      accounts.overrideAccountId = override;
+      policy.selectAccount(codexAccountRouteOverride(accounts.accounts, accountId));
+      accounts.overrideAccountId =
+        accountId === accounts.selection.activeAccountId ? null : accountId;
     } catch {
       if (isCurrent()) void loadCodexAccounts();
     } finally {
@@ -2440,6 +2514,13 @@ export function installRendererBindingProbe(
       (agent) => {
         const mounted = mountedByComposer.get(composer);
         if (!composer.isConnected || !mounted) return;
+        const current = controller.get(composer);
+        if (current.phase === "locked") {
+          if (current.agent !== "codex" && agent !== "codex") {
+            mounted.control.harnessHandoff.open(current.agent, agent, settingsLifecycle.locale);
+          }
+          return;
+        }
         void switchComposerAgent(mounted, agent);
       },
       openInstallPage,
@@ -2470,6 +2551,11 @@ export function installRendererBindingProbe(
         const mounted = mountedByComposer.get(composer);
         if (mounted) selectCommand(mounted, command);
       },
+      (request) => {
+        const mounted = mountedByComposer.get(composer);
+        if (!composer.isConnected || !mounted) return;
+        void handoffComposerThread(mounted, request);
+      },
     );
     const mounted: MountedComposer = {
       composer,
@@ -2489,6 +2575,7 @@ export function installRendererBindingProbe(
       hostId: inherited?.hostId ?? hostId,
       usageRequestGeneration: 0,
       commandRequestGeneration: 0,
+      harnessSwitching: false,
     };
     mountedByComposer.set(composer, mounted);
     if (isComposerModelWriteAllowed(modelTarget)) {
@@ -2698,7 +2785,10 @@ export function installRendererBindingProbe(
         controller.isSubmissionPending(composer) && current.codexAccountId
           ? current.codexAccountId
           : selection?.selectedAccountId;
-      const override = accountId === selection?.activeAccountId ? null : (accountId ?? null);
+      const override = codexAccountRouteOverride(
+        composerCodexAccounts(composer)?.accounts ?? [],
+        accountId,
+      );
       const policy = window.__codexhostDraftPrewarmPolicyV1;
       if (override !== null && (policy?.hostId !== mounted.hostId || !policy.selectAccount)) {
         return false;
@@ -2747,7 +2837,9 @@ export function installRendererBindingProbe(
     const mounted = composer ? mountedByComposer.get(composer) : undefined;
     if (
       composer &&
-      (composerCodexAccounts(composer)?.switching || controller.isSwitching(composer))
+      (composerCodexAccounts(composer)?.switching ||
+        controller.isSwitching(composer) ||
+        mounted?.harnessSwitching)
     ) {
       if (isComposerSubmissionKey(event)) blockEvent(event);
       return;

@@ -8,7 +8,7 @@ const PATTERNS = [
   /xox[abpsr]-[A-Za-z0-9-]{10,}/g,
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
 ];
-const SECRET_KEY = /(token|secret|password|passwd|api[_-]?key|authorization|credential|cookie)/i;
+const SECRET_KEY = /(token|secret|password|passwd|api[_-]?key|authorization|credential|cookie|userCode|loginId|verificationUrl)/i;
 const REDACTED = '[redacted]';
 
 function redactText(value) {

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { HostRuntime } = require('../src/main/host/runtime');
+const { CAP, buildHandoffContext } = require('../src/main/host/handoff');
 
 /**
  * 跨 Harness 原地切换（switchHarness）脚本级测试：
@@ -33,6 +34,19 @@ function fakeHarness(id, name) {
 }
 
 async function main() {
+  const longSolution = `方案开头-${'x'.repeat(5000)}-方案结尾`;
+  const optimized = buildHandoffContext({
+    cwd: 'E:/project', title: '登录重构', messages: [
+      { role: 'user', text: '先分析问题' },
+      { role: 'assistant', text: '初步判断' },
+      { role: 'user', text: '给出完整方案' },
+      { role: 'assistant', text: longSolution },
+    ],
+  });
+  assert.deepEqual(optimized.conversationTail.map(message => message.role), ['user', 'assistant', 'user', 'assistant']);
+  assert.equal(optimized.conversationTail.at(-1).text, longSolution, '最新方案应获得更大的交接预算');
+  assert.ok(optimized.conversationTail.reduce((sum, message) => sum + message.text.length, 0) <= CAP.totalChars);
+
   await fs.mkdir('output', { recursive: true });
   const root = await fs.mkdtemp(path.resolve('output/switch-harness-'));
   const rt = new HostRuntime({ dataDirectory: path.join(root, 'data') });
@@ -71,6 +85,12 @@ async function main() {
     assert.equal(thread.harnessChain[0].nativeSessionId, aNativeId);
     assert.equal(thread.pendingHandoff.fromHarnessId, 'a');
     assert.equal(thread.pendingHandoff.note, '优先把测试补完');
+    assert.match(thread.pendingHandoff.checkpointId, /^handoff_[a-f0-9]{24}$/);
+    const firstCheckpointId = thread.pendingHandoff.checkpointId;
+    const checkpointBeforeSend = rt.handoffs.get(thread.id, firstCheckpointId);
+    assert.equal(checkpointBeforeSend.intent, 'continue');
+    assert.equal(checkpointBeforeSend.fileState.files.some(file => file.path === 'src/login.ts' && file.changeType === 'added'), true);
+    assert.equal(rt.handoffs.owned(thread.id, firstCheckpointId).status, 'checkpoint-created');
     assert.equal(thread.restore, false, '新 Harness 上是全新原生会话');
     assert.equal(rt.sessions.has(thread.id), false, '切换后旧原生会话已关闭');
     assert.equal(a.state.closed, 1);
@@ -87,11 +107,12 @@ async function main() {
     assert.match(b.state.sent[0], /untrusted historical data/);
     assert.match(b.state.sent[0], /帮我重构登录模块/);
     assert.match(b.state.sent[0], /Alpha 回复/);
-    assert.match(b.state.sent[0], /added src\/login\.ts/);
+    assert.match(b.state.sent[0], /"path":"src\/login\.ts","changeType":"added"/);
     assert.match(b.state.sent[0], /优先把测试补完/);
     const visible = thread.messages.filter(m => m.role === 'user').at(-1);
     assert.equal(visible.text, '继续', '信封不进用户可见消息');
     assert.equal(thread.pendingHandoff, undefined, '信封发送成功后标记已清除');
+    assert.equal(rt.handoffs.owned(thread.id, firstCheckpointId).status, 'active');
 
     // 5) 第二轮起不再注入
     await rt.send(thread.id, '第二步');
@@ -123,6 +144,9 @@ async function main() {
     await settle(thread.id);
     await assert.rejects(rt.switchHarness(thread.id, 'a'), /已经在该 Harness/);
     await assert.rejects(rt.switchHarness(thread.id, 'Nope'), /未知 Harness/);
+    rt.status.b = { available: false, detail: '测试连接不可用' };
+    await assert.rejects(rt.switchHarness(thread.id, 'b'), /测试连接不可用/);
+    rt.status.b = { available: true };
     const draft = await rt.createThread({ harnessId: 'a', cwd: root, ephemeral: true });
     await assert.rejects(rt.switchHarness(draft.id, 'b'), /草稿任务/);
     const child = await rt.createThread({ harnessId: 'a', cwd: root, parentThreadId: thread.id });
@@ -138,6 +162,8 @@ async function main() {
     // 重启恢复的真正契约是持久化的 harnessId + nativeSessionId（指向 A 的原生会话）。
     assert.equal(persisted.nativeSessionId, aNativeId);
     assert.equal(persisted.restore, undefined);
+    const persistedCheckpoints = JSON.parse(await fs.readFile(path.join(root, 'data', 'handoff', 'checkpoints.json'), 'utf8'));
+    assert.equal(persistedCheckpoints.some(row => row.checkpointId === firstCheckpointId && row.status === 'active'), true);
 
     console.log('PASS: in-place harness switch → one-shot context envelope → switch-back native resume, guards and persistence');
   } finally { await rt.close(); }
