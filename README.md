@@ -54,8 +54,10 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 ## 界面预览
 
 <p align="center">
-  <img src="docs/images/harness-mix-home.png" width="960" alt="Harness Mix 首页">
+  <img src="docs/images/codex-desktop-home.png" width="960" alt="Codex Desktop 原生首页中的 Harness Mix">
 </p>
+
+预览来自当前 Codex Desktop 原生窗口：Harness Mix 作为原生扩展入口出现在桌面工具栏和 Composer 中，会话、模型、工具与权限仍由 Codex Desktop 及各 Harness 管理。
 
 ## 能做什么
 
@@ -68,7 +70,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
 
 <p align="center">
-  <img src="docs/images/harness-mix-session.png" width="960" alt="Harness Mix 会话">
+  <img src="docs/images/codex-desktop-session.png" width="960" alt="Codex Desktop 原生会话中的 Harness Mix">
 </p>
 
 ## 原生接入
@@ -249,7 +251,7 @@ npm run e2e:codex
 
 - [内核迁移状态](CORE-MIGRATION-STATUS.md)
 - [下一步计划](NEXT-STEPS.md)
-- [设计验收记录](design-qa.md)
+- [Codex Desktop 原生接入说明](docs/native-codex.md)
 
 Harness Mix 参考了 [codex-host](https://github.com/BytePioneer-AI/codex-host) 的插件化组织方式，并使用 [OpenAI Codex](https://github.com/openai/codex) 官方 app-server 协议完成 Codex 原生接入。
 
