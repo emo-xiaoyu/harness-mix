@@ -11,6 +11,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+mod job;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -84,6 +86,18 @@ fn log_exit(exe_dir: &Path, code: i32, stderr_tail: &[u8]) {
     );
 }
 
+// Keep the invocation journal bounded: one live file plus two rotations.
+const LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+fn rotate_log(dir: &Path) {
+    let base = dir.join("shim-invocations.log");
+    let Ok(metadata) = fs::metadata(&base) else { return };
+    if metadata.len() < LOG_MAX_BYTES { return; }
+    let _ = fs::remove_file(dir.join("shim-invocations.log.2"));
+    let _ = fs::rename(dir.join("shim-invocations.log.1"), dir.join("shim-invocations.log.2"));
+    let _ = fs::rename(&base, dir.join("shim-invocations.log.1"));
+}
+
 fn setting(env_name: &str, file: &Path) -> io::Result<String> {
     match env::var(env_name) {
         Ok(value) if !value.is_empty() => Ok(value),
@@ -111,6 +125,14 @@ fn run() -> io::Result<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
     let server = args.iter().any(|arg| arg == "app-server");
 
+    rotate_log(exe_dir);
+    // Kill-on-close job: the node host, every harness CLI it spawns and any
+    // shell children all die with this shim, including on force-kill.
+    #[cfg(windows)]
+    if let Err(error) = job::assign_kill_on_close() {
+        eprintln!("Harness Mix Shim: process supervision unavailable: {error}");
+    }
+
     let build_dir = root.join("output").join("native-build");
     let stock = setting(
         "CODEXHOST_STOCK_CODEX_PATH",
@@ -120,9 +142,15 @@ fn run() -> io::Result<i32> {
     log_spawn(exe_dir, if server { "server" } else { "passthrough" }, &args);
 
     let mut command = if server {
+        // Tests point this at a fixture host; production uses the in-repo entry.
+        let host_script = env::var("HARNESS_MIX_HOST_SCRIPT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root.join("scripts").join("native-host.cjs"));
         let mut command = Command::new(&node);
         command.arg("--max-old-space-size=8192");
-        command.arg(root.join("scripts").join("native-host.cjs"));
+        command.arg(host_script);
         command
     } else {
         Command::new(&stock)

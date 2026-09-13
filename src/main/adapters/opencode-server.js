@@ -1,7 +1,8 @@
-const { spawn, execFile } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { cliSpawn } = require('../host/jsonl');
+const { terminateTree } = require('../native/process-utils');
 function executable(args) {
   const local = process.env.HARNESS_MIX_OPENCODE_EXECUTABLE || path.join(process.env.APPDATA || '', 'npm/node_modules/opencode-ai/bin/opencode.exe');
   return fs.existsSync(local) ? { command: local, args } : cliSpawn('opencode', args);
@@ -65,10 +66,7 @@ class OpenCodeServer {
   async close() {
     this.closed = true;
     for (const controller of this.controllers) controller.abort();
-    if (this.child && this.child.exitCode === null) {
-      if (process.platform === 'win32') await new Promise(resolve => execFile('taskkill.exe', ['/pid', String(this.child.pid), '/t', '/f'], { windowsHide: true }, () => resolve()));
-      else this.child.kill();
-    }
+    if (this.child && this.child.exitCode === null) await terminateTree(this.child.pid);
     await this.readerTask;
   }
 }

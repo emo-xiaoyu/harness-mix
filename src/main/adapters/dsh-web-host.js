@@ -1,6 +1,7 @@
 const { spawn } = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
+const { terminateTree } = require("../native/process-utils");
 
 const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || "E:\\dsh\\deepseek-harness";
 
@@ -190,17 +191,9 @@ class DshWebHost {
     this.eventListeners.clear();
     try { this.ws?.close(); } catch { /* 已关闭 */ }
     const child = this.child;
-    if (child && !child.killed) {
-      try {
-        if (process.platform === "win32") {
-          // cmd.exe → npm → node 进程树需要整树终止
-          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-        } else {
-          child.kill("SIGTERM");
-        }
-      } catch { /* already gone */ }
-    }
     this.child = null;
+    // cmd.exe → npm → node 进程树需要整树终止
+    if (child && !child.killed) void terminateTree(child.pid);
   }
 }
 

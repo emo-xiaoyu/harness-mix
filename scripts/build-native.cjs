@@ -33,7 +33,7 @@ async function main() {
   if (process.platform !== 'win32') throw new Error('Native executable build currently supports Windows only');
   execFileSync(cargoCommand(), ['build', '--release', '--manifest-path', path.join(root, 'src/main/native/rs/Cargo.toml')], { stdio: 'inherit', windowsHide: true });
   const target = path.join(root, 'src/main/native/rs/target/release');
-  for (const exe of ['harness-mix-shim.exe', 'harness-mix-appx.exe']) {
+  for (const exe of ['harness-mix-shim.exe', 'harness-mix-appx.exe', 'harness-mix-secret.exe']) {
     const source = path.join(target, exe);
     const destination = path.join(out, exe);
     // An unchanged executable may be running while UI-only fixes are built.

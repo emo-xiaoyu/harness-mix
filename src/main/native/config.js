@@ -10,6 +10,7 @@ function nativePaths() {
     cli: path.join(root, 'scripts/launch-codex.cjs'),
     shim: path.join(build, 'harness-mix-shim.exe'),
     activation: path.join(build, 'harness-mix-appx.exe'),
+    secret: path.join(build, 'harness-mix-secret.exe'),
     runtime: path.join(root, 'src/main/native/host.js'),
     controller: path.join(build, 'desktop-controller.mjs'),
     renderer: path.join(build, 'renderer-extension.js'),

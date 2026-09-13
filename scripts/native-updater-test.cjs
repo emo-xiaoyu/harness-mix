@@ -96,5 +96,14 @@ const base = {
     assert.equal(outcome.failed, true);
   }
 
-  console.log('native-updater: current/ahead/diverged/dirty/ff/ff-docs-only/offline all covered');
+  // 8. Hook failure rolls back to the pre-merge head and never blocks launch.
+  {
+    const { exec, calls } = fakeGit({ ...base, 'rev-parse origin/main': 'bbb222\n', 'diff --name-only aaa111 bbb222': 'package.json\n' });
+    const outcome = await autoUpdate({ root: '.', log: () => {}, exec, hooks: { install: () => { throw new Error('npm install failed'); }, build: () => {} } });
+    assert.equal(outcome.updated, false);
+    assert.equal(outcome.failed, true);
+    assert.ok(calls.some(c => c.startsWith('reset --hard aaa111')));
+  }
+
+  console.log('native-updater: current/ahead/diverged/dirty/ff/ff-docs-only/offline/rollback all covered');
 })().catch(error => { console.error(error); process.exitCode = 1; });

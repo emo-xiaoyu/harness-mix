@@ -3,6 +3,7 @@ const { promises: fs } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { cliSpawn } = require("../host/jsonl");
+const { terminateTree } = require("../native/process-utils");
 
 const OPENCLAW_CONFIG = path.join(os.homedir(), ".openclaw", "openclaw.json");
 const DEFAULT_PORT = 18789;
@@ -203,12 +204,7 @@ class OpenClawGatewayHost {
     // 仅终止由本宿主拉起的 Gateway；用户自有的 Gateway 服务保持运行
     const child = this.child;
     this.child = null;
-    if (child && child.exitCode === null) {
-      try {
-        if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-        else child.kill("SIGTERM");
-      } catch { /* already gone */ }
-    }
+    if (child && child.exitCode === null) void terminateTree(child.pid);
   }
 }
 
