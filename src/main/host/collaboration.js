@@ -4,7 +4,7 @@ const path = require('node:path');
 const { tools } = require('./collaboration-tools');
 const { z } = require('zod');
 const { Store } = require('./store');
-const { createWorkspace, reviewWorkspace, applyWorkspace } = require('./collaboration-worktree');
+const { createWorkspace, reviewWorkspace, applyWorkspace, discardWorkspace, pushWorkspace } = require('./collaboration-worktree');
 const validators = new Map(tools.map(tool => [tool.name, z.fromJSONSchema(tool.inputSchema)]));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -58,6 +58,24 @@ class Collaboration {
     } finally { delete job.applying; }
   }
 
+  async discard(id) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error('子任务不存在');
+    if (job.status === 'running') throw new Error('子任务正在运行，请先取消');
+    const result = await discardWorkspace(job.workspace);
+    job.status = 'cancelled';
+    delete job.workspace;
+    await this.save();
+    return result;
+  }
+
+  async push(id, { remote = 'origin', branch } = {}) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error('子任务不存在');
+    if (job.status === 'running') throw new Error('请等待子任务完成后再推送分支');
+    return pushWorkspace(job.workspace, remote, branch);
+  }
+
   async connection(thread) {
     await this.initialize();
     if (!this.starting) this.starting = new Promise((resolve, reject) => {
@@ -94,7 +112,8 @@ class Collaboration {
     const pending = job.childId ? this.runtime.core.interactions?.pending(job.childId)?.[0] : null;
     return { task_id: job.id, parent_thread_id: job.owner, child_thread_id: job.childId, agent_type: job.agent, status: job.status,
       display_status: pending ? 'waiting_approval' : job.status, attention: pending ? { type: pending.type, title: pending.title, message: pending.message } : undefined,
-      task: job.task, workspace: job.workspace, applied: !!job.appliedDigest, result: job.result, error: job.error };
+      task: job.task, workspace: job.workspace, applied: !!job.appliedDigest, result: job.result, error: job.error,
+      diff: job.diff, digest: job.digest, branch: job.workspace?.branch };
   }
 
   async call(owner, name, args) {
@@ -193,6 +212,13 @@ class Collaboration {
       const messages = rt.core.getItemsForTurn(turn.id).filter(i => i.type === 'agent_message');
       const finals = messages.filter(i => i.phase === 'final');
       job.result = (finals.length ? finals : messages).map(i => i.content || '').join('\n').slice(0, 48000);
+      if (job.workspace?.mode === 'worktree' && job.status === 'completed') {
+        try {
+          const rev = await reviewWorkspace(job.workspace);
+          job.diff = rev.patch;
+          job.digest = rev.digest;
+        } catch {}
+      }
     } catch (error) { if (job.status === 'running') { job.status = 'failed'; job.error = error.message; } }
     finally { await this.save(); emit({ kind: 'tool', toolCallId, state: job.status === 'completed' ? 'done' : 'error', output: JSON.stringify(this.view(job)) }); }
   }

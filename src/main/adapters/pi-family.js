@@ -45,9 +45,9 @@ function emitAll(emitEvent, mapped) {
 
 /** Pi 家族（Pi / Oh My Pi）的权限模型 = 项目信任（project trust）：启动时用 --approve / --no-approve 覆盖一次 */
 const PI_PERMISSION_MODES = [
-  { id: "default", label: "默认", hint: "按全局设置处理项目级设置与扩展（defaultProjectTrust）" },
-  { id: "approve", label: "信任项目", hint: "本次信任该项目的设置与扩展（--approve）" },
-  { id: "no-approve", label: "忽略项目资源", hint: "本次不加载项目级设置与扩展（--no-approve）" },
+  { id: "default", label: "默认", description: "按全局设置处理项目级设置与扩展（defaultProjectTrust）" },
+  { id: "approve", label: "信任项目", description: "本次信任该项目的设置与扩展（--approve）" },
+  { id: "no-approve", label: "忽略项目资源", description: "本次不加载项目级设置与扩展（--no-approve）" },
 ];
 
 /**

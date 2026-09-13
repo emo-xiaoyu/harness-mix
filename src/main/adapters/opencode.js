@@ -2,7 +2,7 @@ const { execFile } = require('node:child_process');
 const { OpenCodeServer, executable } = require('./opencode-server');
 const manifest = { id: 'opencode', name: 'OpenCode', icon: 'opencode-color.svg', aliases: ['opencode'], capabilities: {
   collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true,
-  permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: false, attachments: true,
+  permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true,
 } };
 const enc = encodeURIComponent;
 const route = (s, suffix = '') => `/session/${enc(s.nativeSessionId)}${suffix}`;
@@ -147,7 +147,15 @@ function create() {
     },
     async getContextUsage(session) {
       const info = await session.host.request('GET', route(session)), t = info.tokens || {};
-      return { inputTokens: t.input, outputTokens: t.output, reasoningOutputTokens: t.reasoning, cacheRead: t.cache?.read, cacheWrite: t.cache?.write, cost: info.cost };
+      const model = session.state.models?.find(m => m.id === session.model?.id);
+      const contextWindow = model?.contextWindow || 128_000;
+      const tokens = (t.input || 0) + (t.output || 0) + (t.cache?.read || 0);
+      return {
+        inputTokens: t.input, outputTokens: t.output, reasoningOutputTokens: t.reasoning,
+        cacheRead: t.cache?.read, cacheWrite: t.cache?.write, cost: info.cost,
+        tokens, contextWindow,
+        contextPercent: tokens && contextWindow ? (100 * tokens / contextWindow) : null,
+      };
     },
     async fork(source, context) {
       const host = await new OpenCodeServer(source.cwd).start();

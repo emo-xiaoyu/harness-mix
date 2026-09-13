@@ -179,7 +179,8 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   forkThread(input: ExternalThreadForkParams): Promise<ExternalThreadForkResult>;
   switchHarness(input: ThreadHarnessSwitchParams): Promise<ThreadHarnessSwitchResult>;
   inspectHarness(input: HarnessInspectParams): Promise<HarnessInspection>;
-  installHarness?(input: { harnessId: string }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
+  installHarness?(input: { harnessId: string; terminal?: boolean | undefined }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }>;
+  loginHarnessAccount?(input: { harnessId: string }): Promise<{ success: boolean; command?: string; error?: string }>;
   openHarnessWebUi?(input: HarnessWebUiOpenParams): Promise<void>;
   inspectThread(input: ThreadInspectionParams): Promise<ThreadInspection>;
   inspectHarnessCommands(input: HarnessCommandsInspectParams): Promise<HarnessCommandCatalog>;
@@ -356,9 +357,13 @@ export function createRendererModelClient(
       return threadDelegationResultSchema.parse(result);
     },
     inspectHarness,
-    async installHarness(input: { harnessId: string }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }> {
+    async installHarness(input: { harnessId: string; terminal?: boolean | undefined }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }> {
       const result = await manager.sendRequest(HARNESS_INSTALL_METHOD, input);
       return result as { success: boolean; command?: string; stdout?: string; stderr?: string; error?: string };
+    },
+    async loginHarnessAccount(input: { harnessId: string }): Promise<{ success: boolean; command?: string; error?: string }> {
+      const result = await manager.sendRequest("codexhost/harness/account/login", input);
+      return result as { success: boolean; command?: string; error?: string };
     },
     async listHarnessPlugins(): Promise<HarnessPluginListResult> {
       return harnessPluginListResultSchema.parse(

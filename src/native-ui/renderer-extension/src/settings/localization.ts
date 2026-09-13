@@ -172,6 +172,22 @@ export interface RendererSettingsMessages {
   readonly oneClickInstalling: string;
   readonly oneClickInstallSuccess: string;
   readonly oneClickInstallFailed: string;
+  readonly installInTerminal: string;
+  readonly terminalInstalling: string;
+  readonly manualInstallTitle: string;
+  readonly manualInstallNotice: string;
+  readonly manualInstallStep1: string;
+  readonly manualInstallStep2: string;
+  readonly manualInstallStep3: string;
+  readonly harnessAccountsPageTitle: string;
+  readonly harnessAccountsPageDescription: string;
+  readonly harnessAccountLogin: string;
+  readonly harnessAccountLoginStarted: string;
+  readonly harnessAccountConfigGuide: string;
+  readonly harnessAccountStatusReady: string;
+  readonly harnessAccountStatusUnconfigured: string;
+  readonly harnessAccountStatusNotInstalled: string;
+  readonly checkUpdateNow: string;
   readonly installCommandLabel: string;
   readonly copyInstallCommand: string;
   readonly installCommandCopied: string;
@@ -401,6 +417,22 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   oneClickInstalling: "Installing Harness in background...",
   oneClickInstallSuccess: "Installed successfully! Status refreshed.",
   oneClickInstallFailed: "Installation failed. Please try running the command manually.",
+  installInTerminal: "Install in Terminal",
+  terminalInstalling: "Installation launched in a visible terminal window. Click Refresh when done.",
+  manualInstallTitle: "Standalone Application / Manual Install",
+  manualInstallNotice: "This Harness is a standalone desktop application or binary and must be installed via its official installer.",
+  manualInstallStep1: "1. Click the button below to visit the official website and download the installer.",
+  manualInstallStep2: "2. Run the application and complete its authentication login.",
+  manualInstallStep3: "3. Ensure its CLI executable is in your PATH environment variable, then click Refresh.",
+  harnessAccountsPageTitle: "Harness Account Management",
+  harnessAccountsPageDescription: "View and manage login status, credentials, and usage quotas for each native harness. Credentials remain stored locally by each harness.",
+  harnessAccountLogin: "Log In / Authorize",
+  harnessAccountLoginStarted: "Login launched in terminal window. Click Refresh when done.",
+  harnessAccountConfigGuide: "Credential Guide",
+  harnessAccountStatusReady: "Ready",
+  harnessAccountStatusUnconfigured: "Needs Config / Not Logged In",
+  harnessAccountStatusNotInstalled: "Not Installed",
+  checkUpdateNow: "Check for Updates Now",
   installCommandLabel: "Install Command",
   copyInstallCommand: "Copy Command",
   installCommandCopied: "Command Copied",
@@ -635,6 +667,22 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   oneClickInstalling: "正在后台安装 Harness……",
   oneClickInstallSuccess: "安装成功！状态已自动刷新。",
   oneClickInstallFailed: "安装失败，请尝试复制下方命令在终端手动运行。",
+  installInTerminal: "在终端中打开安装",
+  terminalInstalling: "已在独立终端窗口启动安装，请在终端完成后点击刷新检测。",
+  manualInstallTitle: "独立安装程序 / 手动安装指引",
+  manualInstallNotice: "此 Harness 为独立客户端程序或二进制工具，不支持通过 npm 一键安装。",
+  manualInstallStep1: "1. 点击下方按钮前往官网下载安装包并完成安装；",
+  manualInstallStep2: "2. 运行应用并在终端中完成该 Harness 的认证登录；",
+  manualInstallStep3: "3. 确保该 CLI 可执行文件已加入系统 PATH 环境变量，然后点击【刷新检测】。",
+  harnessAccountsPageTitle: "Harness 账号与授权管理",
+  harnessAccountsPageDescription: "查看与管理各原生 Harness 的登录状态、授权凭据与模型用量配额。所有认证均保存在本地原生 Harness 中，Harness Mix 绝不代存您的账号密码。",
+  harnessAccountLogin: "登录 / 授权",
+  harnessAccountLoginStarted: "已在终端窗口启动登录认证，请在终端完成后点击刷新状态。",
+  harnessAccountConfigGuide: "凭据配置指引",
+  harnessAccountStatusReady: "已就绪",
+  harnessAccountStatusUnconfigured: "待配置 / 未登录",
+  harnessAccountStatusNotInstalled: "未安装",
+  checkUpdateNow: "立即检查更新",
   installCommandLabel: "推荐安装命令",
   copyInstallCommand: "复制安装命令",
   installCommandCopied: "已复制命令",

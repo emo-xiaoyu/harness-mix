@@ -6,7 +6,11 @@ import {
   harnessPermissionModeIdSchema,
 } from "./harness-permission-modes.js";
 import { harnessIdSchema, hostThreadIdSchema } from "./ids.js";
-import { threadUsageSnapshotSchema } from "./thread-usage.js";
+import {
+  accountCreditsSnapshotSchema,
+  threadUsageSnapshotSchema,
+  type AccountCreditsSnapshot,
+} from "./thread-usage.js";
 
 export const HARNESS_MODEL_REF_MAX_LENGTH = 512;
 export const HARNESS_MODEL_LABEL_MAX_LENGTH = 256;
@@ -325,6 +329,7 @@ const externalThreadInspectionSchema = z
     effectivePermissionModeId: harnessPermissionModeIdSchema.optional(),
     history: harnessHistoryCapabilitiesSchema,
     usage: threadUsageSnapshotSchema.optional(),
+    accountCredits: accountCreditsSnapshotSchema.optional(),
     locked: z.literal(true),
   })
   .strict();

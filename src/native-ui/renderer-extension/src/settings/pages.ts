@@ -173,6 +173,23 @@ export function aboutPage(messages: RendererSettingsMessages): RendererSettingsP
       const tagline = document.createElement("strong");
       tagline.className = "settings-about-tagline";
       tagline.textContent = messages.aboutTagline;
+      const versionRow = document.createElement("div");
+      versionRow.className = "settings-about-version-row";
+      const versionBadge = document.createElement("span");
+      versionBadge.className = "settings-about-version-badge";
+      versionBadge.textContent = "v0.1.2";
+      const checkUpdateBtn = document.createElement("button");
+      checkUpdateBtn.type = "button";
+      checkUpdateBtn.className = "settings-command-button settings-command-button--secondary";
+      checkUpdateBtn.append(createRendererSettingsIcon("updates", 14), messages.checkUpdateNow);
+      checkUpdateBtn.addEventListener("click", () => {
+        const shell = document.querySelector("[data-codexhost-settings-shell]");
+        const updatesNavBtn = (shell?.shadowRoot ?? document).querySelector<HTMLButtonElement>(
+          'button[data-page-id="updates"]',
+        );
+        updatesNavBtn?.click();
+      });
+      versionRow.append(versionBadge, checkUpdateBtn);
       const introduction = document.createElement("div");
       introduction.className = "settings-about-copy";
       for (const paragraphText of messages.aboutParagraphs) {
@@ -200,14 +217,14 @@ export function aboutPage(messages: RendererSettingsMessages): RendererSettingsP
         repositoryUrl,
       );
       repositorySection.append(openSource, repository);
-      panel.append(product, tagline, introduction, starCallout, repositorySection);
+      panel.append(product, tagline, versionRow, introduction, starCallout, repositorySection);
       context.content.append(heading, panel);
       return undefined;
     },
   });
 }
 
-function updatesPage(
+export function updatesPage(
   messages: RendererSettingsMessages,
   getClient: () => RendererUpdateClient | null,
 ): RendererSettingsPageDefinition {

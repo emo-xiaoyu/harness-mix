@@ -258,6 +258,15 @@ export {
   isRendererSettingsIconName,
 } from "./settings/icons.js";
 export type { RendererSettingsIconName } from "./settings/icons.js";
+export {
+  installCollabCards,
+  formatDiffHtml,
+  parseCollabPayload,
+} from "./renderer-collab-cards.js";
+export type {
+  CollabCardPayload,
+  CollabCardOptions,
+} from "./renderer-collab-cards.js";
 
 export const rendererBuildMetadata = {
   name: "@codexhost/renderer-extension",

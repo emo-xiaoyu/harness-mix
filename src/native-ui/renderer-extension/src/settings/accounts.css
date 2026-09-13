@@ -30,11 +30,87 @@
 }
 
 .settings-harness-account {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 24px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 20px 24px;
+}
+
+.settings-harness-account > .settings-account-row__person {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.settings-harness-account > .settings-account-usage {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.settings-harness-account > .settings-harness-account__actions {
+  flex: 0 0 auto;
+}
+
+.settings-harness-account__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.settings-harness-account__badge--ready {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.settings-harness-account__badge--unconfigured {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.settings-harness-account__badge--not_installed {
+  background: rgba(156, 163, 175, 0.12);
+  color: var(--settings-muted);
+  border: 1px solid rgba(156, 163, 175, 0.25);
+}
+
+.settings-harness-account__config-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--settings-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-harness-account__config-hint code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.settings-harness-account__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-harness-account__login-btn {
+  font-size: 12px;
+  padding: 6px 12px;
+  white-space: nowrap;
 }
 
 .settings-harness-account + .settings-harness-account {

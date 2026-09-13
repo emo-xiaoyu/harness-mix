@@ -62,19 +62,48 @@ async function reviewWorkspace(workspace) {
   if (workspace?.mode !== 'worktree') throw new Error('此任务使用共享目录，请在任务文件变更中审查');
   const currentTree = await tree(workspace.root);
   const patch = await git(workspace.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', workspace.baseTree, currentTree, '--']);
-  return { patch, digest: createHash('sha256').update(patch).digest('hex'), branch: workspace.branch, cwd: workspace.cwd };
+  const digest = createHash('sha256').update(patch).digest('hex');
+  const result = { patch, digest, branch: workspace.branch, cwd: workspace.cwd, hasConflict: false, conflictingFiles: [] };
+  if (patch) {
+    const file = path.join(os.tmpdir(), `harness-mix-check-${randomUUID()}`);
+    try {
+      await fs.writeFile(file, patch);
+      await git(workspace.source, ['apply', '--check', '--binary', file]);
+    } catch (checkErr) {
+      result.hasConflict = true;
+      const stderr = String(checkErr.stderr || checkErr.message || '');
+      const files = [...stderr.matchAll(/error:\s*patch failed:\s*([^:\r\n]+)/g)].map(m => m[1].trim());
+      result.conflictingFiles = files.length ? [...new Set(files)] : [];
+      result.conflictReason = stderr.slice(0, 500);
+    } finally {
+      await fs.rm(file, { force: true }).catch(() => {});
+    }
+  }
+  return result;
 }
 
 async function applyWorkspace(workspace, expectedDigest) {
   const review = await reviewWorkspace(workspace);
   if (!expectedDigest || review.digest !== expectedDigest) throw new Error('子任务改动已变化，请重新审查');
   if (!review.patch) return review;
+  if (review.hasConflict) {
+    const fileList = review.conflictingFiles.length
+      ? review.conflictingFiles.map(f => `  - ${f}`).join('\n')
+      : '  (主工作区当前状态与补丁不兼容)';
+    throw new Error(
+      `无法应用工作区改动：检测到文件合并冲突。\n冲突文件：\n${fileList}\n` +
+      `建议操作：\n1. 可在子任务独立工作区 (${workspace.cwd}) 中手动合并或解决冲突；\n` +
+      `2. 使用 pushWorkspace 将隔离分支 (${workspace.branch}) 推送至 Git 远程仓库以发起 PR；\n` +
+      `3. 或使用 discardWorkspace 放弃并删除该分支。`
+    );
+  }
   const file = path.join(os.tmpdir(), `harness-mix-patch-${randomUUID()}`);
   try {
     await fs.writeFile(file, review.patch);
-    await git(workspace.source, ['apply', '--check', '--binary', file]);
     await git(workspace.source, ['apply', '--binary', file]);
-  } finally { await fs.rm(file, { force: true }); }
+  } catch (error) {
+    throw new Error(`应用改动失败：${error.stderr || error.message}`);
+  } finally { await fs.rm(file, { force: true }).catch(() => {}); }
   return review;
 }
 
@@ -89,4 +118,34 @@ async function removeWorkspace(workspace) {
   await fs.rm(workspace.root, { recursive: true, force: true }).catch(() => {});
 }
 
-module.exports = { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, git, tree };
+async function discardWorkspace(workspace) {
+  if (!workspace || workspace.mode !== 'worktree') return { discarded: false };
+  await removeWorkspace(workspace);
+  return { discarded: true, branch: workspace.branch };
+}
+
+async function pushWorkspace(workspace, remote = 'origin', remoteBranch = workspace.branch) {
+  if (!workspace || workspace.mode !== 'worktree') throw new Error('仅隔离工作区支持推送远程分支');
+  const currentTree = await tree(workspace.root);
+  let parentCommit = workspace.baseCommit;
+  try {
+    parentCommit = (await git(workspace.source, ['rev-parse', workspace.branch])).trim();
+  } catch {}
+  const commitMsg = `Harness Mix collaboration: ${workspace.branch}`;
+  const newCommit = (await git(workspace.source, [
+    '-c', 'user.name=Harness Mix',
+    '-c', 'user.email=harness-mix@localhost',
+    'commit-tree', currentTree,
+    '-p', parentCommit,
+    '-m', commitMsg,
+  ])).trim();
+  await git(workspace.source, ['update-ref', `refs/heads/${workspace.branch}`, newCommit]);
+  const remotes = (await git(workspace.source, ['remote'])).split(/\r?\n/).map(r => r.trim()).filter(Boolean);
+  if (!remotes.includes(remote)) {
+    throw new Error(`Git 远程 '${remote}' 不存在。可用远程：${remotes.join(', ') || '无'}`);
+  }
+  await git(workspace.source, ['push', remote, `${workspace.branch}:${remoteBranch}`]);
+  return { remote, branch: remoteBranch, commit: newCommit, pushed: true };
+}
+
+module.exports = { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace, git, tree };

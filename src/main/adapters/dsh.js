@@ -161,8 +161,9 @@ function projectWireEvent(frame, session) {
 function usageFrom(usage, contextWindow) {
   if (!usage) return undefined;
   const tokens = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) || null;
-  if (!tokens && !contextWindow) return undefined;
-  return { tokens, contextWindow: contextWindow ?? null, contextPercent: tokens && contextWindow ? 100 * tokens / contextWindow : null };
+  const window = contextWindow ?? 64_000;
+  if (!tokens && !window) return undefined;
+  return { tokens, contextWindow: window, contextPercent: tokens && window ? 100 * tokens / window : null };
 }
 
 /** approval/request waterfall → Host 审批卡片 */

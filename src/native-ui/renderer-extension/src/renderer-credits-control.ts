@@ -114,13 +114,20 @@ function productLabel(product: string, locale: RendererSettingsLocale): string {
   if (product === "GrokImagine") return "Imagine";
   if (product === "GrokVoice") return "Voice";
   const messages = rendererCreditsMessages(locale);
-  if (product === "5-hour window") return messages.fiveHour;
-  if (product === "7-day window") return messages.sevenDay;
-  if (product.endsWith(" · 5-hour window")) {
-    return `${product.slice(0, -"5-hour window".length)}${messages.fiveHour}`;
+  if (product === "5-hour window" || product === "5h window") return messages.fiveHour;
+  if (product === "7-day window" || product === "7d window") return messages.sevenDay;
+  if (product === "Weekly window" || product === "weekly window") return messages.weekly;
+  if (product.endsWith(" · 5-hour window") || product.endsWith(" · 5h window")) {
+    const prefix = product.replace(/ · 5(-hour|h) window$/i, "");
+    return `${prefix} · ${messages.fiveHour}`;
   }
-  if (product.endsWith(" · 7-day window")) {
-    return `${product.slice(0, -"7-day window".length)}${messages.sevenDay}`;
+  if (product.endsWith(" · 7-day window") || product.endsWith(" · 7d window")) {
+    const prefix = product.replace(/ · 7(-day|d) window$/i, "");
+    return `${prefix} · ${messages.sevenDay}`;
+  }
+  if (product.endsWith(" · Weekly window") || product.endsWith(" · weekly window")) {
+    const prefix = product.replace(/ · (weekly|Weekly) window$/i, "");
+    return `${prefix} · ${messages.weekly}`;
   }
   return product;
 }
@@ -140,7 +147,7 @@ function renderCreditsBar(usagePercent: number, color: string): HTMLDivElement {
   track.dataset.codexhostCreditsBar = "";
   track.style.height = "6px";
   track.style.borderRadius = "9999px";
-  track.style.background = "color-mix(in srgb, currentColor 16%, transparent)";
+  track.style.background = "color-mix(in srgb, currentColor 12%, transparent)";
   track.style.overflow = "hidden";
   const fill = document.createElement("span");
   fill.style.display = "block";
@@ -148,6 +155,7 @@ function renderCreditsBar(usagePercent: number, color: string): HTMLDivElement {
   fill.style.borderRadius = "9999px";
   fill.style.width = `${Math.min(100, Math.max(0, usagePercent))}%`;
   fill.style.background = color;
+  fill.style.transition = "width 0.25s ease";
   track.append(fill);
   return track;
 }
@@ -167,21 +175,25 @@ function renderCreditsHeader(
   messages: RendererCreditsMessages,
 ): HTMLDivElement {
   const wrapper = document.createElement("div");
-  wrapper.style.marginBottom = "11px";
+  wrapper.style.marginBottom = "10px";
+  wrapper.style.padding = "8px 10px";
+  wrapper.style.borderRadius = "10px";
+  wrapper.style.background = "color-mix(in srgb, currentColor 5%, transparent)";
+  wrapper.style.border = "1px solid color-mix(in srgb, currentColor 7%, transparent)";
 
   const top = document.createElement("div");
   top.style.display = "flex";
   top.style.alignItems = "flex-start";
   top.style.justifyContent = "space-between";
   top.style.gap = "12px";
-  top.style.marginBottom = "5px";
+  top.style.marginBottom = "6px";
 
   // Same left-label / right-percent column order as each tile below, so the
   // reset line always lands under its own label instead of zig-zagging sides.
   const left = document.createElement("div");
   const label = document.createElement("div");
   label.textContent = creditsPeriodLabel(credits.periodType, locale);
-  label.style.fontSize = "12.5px";
+  label.style.fontSize = "13px";
   label.style.fontWeight = "600";
   left.append(label);
   if (credits.resetsAt) {
@@ -189,6 +201,7 @@ function renderCreditsHeader(
     reset.textContent = resetLabel(credits.resetsAt, locale, messages);
     reset.style.fontSize = "11px";
     reset.style.color = "color-mix(in srgb, currentColor 62%, transparent)";
+    reset.style.marginTop = "2px";
     left.append(reset);
   }
 
@@ -207,7 +220,7 @@ function renderCreditsHeader(
   remainingLabel.style.opacity = "0.8";
   const remainingValue = document.createElement("span");
   remainingValue.textContent = formatRendererCreditsPercent(remaining);
-  remainingValue.style.fontSize = "26px";
+  remainingValue.style.fontSize = "24px";
   remainingValue.style.fontWeight = "700";
   remainingValue.style.fontVariantNumeric = "tabular-nums";
   percent.append(remainingLabel, remainingValue);
@@ -229,7 +242,11 @@ function renderCreditsTile(
   const remaining = remainingPercent(usagePercent);
 
   const tile = document.createElement("div");
-  tile.style.marginBottom = "11px";
+  tile.style.marginBottom = "7px";
+  tile.style.padding = "7px 9px";
+  tile.style.borderRadius = "8px";
+  tile.style.background = "color-mix(in srgb, currentColor 4%, transparent)";
+  tile.style.border = "1px solid color-mix(in srgb, currentColor 6%, transparent)";
 
   const top = document.createElement("div");
   top.style.display = "flex";
@@ -242,18 +259,21 @@ function renderCreditsTile(
   const name = document.createElement("span");
   name.textContent = label;
   name.style.fontSize = "12px";
+  name.style.fontWeight = "500";
   left.append(name);
   if (resetsAt) {
     const reset = document.createElement("div");
     reset.textContent = resetLabel(resetsAt, locale, messages);
     reset.style.fontSize = "10.5px";
     reset.style.color = "color-mix(in srgb, currentColor 62%, transparent)";
+    reset.style.marginTop = "2px";
     left.append(reset);
   }
 
   const percent = document.createElement("span");
   percent.textContent = `${messages.remaining} ${formatRendererCreditsPercent(remaining)}`;
   percent.style.fontSize = "12px";
+  percent.style.fontWeight = "600";
   percent.style.fontVariantNumeric = "tabular-nums";
   percent.style.color = color;
   top.append(left, percent);

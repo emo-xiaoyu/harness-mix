@@ -14,6 +14,7 @@ const manifest = {
   icon: 'antigravity-color.svg',
   aliases: ['agy', 'antigravity'],
   capabilities: {
+    collaborationTools: true,
     streaming: true,
     thinking: true,
     tools: true,
@@ -638,6 +639,29 @@ class QuestionBridge {
       CODEXHOST_AGY_QUESTION_CLIENT: `"${clientPath.replaceAll('\\', '/')}"`,
     };
 
+    if (options.collaboration) {
+      const pluginDir = path.join(dir, '.agents', 'plugins', 'harness-mix');
+      const plainPluginDir = path.join(dir, 'plugins', 'harness-mix');
+      await fs.promises.mkdir(pluginDir, { recursive: true });
+      await fs.promises.mkdir(plainPluginDir, { recursive: true });
+      const pluginManifest = JSON.stringify({ name: 'harness-mix-collaboration', description: 'Harness Mix Multi-agent Collaboration' }, null, 2);
+      const mcpConfig = JSON.stringify({
+        mcpServers: {
+          'harness-mix': {
+            command: options.collaboration.command,
+            args: options.collaboration.args,
+            env: options.collaboration.env,
+          },
+        },
+      }, null, 2);
+      await fs.promises.writeFile(path.join(pluginDir, 'plugin.json'), pluginManifest, 'utf8');
+      await fs.promises.writeFile(path.join(pluginDir, 'mcp_config.json'), mcpConfig, 'utf8');
+      await fs.promises.writeFile(path.join(plainPluginDir, 'plugin.json'), pluginManifest, 'utf8');
+      await fs.promises.writeFile(path.join(plainPluginDir, 'mcp_config.json'), mcpConfig, 'utf8');
+      await fs.promises.writeFile(path.join(dir, '.agents', 'mcp_config.json'), mcpConfig, 'utf8');
+      Object.assign(bridge.environment, options.collaboration.env || {});
+    }
+
     return bridge;
   }
 
@@ -792,13 +816,14 @@ function create(emit, options = {}) {
           if (error) {
             resolve({ available: false, detail: '未找到 Antigravity CLI（agy）' });
           } else {
+            if (!cachedQuota) fetchAntigravityQuota().then((q) => { if (q) cachedQuota = q; }).catch(() => {});
             resolve({ available: true, detail: `agy ${String(stdout).trim()}` });
           }
         });
       });
     },
 
-    async open({ thread, emit: emitEvent, diagnostic }) {
+    async open({ thread, emit: emitEvent, diagnostic, collaboration }) {
       // Do not start a second agy process while a real turn may be starting.
       // Quota is loaded only by the explicit account/usage refresh path below.
       await restoreLegacyClipboardAttachments(thread);
@@ -811,6 +836,8 @@ function create(emit, options = {}) {
         model,
         thinkingLevel,
         permissionMode,
+        collaboration: collaboration || null,
+        collaborationEnabled: !!collaboration,
         activeTurn: null,
         bridge: null,
         usage: undefined,
@@ -831,10 +858,14 @@ function create(emit, options = {}) {
       const bridge = await QuestionBridge.create({
         approvals,
         emit: emitEvent,
+        collaboration: session.collaboration,
       });
       session.bridge = bridge;
 
       let effectivePrompt = prompt ?? '';
+      if (session.collaborationEnabled) {
+        effectivePrompt = `[多 Agent 协作系统已就绪。你作为主协调者，可调用已注入的 MCP 工具：delegate_to_agent(agent_type, task) 向其他已注册的 Harness（如 @pi、@claude-code、@codex、@deepseek-harness 等）委派子任务，使用 get_delegation_status(task_ids) 等待结果，使用 update_agent_plan(steps) 设定与更新分步计划。]\n\n${effectivePrompt}`;
+      }
       const { imageEntries, extraDirs } = await prepareImageAttachments(attachments?.images, session.cwd);
       if (imageEntries.length) {
         const imageNotice = [

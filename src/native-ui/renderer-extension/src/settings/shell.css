@@ -1390,6 +1390,25 @@ button {
   line-height: 24px;
 }
 
+.settings-about-version-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.settings-about-version-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--settings-text);
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
 .settings-about-copy {
   display: grid;
   max-width: 660px;
@@ -2173,4 +2192,47 @@ button {
   line-height: 18px;
   margin-top: 2px;
   overflow-wrap: anywhere;
+}
+
+.settings-install-manual-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--settings-inset);
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--settings-border);
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+
+.settings-install-manual-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--settings-accent, #10a37f);
+  background: var(--settings-accent-subtle, rgba(16, 163, 127, 0.1));
+  padding: 2px 8px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.settings-install-manual-notice {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--settings-text);
+  margin: 0;
+}
+
+.settings-install-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--settings-muted);
+}
+
+.settings-install-steps li {
+  margin-bottom: 2px;
 }
