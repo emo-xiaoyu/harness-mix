@@ -12,7 +12,7 @@ assert.deepEqual(manifest.contractVersions, {
   protocolFixture: 1,
 });
 
-const observed = evaluateDesktopCompatibility('26.901.2854.0', manifest);
+const observed = evaluateDesktopCompatibility('26.901.2854.0', manifest, 'win32');
 assert.equal(observed.state, 'observed');
 assert.equal(observed.evidence.level, 'protocol-and-smoke');
 assert.doesNotThrow(() => enforceDesktopCompatibility(observed, {}));
@@ -30,12 +30,12 @@ const verifiedManifest = {
     notes: 'Synthetic verified version for policy testing.',
   }],
 };
-assert.equal(evaluateDesktopCompatibility('26.999.1.0', verifiedManifest).state, 'verified');
-assert.equal(evaluateDesktopCompatibility('26.999.2.0', manifest).state, 'unverified');
-assert.throws(() => evaluateDesktopCompatibility('latest', manifest), /Invalid/);
+assert.equal(evaluateDesktopCompatibility('26.999.1.0', verifiedManifest, 'win32').state, 'verified');
+assert.equal(evaluateDesktopCompatibility('26.999.2.0', manifest, 'win32').state, 'unverified');
+assert.throws(() => evaluateDesktopCompatibility('latest', manifest, 'win32'), /Invalid/);
 
 const blockedManifest = { ...manifest, blockedDesktopVersions: ['26.999.3.0'] };
-const blocked = evaluateDesktopCompatibility('26.999.3.0', blockedManifest);
+const blocked = evaluateDesktopCompatibility('26.999.3.0', blockedManifest, 'win32');
 assert.equal(blocked.state, 'blocked');
 assert.throws(() => enforceDesktopCompatibility(blocked, {}), /explicitly blocked/);
 

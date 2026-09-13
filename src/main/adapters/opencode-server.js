@@ -4,8 +4,8 @@ const path = require('node:path');
 const { cliSpawn } = require('../host/jsonl');
 const { terminateTree } = require('../native/process-utils');
 function executable(args) {
-  const local = process.env.HARNESS_MIX_OPENCODE_EXECUTABLE || path.join(process.env.APPDATA || '', 'npm/node_modules/opencode-ai/bin/opencode.exe');
-  return fs.existsSync(local) ? { command: local, args } : cliSpawn('opencode', args);
+  const local = process.env.HARNESS_MIX_OPENCODE_EXECUTABLE || (process.platform === 'win32' ? path.join(process.env.APPDATA || '', 'npm/node_modules/opencode-ai/bin/opencode.exe') : null);
+  return local && fs.existsSync(local) ? { command: local, args } : cliSpawn('opencode', args);
 }
 class OpenCodeServer {
   constructor(cwd, options = {}) { this.cwd = cwd; this.env = options.env; this.controllers = new Set(); this.closed = false; }

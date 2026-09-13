@@ -1,6 +1,6 @@
 {
-  "name": "harness-mix",
-  "version": "0.1.3",
+  "name": "@harness-mix/cli",
+  "version": "0.1.4",
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
@@ -29,6 +29,10 @@
   "bin": {
     "harness-mix": "scripts/launch-codex.cjs"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "postinstall": "node scripts/install-native.cjs",
   "files": [
     "CHANGELOG.md",
     "src",
@@ -44,13 +48,17 @@
     "output/native-build/desktop-controller.mjs",
     "output/native-build/renderer-extension.js",
     "!src/main/native/rs/target",
-    "!**/*.log"
+    "!**/*.log",
+    "output/native-build/harness-mix-shim"
   ],
   "os": [
-    "win32"
+    "win32",
+    "darwin",
+    "linux"
   ],
   "cpu": [
-    "x64"
+    "x64",
+    "arm64"
   ],
   "workspaces": [
     "src/native-ui/shared-contracts",
@@ -70,7 +78,7 @@
     "test:docs": "node scripts/docs-command-test.cjs",
     "typecheck:native-ui": "tsc -b src/native-ui/shared-contracts/tsconfig.json src/native-ui/desktop-control/tsconfig.json src/native-ui/renderer-extension/tsconfig.json --pretty false",
     "test:native-ui": "vitest run --config vitest.config.mjs",
-    "test:ci": "npm run test:docs && npm run check && npm run typecheck:native-ui && npm run test:native-ui && npm run test:core-all && npm run test:native-protocol && npm run test:native-compatibility",
+    "test:ci": "npm run test:docs && npm run check && npm run typecheck:native-ui && npm run test:native-ui && npm run test:core-all && npm run test:native-protocol && npm run test:native-compatibility && npm run test:platform",
     "test:collaboration": "node scripts/collaboration-test.cjs",
     "test:switch-harness": "node scripts/switch-harness-test.cjs",
     "smoke:collaboration-ui": "electron scripts/collaboration-ui-smoke.cjs",
@@ -141,7 +149,10 @@
     "diagnostics": "node scripts/diagnostics.cjs",
     "test:native-vendors": "node scripts/native-vendor-adapters-test.cjs",
     "test:collaboration-recovery": "node scripts/collaboration-recovery-test.cjs",
-    "test:tool-concurrency": "node scripts/tool-concurrency-regression-test.cjs"
+    "test:tool-concurrency": "node scripts/tool-concurrency-regression-test.cjs",
+    "test:platform": "node scripts/platform-test.cjs",
+    "test:shim": "node scripts/native-shim-test.cjs",
+    "publish:native": "node scripts/publish-native-package.cjs"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
@@ -155,5 +166,13 @@
     "@deepseek-ai/dsh": "0.1.2-rc.1",
     "lucide": "1.28.0",
     "zod": "4.4.3"
+  },
+  "optionalDependencies": {
+    "@harness-mix/native-win32-x64": "0.1.4",
+    "@harness-mix/native-win32-arm64": "0.1.4",
+    "@harness-mix/native-darwin-x64": "0.1.4",
+    "@harness-mix/native-darwin-arm64": "0.1.4",
+    "@harness-mix/native-linux-x64": "0.1.4",
+    "@harness-mix/native-linux-arm64": "0.1.4"
   }
 }

@@ -1,5 +1,7 @@
 # Harness Mix
 
+macOS/Linux 已加入源码构建与启动适配（待目标系统真机验收）；安装方式、Linux 桌面前提和支持边界见 [跨平台指南](docs/cross-platform.md)。
+
 <p align="center">
   <img src="src/assets/brand-harness-mix.png" width="92" alt="Harness Mix logo">
 </p>
@@ -183,17 +185,17 @@ npm install
 
 ### 从 npm 安装
 
-Harness Mix 发布为 Windows x64 npm 包，包内包含已构建的 Shim、Desktop Controller 和 Renderer 扩展。安装后可从任意工作目录启动：
+Harness Mix 发布为 `@harness-mix/cli` npm 包，命令名仍是 `harness-mix`。当前发布包包含本次构建平台的 native Shim；macOS/Linux 请在目标系统执行源码构建，完整说明见 [跨平台指南](docs/cross-platform.md)。
 
 ```powershell
-npm install --global harness-mix
+npm install --global @harness-mix/cli
 harness-mix
 ```
 
 升级到最新版本：
 
 ```powershell
-npm update --global harness-mix
+npm update --global @harness-mix/cli
 ```
 
 首次运行会重启已打开的 Codex Desktop。npm 包只分发 Harness Mix 本身；各 Harness 的 CLI、登录状态、模型额度和权限仍需按下表在本机单独安装和配置。

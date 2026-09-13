@@ -14,12 +14,13 @@ concurrency:
 
 jobs:
   kernel:
-    name: Kernel (Node ${{ matrix.node }})
-    runs-on: windows-latest
+    name: Kernel (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
         node: [22.19.0, 24.0.0]
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +32,13 @@ jobs:
       - run: npm run test:ci
 
   native-build:
-    name: Native Windows build and smoke
-    runs-on: windows-latest
+    name: Native (${{ matrix.os }}) build and Shim
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,11 +48,15 @@ jobs:
       - run: npm ci
       - run: rustup show
       - run: npm run build:native
+      - run: npm run test:shim
+      - run: npm run test:platform
+      - run: npm run test:native-config
       - run: npm run smoke:native-ui
+        if: runner.os == 'Windows'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-windows-evidence
+          name: native-${{ runner.os }}-${{ runner.arch }}-evidence
           path: |
             output/native-build/
             output/native-ui-smoke/

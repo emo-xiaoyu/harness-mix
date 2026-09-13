@@ -3,7 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { terminateTree } = require("../native/process-utils");
 
-const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || "E:\\dsh\\deepseek-harness";
+const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || (process.platform === 'win32' ? "E:\\dsh\\deepseek-harness" : null);
 
 /**
  * DSH Web Remote 宿主管理器（协议见 packages/api/gateway + client/connection）：
@@ -60,7 +60,9 @@ class DshWebHost {
   }
 
   async #start() {
-    const child = spawn("cmd.exe", ["/d", "/s", "/c", "npm.cmd run dsh -- web --no-open --port 0"], {
+    if (!DSH_ROOT) throw new Error('Set HARNESS_MIX_DSH_ROOT to the DeepSeek Harness checkout for web mode');
+    const child = spawn(process.platform === 'win32' ? 'cmd.exe' : 'npm', process.platform === 'win32'
+      ? ["/d", "/s", "/c", "npm.cmd run dsh -- web --no-open --port 0"] : ['run', 'dsh', '--', 'web', '--no-open', '--port', '0'], {
       cwd: DSH_ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     });
     this.child = child;

@@ -5,10 +5,14 @@
 // - anything else         -> stock codex.exe passthrough
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
+#[cfg(not(unix))]
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(not(unix))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(unix))]
 use std::thread;
 
 mod job;
@@ -73,6 +77,7 @@ fn log_spawn(exe_dir: &Path, mode: &str, args: &[String]) {
     );
 }
 
+#[cfg(not(unix))]
 fn log_exit(exe_dir: &Path, code: i32, stderr_tail: &[u8]) {
     let tail = json_escape(&String::from_utf8_lossy(stderr_tail));
     log_line(
@@ -105,6 +110,7 @@ fn setting(env_name: &str, file: &Path) -> io::Result<String> {
     }
 }
 
+#[cfg(not(unix))]
 fn pump<R: Read + Send + 'static, W: Write + Send + 'static>(
     mut source: R,
     mut destination: W,
@@ -165,6 +171,21 @@ fn run() -> io::Result<i32> {
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
+    // Unix exec keeps the Desktop-owned PID and stdio: signals and EOF reach
+    // the native host directly, without an extra unsupervised pump process.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        return Err(command.exec());
+    }
+
+    #[cfg(not(unix))]
+    supervise(command, exe_dir)
+}
+
+#[cfg(not(unix))]
+fn supervise(mut command: Command, exe_dir: &Path) -> io::Result<i32> {
     let mut child = command.spawn()?;
     let child_stdin = child
         .stdin

@@ -1,16 +1,18 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
+const { dataDirectory, executableName } = require('./platform');
 const root = path.resolve(__dirname, '../../..');
 const settingKeys = ['HARNESS_MIX_DSH_ROOT', 'CODEXHOST_PI_COMMAND', 'CODEXHOST_CLAUDE_COMMAND', 'CODEXHOST_DEEPSEEK_HARNESS_COMMAND', 'CODEXHOST_ANTIGRAVITY_COMMAND', 'HARNESS_MIX_CODEBUDDY_EXECUTABLE', 'HARNESS_MIX_WORKBUDDY_EXECUTABLE', 'HARNESS_MIX_KIRO_EXECUTABLE', 'HARNESS_MIX_CURSOR_EXECUTABLE', 'HARNESS_MIX_QODER_EXECUTABLE', 'HARNESS_MIX_ZCODE_ACP_EXECUTABLE', 'HARNESS_MIX_TRAE_EXECUTABLE'];
 
-function nativePaths() {
+function nativePaths(platform = process.platform) {
   const build = path.join(root, 'output/native-build');
   return {
     cli: path.join(root, 'scripts/launch-codex.cjs'),
-    shim: path.join(build, 'harness-mix-shim.exe'),
-    activation: path.join(build, 'harness-mix-appx.exe'),
-    secret: path.join(build, 'harness-mix-secret.exe'),
+    shim: path.join(build, executableName('harness-mix-shim', platform)),
+    ...(platform === 'win32' ? {
+      activation: path.join(build, 'harness-mix-appx.exe'),
+      secret: path.join(build, 'harness-mix-secret.exe'),
+    } : {}),
     runtime: path.join(root, 'src/main/native/host.js'),
     controller: path.join(build, 'desktop-controller.mjs'),
     renderer: path.join(build, 'renderer-extension.js'),
@@ -20,7 +22,7 @@ function nativePaths() {
 
 function nativeEnvironment(environment = process.env) {
   const env = { ...environment };
-  env.CODEXHOST_DATA_DIR ||= path.join(env.APPDATA || os.homedir(), 'harness-mix', 'codexhost');
+  env.CODEXHOST_DATA_DIR = dataDirectory(env);
   const settingsPath = path.join(env.CODEXHOST_DATA_DIR, 'harness-mix-settings.json');
   if (fs.existsSync(settingsPath)) {
     const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));

@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MANIFEST_PATH = path.resolve(__dirname, '../../../config/codex-desktop-compatibility.json');
-const VERSION_PATTERN = /^\d+(?:\.\d+){3}$/;
+const VERSION_PATTERN = /^\d+(?:\.\d+){1,3}$/;
 const EVIDENCE_LEVELS = new Set(['protocol-fixture', 'protocol-and-smoke', 'desktop-e2e']);
 
 function loadCompatibilityManifest(file = MANIFEST_PATH) {
@@ -23,12 +23,13 @@ function loadCompatibilityManifest(file = MANIFEST_PATH) {
   return manifest;
 }
 
-function evaluateDesktopCompatibility(desktopVersion, manifest = loadCompatibilityManifest()) {
+function evaluateDesktopCompatibility(desktopVersion, manifest = loadCompatibilityManifest(), platform = process.platform) {
   if (!VERSION_PATTERN.test(desktopVersion)) throw new Error('Invalid Codex Desktop version');
   if (manifest.blockedDesktopVersions.includes(desktopVersion)) {
     return { state: 'blocked', desktopVersion, evidence: null };
   }
-  const matches = manifest.evidence.filter(item => item.desktopVersion === desktopVersion);
+  // Legacy evidence was collected on Windows; it cannot certify another OS.
+  const matches = manifest.evidence.filter(item => item.desktopVersion === desktopVersion && (item.platform || 'win32') === platform);
   const evidence = matches.find(item => item.level === 'desktop-e2e') || matches.at(-1) || null;
   return {
     state: evidence?.level === 'desktop-e2e' ? 'verified' : evidence ? 'observed' : 'unverified',

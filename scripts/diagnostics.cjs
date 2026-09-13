@@ -50,11 +50,14 @@ if (fs.existsSync(crashDir)) {
   }
 }
 
-const zip = path.join(out, `diagnostics-${stamp}.zip`);
+const zip = path.join(out, `diagnostics-${stamp}.${process.platform === 'win32' ? 'zip' : 'tar.gz'}`);
 // bsdtar treats "E:\..." as a remote host:path spec, so pack via PowerShell.
-const script = `Compress-Archive -Path '${path.join(stage, '*')}' -DestinationPath '${zip}' -Force`;
-run('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', script]);
-if (!fs.existsSync(zip)) run('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', script]);
-if (!fs.existsSync(zip)) throw new Error('诊断打包失败：Compress-Archive 不可用');
+if (process.platform === 'win32') {
+  const script = `Compress-Archive -Path '${path.join(stage, '*').replace(/'/g, "''")}' -DestinationPath '${zip.replace(/'/g, "''")}' -Force`;
+  run('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', script]);
+} else {
+  run('tar', ['-czf', zip, '-C', stage, '.']);
+}
+if (!fs.existsSync(zip)) throw new Error('诊断打包失败：需要 PowerShell 7 (Windows) 或 tar (macOS/Linux)');
 try { fs.rmSync(stage, { recursive: true, force: true }); } catch { /* leave for inspection */ }
 console.log(`[Harness Mix] 诊断包已生成：${zip}`);
