@@ -1,6 +1,6 @@
 # Harness Mix
 
-macOS/Linux 已加入源码构建与启动适配（待目标系统真机验收）；安装方式、Linux 桌面前提和支持边界见 [跨平台指南](docs/cross-platform.md)。
+macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面验收仍需在对应机器执行。安装方式、Linux 桌面前提和支持边界见 [跨平台指南](docs/cross-platform.md)。
 
 <p align="center">
   <img src="src/assets/brand-harness-mix.png" width="92" alt="Harness Mix logo">
@@ -15,7 +15,9 @@ macOS/Linux 已加入源码构建与启动适配（待目标系统真机验收�
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt="UI" src="https://img.shields.io/badge/UI-Codex%20Desktop-412991.svg">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
+  <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-555555.svg">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624.svg">
 </p>
 
 <p align="center"><strong>当前注册的 Harness（16 个）</strong></p>
@@ -104,78 +106,9 @@ CodeBuddy、Kiro CLI、Cursor CLI、Qoder、ZCode 和 Trae 均已接入默认选
 
 能力只在 Adapter 的 `manifest` 中声明。界面根据真实能力显示入口，不靠 Harness 名称猜测功能；厂商特有字段会保留在原生引用和载荷中。
 
-## 架构
-
-```mermaid
-flowchart TB
-  Desktop[Codex Desktop 原生 UI] --> Shim[Harness Mix CLI Shim]
-  Shim --> Host[原生 Host 入口 src/main/native]
-  Host --> Runtime[Host Runtime]
-  Runtime --> Core[Protocol Core]
-  Runtime --> Store[(Thread and session store)]
-  Runtime --> Registry[Adapter registry]
-  Registry --> Antigravity[Antigravity CLI]
-  Registry --> Codex[Codex app-server]
-  Registry --> Pi[Pi RPC]
-  Registry --> OMP[Oh My Pi RPC]
-  Registry --> Claude[Claude Agent SDK]
-  Registry --> DSH[DSH Web Remote]
-  Registry --> OpenCode[OpenCode Server HTTP / SSE]
-  Registry --> Grok[Grok native stdio + vendor extensions]
-  Registry --> OpenClaw[OpenClaw Gateway loopback WS]
-  Registry --> Hermes[Hermes ACP stdio]
-  Registry --> Qoder[Qoder ACP stdio]
-  Registry --> CodeBuddy[CodeBuddy ACP + native extensions]
-  Registry --> Kiro[Kiro ACP + native extensions]
-  Registry --> Cursor[Cursor ACP + native extensions]
-  Registry --> ZCode[ZCode 显式 ACP 桥接入口 未验证]
-  Registry --> Trae[Trae 显式 ACP 入口 未验证]
-```
-
-```text
-src/
-├─ main/
-│  ├─ adapters/          # 每个 Harness 的原生适配器
-│  ├─ harness-adapter/   # Manifest、能力与适配器契约
-│  ├─ host/              # 编排、恢复、持久化与事件投影
-│  ├─ native/            # 原生模式：Launcher、Shim、Host 入口、协议桥
-│  └─ protocol-core/     # Thread / Turn / Item 统一语义
-├─ native-ui/
-│  ├─ renderer-extension/  # 注入 Codex Desktop 的渲染扩展（选择器、模型目录）
-│  ├─ desktop-control/     # CDP 控制器与请求桥
-│  └─ shared-contracts/    # 渲染侧与内核共享的协议契约
-└─ assets/icons/         # Harness 与模型图标（编译期嵌入）
-```
-
-新增 Harness 时，实现同形 Adapter 并注册到 `src/main/adapters/index.js`。核心形态如下：
-
-```js
-module.exports = {
-  manifest: {
-    id,
-    name,
-    icon,
-    capabilities: { streaming, tools, approvals, models, resume, fork, usage }
-  },
-  create(emit) {
-    return {
-      inspect,
-      open,
-      send,
-      cancel,
-      close,
-      respond,
-      listModelsFor,
-      setModel,
-      fork
-    };
-  }
-};
-```
-
 ## 本地运行
 
-开发环境需要 Windows、近期 Node.js LTS 和 npm。应用不会读取或保存 Harness 的账户密钥，请先在对应的原生 CLI 中完成安装与登录。
+开发环境需要 Windows、macOS 或 Linux，近期 Node.js LTS 和 npm。应用不会读取或保存 Harness 的账户密钥，请先在对应的原生 CLI 中完成安装与登录；平台前提和真机验收范围见 [跨平台指南](docs/cross-platform.md)。
 
 ```powershell
 git clone https://github.com/emo-xiaoyu/harness-mix.git
@@ -240,22 +173,6 @@ npm run e2e:codex
 ```
 
 部分 E2E 会启动真实 Harness，可能需要本机安装、登录或模型额度。测试生成物写入 `output/`，不应提交到仓库。
-
-## 设计原则
-
-1. **原生能力优先**：Adapter 翻译协议，不重新实现 Harness。
-2. **诚实声明能力**：只有完成接线和验证的能力才进入 `manifest`。
-3. **惰性恢复**：打开历史任务只读取本地投影，发送新消息时才恢复原生进程。
-4. **可回放事件**：Core Event 保持稳定顺序，可用于恢复、投影和确定性校验。
-5. **凭据隔离**：账号、令牌、沙箱和权限决定由原生程序管理。
-
-## 项目状态
-
-- [内核迁移状态](CORE-MIGRATION-STATUS.md)
-- [下一步计划](NEXT-STEPS.md)
-- [Codex Desktop 原生接入说明](docs/native-codex.md)
-
-Harness Mix 参考了 [codex-host](https://github.com/BytePioneer-AI/codex-host) 的插件化组织方式，并使用 [OpenAI Codex](https://github.com/openai/codex) 官方 app-server 协议完成 Codex 原生接入。
 
 ## License
 
