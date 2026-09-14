@@ -714,14 +714,19 @@ export function installRendererBindingProbe(
     const composer = editor.closest('[data-codex-composer-root]');
     if (!composer) return { agents: [], sessions: [] };
     const state = controller.get(composer);
-    // Stock Codex tasks bypass HostRuntime; do not advertise Host tools there.
-    if (state.agent === 'codex') return { agents: [], sessions: [] };
     const client = modelClientForHost(modelControl?.currentHostId?.() ?? 'local');
     const [agentResult, sessionResult] = await Promise.allSettled([
       client?.listCollaborationAgents?.() ?? Promise.resolve([]),
       client?.listHarnessSessions?.({ harnessId: harnessIdSchema.parse('all-harnesses'), query, offset: 0, limit: 12 }) ?? Promise.resolve({ candidates: [], total: 0 }),
     ]);
     const agents = agentResult.status === 'fulfilled' ? agentResult.value : [];
+    (window as any).__lastMentionDebug = {
+      hasClient: !!client,
+      agentStatus: agentResult.status,
+      agentValue: agentResult.status === 'fulfilled' ? agentResult.value : (agentResult as any).reason?.message,
+      sessionStatus: sessionResult.status,
+      sessionValue: sessionResult.status === 'fulfilled' ? sessionResult.value : (sessionResult as any).reason?.message,
+    };
     const sessions = sessionResult.status === 'fulfilled' ? sessionResult.value.candidates.map(candidate => {
       const match = /^\[([^\]]+)\]\s*/.exec(candidate.title ?? '');
       return { id: candidate.nativeSessionId, title: (candidate.title ?? '未命名会话').replace(/^\[[^\]]+\]\s*/, ''), harnessId: match?.[1] ?? 'codex', cwd: candidate.cwd, running: candidate.running };

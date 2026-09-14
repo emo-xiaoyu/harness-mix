@@ -2,16 +2,16 @@
 
 ## 用法
 
-重新启动 Harness Mix 后，新建或恢复一个 Pi / Oh My Pi / Claude Code / **Codex（协作）** / Grok / OpenCode / **Antigravity** 任务，输入 `@`，在 **Agents** 页选择目标 Harness；**会话** 页单独提供历史引用。左右键切换分页，上下键选择，Enter/Tab 插入。Codex（协作）通过 Host Adapter 使用原生 app-server；原来的 Codex 入口仍为官方直通。可用目标来自 Host 注册的 Adapter；未就绪的目标不可选。示例：
+重新启动 Harness Mix 后，新建或恢复一个 Pi / Oh My Pi / Claude Code / **Codex（协作）** / Grok / OpenCode / **Antigravity** 任务，在原生输入框中输入 `#`，在 **Agents** 页选择目标 Harness；**会话** 页单独提供历史引用。已选 Agent 以内联标签显示在输入框顶部，可点击或在光标位于正文开头时按 Backspace 移除。左右键切换分页，上下键选择，Enter/Tab 插入，Escape 关闭。`@` 保留给 Codex 原生功能，不会调出 Harness Mix 协作选择器。Codex（协作）通过 Host Adapter 使用原生 app-server；原来的 Codex 入口仍为官方直通。可用目标来自 Host 注册的 Adapter；未就绪的目标不可选。示例：
 
 ```text
 你负责实现后端。
-@claude-code 审查 API 设计，只读，不修改文件。
-@pi 为 tests/ 编写测试，不修改 src/。
+#claude-code 审查 API 设计，只读，不修改文件。
+#pi 为 tests/ 编写测试，不修改 src/。
 收齐结果后由你运行验证并总结。
 ```
 
-也可直接输入 `@pi`、`@claude`、`@dsh`、`@codex` 等已注册 ID/别名。显式 `[名称](harness-mix://agent/pi)` 引用可随草稿复制；代码块、行内代码和邮箱里的 @ 不作为路由元数据。提及本身由主模型结合用户任务理解，Host 不按文字片段盲目拆任务。
+也可直接输入 `#pi`、`#claude`、`#dsh`、`#codex` 等已注册 ID/别名。显式 `[名称](harness-mix://agent/pi)` 引用可随草稿复制；代码块和行内代码中的 `#` 不作为路由元数据。选择本身由主模型结合用户任务理解，Host 不按文字片段盲目拆任务。
 
 ## 执行方式
 
@@ -44,12 +44,12 @@
 | Pi 主任务 | 原生扩展工具；Pi→Pi、Pi→Claude 两条真实模型链路通过 |
 | Claude Code 主任务 | SDK MCP 注入；本机真实运行触发原生工具审批，未代答，尚未完成模型闭环验收 |
 | Oh My Pi 主任务 | 同 Pi 家族的扩展接线；本机未安装 OMP，真实验收未完成 |
-| Codex（协作）主任务 | 已接入选择器、模型/强度、恢复归属、@ 菜单；桌面使用配套 CLI。真实请求已到原生 MCP 审批，尚未完成需授权的闭环 |
+| Codex（协作）主任务 | 已接入选择器、模型/强度、恢复归属、# 菜单；桌面使用配套 CLI。真实请求已到原生 MCP 审批，尚未完成需授权的闭环 |
 | Grok 主任务 | L1：`session/new`/`session/load` 原生 `mcpServers` 槽注入，恢复会话同样携带；真实模型闭环验收待跑 |
 | OpenCode 主任务 | L2：`OPENCODE_CONFIG_CONTENT` 使用 `mcp["harness-mix"]`（V2 schema），会话结束即失效；本机真实请求已到官方 API，但被账户余额阻断 |
 | DSH 主任务 | 官方 `dsh --profile acp` 接收 session-scoped `harness-mix` MCP；DSH→CodeBuddy 两个 worktree 子任务和最终 `COLLAB_VERIFIED` 已通过真实模型回路。普通 DSH 任务继续使用 Web Remote |
 | Antigravity 主任务 | 支持主编排（通过 `.agents/plugins/harness-mix` MCP 自动挂载及指导词注入）；已接入协同工具与卡片投影 |
-| 官方 Codex 桌面直通任务 | 保持官方直通，不展示 Host 的 @ 协作菜单；不要把 Adapter 接线等同于已支持这个入口 |
+| 官方 Codex 桌面直通任务 | 保持官方直通，不展示 Host 的 # 协作菜单；不要把 Adapter 接线等同于已支持这个入口 |
 | 其他 Harness 主任务 | Agents 页明确提示需要切换可编排的主 Agent，目标不可选；历史引用仍可用；可使用旧 /delegate |
 | 子任务目标 | 所有已注册且本机可用的 Adapter；不代表每一对组合都已实测 |
 
@@ -72,11 +72,11 @@ npm run build:native
 
 设置 → 会话导入 → 全部历史，支持按标题、目录和会话 ID 搜索、分页、导入并打开。Pi、Claude、Codex 从本机原生历史发现会话；其余 Harness 当前聚合 Host 已管理的历史，并在来源名称上标为「Host 历史」，尚未接入各自 CLI 的外部会话扫描。
 
-导入只创建投影和原生会话引用，不启动模型；再次发送时原生恢复。重复导入返回同一任务。输入 `@` 可从「会话」页选择一条记录；Host 最多读取三条引用，每条只附加最近十二条用户/助手文本，并明确标记为不可执行的历史数据。引用不会创建、恢复或占用原生会话。原始完整工具、隐藏状态和分支数据仍留在原生存储，因此这不是原生历史的无损迁移。原生运行状态未知时，应先关闭其他客户端的同一会话。
+导入只创建投影和原生会话引用，不启动模型；再次发送时原生恢复。重复导入返回同一任务。输入 `#` 可从「会话」页选择一条记录；Host 最多读取三条引用，每条只附加最近十二条用户/助手文本，并明确标记为不可执行的历史数据。引用不会创建、恢复或占用原生会话。原始完整工具、隐藏状态和分支数据仍留在原生存储，因此这不是原生历史的无损迁移。原生运行状态未知时，应先关闭其他客户端的同一会话。
 
 ## 2026-09-11 Codeg 协作流程修复
 
-- Agents 与历史会话分栏，修复原生 @ 大菜单与协作菜单同时弹出；提示不可用主 Agent 的能力边界。
+- Agents 与历史会话分栏，使用 `#` 调出协作菜单，`@` 保留给原生功能；提示不可用主 Agent 的能力边界。
 - 默认共享目录，使开发与审查读取同一份实际文件；保留显式隔离工作区。多任务等待在任一结果可收取时返回。
 - 新增可更新的原生计划，子任务卡片投影真实会话 ID 与 Harness 名称，跟进复用原会话。
 - 实测 Pi 主任务 + 两个独立 Pi 原生子会话：开发者写入错误样本 41 → 审查者 REVIEW_FAIL → message_agent 交回原开发者修为 42 → 原审查者 REVIEW_PASS → 主模型完成计划并汇总。测试验证文件实际导出值以及两个会话均收到跟进。日志：`output/collaboration-cycle.log`。
@@ -86,4 +86,4 @@ npm run build:native
 npm run e2e:collaboration -- --lead=pi --worker=pi --cycle
 ```
 
-桌面实测与隔离增强：Pi 主 Agent 切换、Agents/会话切页、Claude 提及精确插入（无重复 @）、图标标识和草稿清理通过。原生协作卡片已实装「↗ 查看 @agent 会话」跳转子任务 Thread、「🔍 查看产物 Diff」语法高亮展开与「✓ 合并改动到主项目」操作；Worktree 隔离环境已实装补丁冲突结构化指引、`discardWorkspace` 一键丢弃临时分支与 `pushWorkspace` 远程分支推送协议支持。截图与报告在 `output/collaboration-ui/desktop-*.png` 和 `desktop-report.json`。
+桌面实测与隔离增强：Pi 主 Agent 切换、Agents/会话切页、Claude 选择精确插入、图标标识和草稿清理通过。原生协作卡片已实装「↗ 查看 Agent 会话」跳转子任务 Thread、「🔍 查看产物 Diff」语法高亮展开与「✓ 合并改动到主项目」操作；Worktree 隔离环境已实装补丁冲突结构化指引、`discardWorkspace` 一键丢弃临时分支与 `pushWorkspace` 远程分支推送协议支持。截图与报告在 `output/collaboration-ui/desktop-*.png` 和 `desktop-report.json`。
