@@ -22,3 +22,11 @@ module.exports = acpAdapter({
   usage: false,
   contextUsage: false,
 });
+// ~/.hermes/skills is Hermes' single source of truth (categories become subdirectories);
+// it has no documented project-scope skills directory. HERMES_HOME relocates the home.
+// https://hermes-agent.nousresearch.com/docs/user-guide/features/skills
+module.exports.manifest.integrations.skills = {
+  global: ['.hermes/skills'],
+  project: [],
+  overrides: { '.hermes/skills': { env: 'HERMES_HOME', suffix: 'skills' } },
+};

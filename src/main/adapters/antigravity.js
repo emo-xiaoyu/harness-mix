@@ -859,9 +859,6 @@ function create(emit, options = {}) {
       session.bridge = bridge;
 
       let effectivePrompt = prompt ?? '';
-      if (session.collaborationEnabled) {
-        effectivePrompt = `[多 Agent 协作系统已就绪。你作为主协调者，可调用已注入的 MCP 工具：delegate_to_agent(agent_type, task) 向其他已注册的 Harness（如 @pi、@claude-code、@codex、@deepseek-harness 等）委派子任务，使用 get_delegation_status(task_ids) 等待结果，使用 update_agent_plan(steps) 设定与更新分步计划。]\n\n${effectivePrompt}`;
-      }
       const { imageEntries, extraDirs } = await prepareImageAttachments(attachments?.images, session.cwd);
       if (imageEntries.length) {
         const imageNotice = [
@@ -1211,15 +1208,18 @@ function create(emit, options = {}) {
     },
 
     async cancel(session) {
-      if (session.activeTurn?.child) {
-        void terminateTree(session.activeTurn.child.pid);
+      if (session.activeTurn) {
+        session.activeTurn.completed = true;
+        if (session.activeTurn.child) {
+          void terminateTree(session.activeTurn.child.pid);
+        }
+        session.activeTurn.resolve?.();
+        session.activeTurn = null;
       }
       if (session.bridge) {
         await session.bridge.dispose().catch(() => {});
         session.bridge = null;
       }
-      session.activeTurn?.resolve?.();
-      session.activeTurn = null;
     },
 
     async respond(session, requestId, response) {
@@ -1345,7 +1345,10 @@ function create(emit, options = {}) {
   };
 }
 
-manifest.integrations = { mcp: true };
+// https://antigravity.google/docs/skills/#where-skills-live
+// Single assignment: an earlier declaration used to be silently overwritten here,
+// which dropped Antigravity's native skill roots from the manifest.
+manifest.integrations = { mcp: true, skills: { global: ['.gemini/config/skills'], project: ['.agents/skills'] } };
 module.exports = {
   manifest,
   create,

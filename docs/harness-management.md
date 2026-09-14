@@ -43,15 +43,15 @@ Pi / DSH 显示「已配置」而非「已登录」，目录存在不能证明�
 
 官方 Codex 任务由官方 app-server 直接拥有，不经过 HostRuntime，因此不会显示接力入口；需要使用 Harness Mix 管理的 `Codex（协作）` 才能参与这种跨 Harness 接力。`/switch <Harness 名> [备注]` 继续作为键盘快捷入口。
 
-## MCP / Skills
+## MCP 与 Skills
 
-设置页的「MCP / Skills」按 Harness 和作用域管理扩展。全局配置适用于该 Harness 的全部项目；项目配置按服务名覆盖全局配置。MCP 只保存 stdio 可执行文件与参数，禁止保存令牌、密码和环境变量。账号与凭据继续由原生 Harness 环境管理。
+设置页把「MCP」和「Skills」拆成两个独立入口，均可按 Harness 和作用域管理。全局配置适用于该 Harness 的全部项目；项目配置按服务名覆盖全局配置。MCP 使用接近 Codex 的服务器列表与详情编辑流程，支持搜索、逐项添加参数、启停和删除。MCP 只保存 stdio 可执行文件与参数，禁止保存令牌、密码和环境变量。账号与凭据继续由原生 Harness 环境管理。
 
 Harness Mix 不改写各 Harness 已有的 MCP 配置文件。启用的托管配置在新建、恢复、Fork 或回退后的下一次原生会话打开时，通过各 Harness 的原生会话配置接口传入。正在运行的会话不会热改配置。Claude Code 与 OpenCode 可返回原生连接状态和工具名称；其他已接入 Harness 会区分「已配置」「已传入会话」和「连接状态未报告」，不会把保存成功当成已连接。
 
-Skills 从已确认的原生目录发现：Claude Code、Codex、Pi 和 OpenCode 支持全局或项目目录。安装只接受本机绝对目录、必须包含 `SKILL.md`，拒绝符号链接、同名覆盖、超过 10 MB 或 500 个文件的目录。停用会把整个技能目录移动到相邻的 Harness Mix 保留目录，恢复时原样移回；不删除技能内容。共享 `.agents/skills` 的修改会影响读取同一目录的 Harness。
+Skills 从每个 Harness 已声明的原生目录发现：全部 16 个 Harness 都登记了全局/项目根目录，所以设置页不再出现「暂未配置原生技能目录」。根目录来自各 Harness 官方文档与已安装程序自身的扫描代码，例如 Codex 的 `~/.agents/skills` 与兼容保留的 `$CODEX_HOME/skills`、Kiro 专用的 `.kiro/skills`、Trae IDE 的 `.trae/skills` 与 TraeCode CLI 的 `.traecli/skills`、Hermes 的 `~/.hermes/skills`。打开原生会话时会先创建缺失的根目录，已安装但从未运行过的 Harness 也能立即发现技能；某个目录创建失败只会提示并跳过，不会阻止会话打开。可以把单个 Markdown 文件直接拖入并作为 `SKILL.md` 安装，也可以拖入或选择根目录含 `SKILL.md` 的完整技能文件夹。拖入内容经过同一套限制：拒绝路径逃逸、同名覆盖、超过 10 MB 或 500 个文件的技能。原有本机绝对目录安装协议仍兼容。停用会把整个技能目录移动到相邻的 Harness Mix 保留目录，恢复时原样移回；不删除技能内容。共享 `.agents/skills` 的修改会影响读取同一目录的 Harness。
 
-当前 MCP 会话注入支持 Claude Code、Codex（协作入口）、OpenCode、Grok、Antigravity，以及使用通用 ACP 接入的 CodeBuddy、Kiro、Cursor、Qoder 和 Hermes。DSH 配置托管 MCP 后会使用其官方 ACP profile 打开该会话；未配置时仍走 Web Remote。Pi/OMP 的 MCP 扩展机制不是通用原生 MCP 声明，当前只保留已有协作工具注入；设置页会明确显示不支持。未确认原生技能目录的 Harness 不提供文件写入操作。
+当前 MCP 会话注入支持 Claude Code、Codex（协作入口）、OpenCode、Grok、Antigravity，以及使用通用 ACP 接入的 CodeBuddy、Kiro、Cursor、Qoder 和 Hermes。DSH 配置托管 MCP 后会使用其官方 ACP profile 打开该会话；未配置时仍走 Web Remote。Pi/OMP 的 MCP 扩展机制不是通用原生 MCP 声明，当前只保留已有协作工具注入；设置页会明确显示不支持。每个 Harness 都登记了原生技能根目录，只有链接到其他位置的目录（junction/symlink）保持只读。
 
 ## 验证
 

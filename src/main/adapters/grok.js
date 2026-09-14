@@ -275,4 +275,7 @@ async function doGrokCompact(session, userContext, hooks) {
   hooks?.emit?.({ kind: 'completed', finalAnswer: outcome !== 'cancelled' });
 }
 module.exports = { ...grokAdapter(), projectUsage, parseGrokCompactionUpdate, doGrokCompact };
-module.exports.manifest.integrations = { mcp: true };
+module.exports.manifest.integrations = { mcp: true, skills: {
+  global: ['.grok/skills', '.agents/skills', '.claude/skills'],
+  project: ['.grok/skills', '.claude/skills'],
+} };

@@ -20,7 +20,7 @@ const CLAUDE_PERMISSION_MODES = [
   { id: "acceptEdits", label: "接受编辑", description: "允许文件编辑；其他受保护操作前询问" },
   { id: "auto", label: "自动模式", description: "由 Claude 判断权限请求" },
   { id: "dontAsk", label: "免询问", description: "跳过权限询问（非绕过检查）" },
-  { id: "bypassPermissions", label: "绕过权限", description: "跳过全部权限检查，谨慎使用", dangerous: true },
+  { id: "bypassPermissions", label: "绕过权限 (YOLO)", description: "跳过全部权限检查（YOLO 模式），自动放行工具执行", dangerous: true },
 ];
 
 function summarizeInput(input) {
@@ -244,14 +244,25 @@ async function loadSdk() {
   return import("@anthropic-ai/claude-agent-sdk");
 }
 
+function normalizeClaudePermissionMode(mode) {
+  if (mode === 'yolo' || mode === 'skip' || mode === 'dangerously-skip-permissions') {
+    return 'bypassPermissions';
+  }
+  return mode;
+}
+
 /** 建立一个常驻 SDK 会话（open 与 fork 共用）：构造 query、启动事件泵 */
-function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration, managedMcp = [], onPlanLimit }) {
+function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelId, effort, emit, collaboration, managedMcp = [], onPlanLimit, isWorker = false }) {
   const input = new MessageQueue();
+  const normalizedPermissionMode = normalizeClaudePermissionMode(permissionMode) || (isWorker ? 'bypassPermissions' : undefined);
+  const isBypass = normalizedPermissionMode === 'bypassPermissions' || isWorker;
+
   const session = {
     nativeSessionId: resumeId || newSessionId,
     cwd,
     collaborationEnabled: !!collaboration,
-    permissionMode,
+    permissionMode: normalizedPermissionMode,
+    isWorker,
     model: undefined,
     input,
     query: undefined,
@@ -270,10 +281,17 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
       ...(resumeId ? { resume: resumeId } : {}),
       ...(!resumeId && newSessionId ? { sessionId: newSessionId } : {}),
       ...(effort ? { effort } : {}),
-      ...(permissionMode ? { permissionMode } : {}),
+      ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
+      ...(isBypass ? { allowDangerouslySkipPermissions: true } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(process.env.HARNESS_MIX_CLAUDE_EXECUTABLE ? { pathToClaudeCodeExecutable: process.env.HARNESS_MIX_CLAUDE_EXECUTABLE } : {}),
       canUseTool: (toolName, toolInput, { signal, suggestions }) => {
+        if (toolName !== 'AskUserQuestion') {
+          const currentMode = normalizeClaudePermissionMode(session.permissionMode);
+          if (currentMode === 'bypassPermissions' || session.isWorker) {
+            return { behavior: 'allow', updatedInput: toolInput };
+          }
+        }
         const requestId = randomUUID();
         emit(projectApproval(requestId, toolName, toolInput, suggestions));
         return new Promise((resolve) => {
@@ -380,12 +398,16 @@ function create() {
     },
     async open({ thread, emit, collaboration, managedMcp }) {
       const sdk = await loadSdk();
+      const isWorker = Boolean(thread.parentThreadId);
+      const rawMode = thread.options?.permissionMode;
+      const permissionMode = normalizeClaudePermissionMode(rawMode) || (isWorker ? 'bypassPermissions' : undefined);
       return spawnSession(sdk, {
         cwd: thread.cwd,
         resumeId: thread.restore ? thread.nativeSessionId : undefined,
         newSessionId: thread.restore ? undefined : thread.nativeSessionId,
         effort: thread.options?.thinking,
-        permissionMode: thread.options?.permissionMode,
+        permissionMode,
+        isWorker,
         modelId: thread.options?.model?.id,
         emit,
         collaboration,
@@ -412,11 +434,19 @@ function create() {
     },
 
     async cancel(session) {
+      for (const pending of session.pendingApprovals?.values() ?? []) {
+        pending.resolve({ behavior: "deny", message: "用户取消了请求", interrupt: true });
+      }
+      session.pendingApprovals?.clear();
       // 原生优雅中断；超时后由 Host 走 close 兜底
       await Promise.race([
         session.query?.interrupt().catch(() => {}),
-        new Promise((r) => setTimeout(r, 5_000)),
+        new Promise((r) => setTimeout(r, 2_000)),
       ]);
+      if (session.state.turn) {
+        session.state.turn.resolve();
+        session.state.turn = null;
+      }
     },
 
     async listCommands(session) {
@@ -452,10 +482,12 @@ function create() {
       const copied = await getSessionMessages(result.sessionId, { dir: source.cwd });
       const checkpointMap = Object.fromEntries(copied.map((entry, index) => [history[index].uuid, entry.uuid]));
       // Fork 出的新原生会话立即拉起常驻进程（resume 到新 sessionId），与 open() 同路径
+      const isWorker = Boolean(source.parentThreadId);
       const session = spawnSession(sdk, {
         cwd: source.cwd,
         resumeId: result.sessionId,
         permissionMode: source.options?.permissionMode,
+        isWorker,
         emit,
         onPlanLimit,
       });
@@ -476,8 +508,9 @@ function create() {
       return session.model;
     },
     async setPermissionMode(session, mode) {
-      session.permissionMode = mode;
-      await session.query?.setPermissionMode(mode);
+      const normalized = normalizeClaudePermissionMode(mode);
+      session.permissionMode = normalized;
+      await session.query?.setPermissionMode(normalized);
     },
     async setThinkingLevel(session, level) {
       const models = await this.listModelsFor(session);

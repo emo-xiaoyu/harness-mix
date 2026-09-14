@@ -180,5 +180,9 @@ function create() {
   };
   return adapter;
 }
-manifest.integrations = { mcp: true, skills: { global: ['.config/opencode/skills'], project: ['.opencode/skills'], overrides: { '.config/opencode/skills': { env: 'XDG_CONFIG_HOME', suffix: 'opencode/skills' } } } };
+manifest.integrations = { mcp: true, skills: {
+  global: ['.config/opencode/skills', '.claude/skills', '.agents/skills'],
+  project: ['.opencode/skills', '.claude/skills', '.agents/skills'],
+  overrides: { '.config/opencode/skills': { env: 'XDG_CONFIG_HOME', suffix: 'opencode/skills' } },
+} };
 module.exports = { manifest, create, projectEvent, projectPart, describeSession };

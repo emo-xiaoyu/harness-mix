@@ -5,3 +5,4 @@ module.exports = nativeAcp({
   id: 'qoder', name: 'Qoder', args: ['--acp'],
   capabilities: { questions: false, thinkingLevels: false, usage: true, contextUsage: true, attachments: true, fork: false, compaction: false },
 });
+module.exports.manifest.integrations.skills = { global: ['.qoder/skills'], project: ['.qoder/skills'] };

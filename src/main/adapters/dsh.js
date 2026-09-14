@@ -443,5 +443,12 @@ function create() {
   return web;
 }
 
-manifest.integrations = { mcp: true };
+manifest.integrations = { mcp: true, skills: {
+  global: ['.dsh/skills', '.agents/skills'],
+  project: ['.dsh/skills', '.agents/skills'],
+  overrides: {
+    '.dsh/skills': { env: 'DSH_HOME', suffix: 'skills' },
+    '.agents/skills': { env: 'DSH_AGENTS_HOME', suffix: 'skills' },
+  },
+} };
 module.exports = { manifest, create, projectWireEvent, flattenCatalog };

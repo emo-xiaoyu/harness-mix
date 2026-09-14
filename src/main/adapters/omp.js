@@ -10,3 +10,14 @@ module.exports = piFamily({
   packageHint: 'npm i -g @oh-my-pi/pi-coding-agent 或 https://omp.sh/install',
   aliases: ['omp', 'oh-my-pi'],
 });
+module.exports.manifest.integrations = {
+  mcp: false,
+  skills: {
+    global: ['.omp/agent/skills', '.agents/skills', '.pi/agent/skills'],
+    project: ['.omp/skills', '.agents/skills', '.pi/skills'],
+    overrides: {
+      '.omp/agent/skills': { env: 'OMP_CODING_AGENT_DIR', suffix: 'skills' },
+      '.pi/agent/skills': { env: 'PI_CODING_AGENT_DIR', suffix: 'skills' },
+    },
+  },
+};

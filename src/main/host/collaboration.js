@@ -8,6 +8,22 @@ const { createWorkspace, reviewWorkspace, applyWorkspace, discardWorkspace, push
 const validators = new Map(tools.map(tool => [tool.name, z.fromJSONSchema(tool.inputSchema)]));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function defaultWorkerPermissionMode(agent) {
+  switch (agent) {
+    case 'claude':
+    case 'claude-code':
+      return 'bypassPermissions';
+    case 'antigravity':
+    case 'agy':
+      return 'skip';
+    case 'pi':
+    case 'omp':
+      return 'no-approve';
+    default:
+      return undefined;
+  }
+}
+
 // A session-scoped local bridge. Native models/credentials and approvals stay in adapters.
 class Collaboration {
   constructor(runtime) {
@@ -134,6 +150,13 @@ class Collaboration {
     if (name === 'delegate_to_agent') {
       const agent = rt.resolveHarnessId(args.agent_type);
       if (!agent || !rt.status[agent]?.available) throw new Error('Target Harness unavailable');
+      // Server-side enforcement: multi-agent collaboration can ONLY start when the user explicitly selected/mentioned agents.
+      if (!parent.activeMentions || !parent.activeMentions.length) {
+        throw new Error('跨 Harness 协作仅在用户显式使用 #agent 或 @agent（如 #pi、#claude）指定时允许启动。用户本轮未显式委派，不能由大模型自行决定启动跨 Harness 协作。请直接使用当前 Harness 的原生工具完成任务。');
+      }
+      if (!parent.activeMentions.includes(agent)) {
+        throw new Error(`用户仅显式指定了 [${parent.activeMentions.join(', ')}]，不能委派给未指定的 "${agent}"。请向用户确认是否需要委派给其他 Harness。`);
+      }
       const jobs = [...this.jobs.values()].filter(j => j.owner === owner);
       if (jobs.filter(j => j.status === 'running').length >= 4) throw new Error('At most four concurrent subtasks; collect existing results first');
       if (jobs.filter(j => j.turnId === rt.execution.lastTurn(owner)?.id).length >= 16) throw new Error('At most sixteen subtasks per lead turn');
@@ -146,7 +169,7 @@ class Collaboration {
     if (name === 'get_delegation_status') {
       const jobs = args.task_ids.map(id => this.owned(owner, id));
       const until = Date.now() + (args.wait_ms ?? 0);
-      while (jobs.every(j => j.status === 'running') && Date.now() < until && !this.closing) await delay(Math.min(100, until - Date.now()));
+      while (jobs.every(j => j.status === 'running') && Date.now() < until && !this.closing && !this.cancelling.has(owner) && rt.execution.isRunning(owner)) await delay(Math.min(100, until - Date.now()));
       return jobs.map(j => this.view(j));
     }
     const job = this.owned(owner, args.task_id);
@@ -184,9 +207,12 @@ class Collaboration {
         job.workspace = await createWorkspace(parent.cwd, job.id, job.isolation);
         await this.save();
       }
-      if (job.status !== 'running' || this.closing) return;
-      const child = job.childId ? rt.threads.find(t => t.id === job.childId) : await rt.createThread({ harnessId: job.agent, cwd: job.workspace.cwd, title: `${parent.title} › ${task.slice(0, 40)}`, parentThreadId: parent.id,
-        onCreated: async thread => { job.childId = thread.id; await this.save(); } });
+      const workerPermMode = defaultWorkerPermissionMode(job.agent);
+      const child = job.childId ? rt.threads.find(t => t.id === job.childId) : await rt.createThread({
+        harnessId: job.agent, cwd: job.workspace.cwd, title: `${parent.title} › ${task.slice(0, 40)}`, parentThreadId: parent.id,
+        options: { ...(workerPermMode ? { permissionMode: workerPermMode } : {}) },
+        onCreated: async thread => { job.childId = thread.id; await this.save(); }
+      });
       if (!child) throw new Error('Native child history is missing; no replacement session was created');
       job.childId = child.id;
       await this.save();
@@ -198,7 +224,15 @@ class Collaboration {
       void sending.then(() => { sendDone = true; }, error => { sendDone = true; sendError = error; });
       const until = Date.now() + 30 * 60 * 1000;
       let displayedStatus = 'running';
-      while (job.status === 'running' && (!sendDone || rt.execution.isRunning(child.id) || child.reviewPending)) {
+      let turnInactiveSince = null;
+      while (job.status === 'running' && !this.closing && !this.cancelling.has(parent.id) && rt.execution.isRunning(parent.id)) {
+        const childRunning = rt.execution.isRunning(child.id) || child.reviewPending;
+        if (!childRunning) {
+          if (!turnInactiveSince) turnInactiveSince = Date.now();
+          if (sendDone || Date.now() - turnInactiveSince > 2000) break;
+        } else {
+          turnInactiveSince = null;
+        }
         const current = this.view(job).display_status;
         if (current !== displayedStatus) { displayedStatus = current; emit({ kind: 'tool', toolCallId, state: 'running', output: JSON.stringify(this.view(job)) }); }
         if (Date.now() > until) { await rt.cancel(child.id); throw new Error('Subtask timed out after 30 minutes'); }
@@ -227,16 +261,26 @@ class Collaboration {
     if (job.status !== 'running') return;
     job.status = this.closing ? 'interrupted' : 'cancelled';
     job.cancelling = true;
-    try { if (job.childId) await this.runtime.cancel(job.childId); }
-    finally { job.cancelling = false; await this.save(); }
+    try {
+      if (job.childId) {
+        await Promise.race([
+          this.runtime.cancel(job.childId),
+          new Promise(r => setTimeout(r, 3_000)),
+        ]).catch(() => {});
+      }
+    } finally { job.cancelling = false; await this.save(); }
   }
 
   async cancelOwner(owner) {
     const jobs = [...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running');
     if (!jobs.length) return;
     this.cancelling.add(owner);
-    try { await Promise.all(jobs.map(j => this.cancel(j))); }
-    finally { this.cancelling.delete(owner); }
+    try {
+      await Promise.race([
+        Promise.all(jobs.map(j => this.cancel(j))),
+        new Promise(r => setTimeout(r, 5_000)),
+      ]).catch(() => {});
+    } finally { this.cancelling.delete(owner); }
   }
   isParticipant(thread, owner) { return thread.id === owner || [...this.jobs.values()].some(j => j.owner === owner && j.childId === thread.id); }
   async close() {
@@ -254,11 +298,13 @@ function mentionedAgents(text, runtime) {
   // Ignore code and email/package addresses; explicit links survive draft copy/paste.
   const prose = text.replace(/```[\s\S]*?```|`[^`\n]*`/g, '');
   const ids = new Set();
-  for (const match of prose.matchAll(/\[[^\]\n]+\]\(harness-mix:\/\/agent\/([\w-]+)\)|(?:^|[\s，。；：])@([\w-]+)(?=$|[\s，。；：])/g)) {
+  // CJK ideographs (\u4e00-\u9fff) and fullwidth/halfwidth forms are valid word boundaries,
+  // so #agent works in Chinese prose (for example 帮我#pi做这个). @ remains native Codex syntax.
+  for (const match of prose.matchAll(/\[[^\]\n]+\]\(harness-mix:\/\/agent\/([\w-]+)\)|(?:^|[\s\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff，。；：、！？""''（）【】])#([\w-]+)(?=$|[\s\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff，。；：、！？""''（）【】])/g)) {
     const id = runtime.resolveHarnessId(match[1] || match[2]);
     if (id) ids.add(id);
   }
   return [...ids];
 }
 
-module.exports = { Collaboration, mentionedAgents };
+module.exports = { Collaboration, mentionedAgents, defaultWorkerPermissionMode };
