@@ -511,7 +511,8 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   pageLabels: Object.freeze({
     connections: "Connections",
     accounts: "Accounts",
-    integrations: 'MCP / Skills',
+    mcp: 'MCP',
+    skills: 'Skills',
     "session-import": "Session Import",
     updates: "Updates",
     about: "About",
@@ -767,7 +768,8 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   pageLabels: Object.freeze({
     connections: "连接",
     accounts: "账号",
-    integrations: 'MCP / Skills',
+    mcp: 'MCP',
+    skills: 'Skills',
     "session-import": "会话导入",
     updates: "更新",
     about: "关于",
