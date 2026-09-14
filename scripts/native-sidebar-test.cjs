@@ -21,6 +21,13 @@ assert.deepEqual(merged.data.map(t => t.id), ['official', 'external']);
 assert.equal(merged.nextCursor, 'next');
 assert.equal(mergeThreadPage(page, [thread], { cursor: 'next' }, t => t), page);
 
+const archivedThread = { id: 'archived-ext', archived: true, createdAt: 15 };
+const pageWithArchived = { data: [{ id: 'official', createdAt: 20 }, archivedThread], nextCursor: null };
+const mergedWithoutArchived = mergeThreadPage(pageWithArchived, [archivedThread], { archived: false }, t => t);
+assert.deepEqual(mergedWithoutArchived.data.map(t => t.id), ['official']);
+const mergedWithArchived = mergeThreadPage({ data: [{ id: 'official-archived', archived: true, createdAt: 20 }, archivedThread], nextCursor: null }, [archivedThread], { archived: true }, t => t);
+assert.deepEqual(mergedWithArchived.data.map(t => t.id), ['official-archived', 'archived-ext']);
+
 const root = fs.mkdtempSync(path.resolve('output/native-runtime-cache-test-'));
 const resources = path.join(root, 'resources');
 const cache = path.join(root, 'cache');
