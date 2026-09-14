@@ -63,66 +63,94 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 
 预览来自当前 Codex Desktop 原生窗口：Harness Mix 作为原生扩展入口出现在桌面工具栏和 Composer 中，会话、模型、工具与权限仍由 Codex Desktop 及各 Harness 管理。
 
-## 能做什么
+### 核心特性全景
 
-- 在 Codex Desktop 原生输入框中选择 Harness 并发起会话。
-- 流式呈现回答、思考、命令执行、工具调用、文件变更和上下文压缩。
-- 调用每个 Harness 原生提供的模型、权限、上下文用量和快捷指令。
-- 会话中可从原生 Harness 选择器图形化“接力当前任务”：选择目标、接力模式、交接内容和可选说明后确认；会话历史与文件现场保留在 Host 线程上。Host 会持久化脱敏的接力检查点，首轮发送紧凑摘要；支持原生 MCP 的 Harness 还可按当前任务作用域读取历史、计划、文件与测试证据。`/switch <Harness 名> [备注]` 保留为键盘入口；切回旧 Harness 时按其原生机制（Pi `--session` / Claude `resume`）恢复原会话。
-- 原生 Diff、审批与提问组件直接渲染，审批路由回原生 Harness，不代替用户作出权限决定。
-- CodeBuddy、Kiro 和 Cursor 使用原生 ACP 加厂商专用接口：提问、计划确认、配置确认、取消恢复、上下文与历史按各自协议处理。功能和验证范围见下表，不将通用 ACP 能力视为所有 CLI 都已支持。
-- 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
-- 原生设置中的「MCP」和「Skills」是独立页面：MCP 使用服务器列表与详情编辑流程，Skills 支持把 Markdown 文件或完整技能文件夹直接拖入安装；配置在下一次原生会话打开时生效，凭据和审批继续由原生 Harness 管理。
+```mermaid
+flowchart TD
+    subgraph UI["🖥️ Codex Desktop 原生界面"]
+        Composer["Composer 输入框<br/>（# 协同 · 任务接力 · 排队）"]
+        Settings["设置面板<br/>（MCP 服务 · Skills 拖拽安装）"]
+        Sidebar["ChatGPT Web 侧边栏<br/>（上下文安全脱敏注入）"]
+    end
+
+    subgraph Core["⚡ Harness Mix 本地内核"]
+        Shim["CLI Shim<br/>（app-server 协议桥）"]
+        Host["Host Runtime<br/>（会话映射 · 检查点 · 协作编排 · 消息排队）"]
+    end
+
+    subgraph Engines["🤖 原生 Coding Harnesses（16 个已接入）"]
+        H1["Antigravity / Codex"]
+        H2["Claude Code / Pi / OMP"]
+        H3["DeepSeek / Grok / OpenCode"]
+        H4["CodeBuddy / Kiro / Cursor"]
+        H5["Hermes / Qoder / ZCode / Trae / OpenClaw"]
+    end
+
+    UI --> Shim --> Host --> Engines
+```
+
+| 功能模块 | 核心能力 | 交互入口与特点 |
+| :--- | :--- | :--- |
+| **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
+| **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
+| **🧩 原生 Skills 管理** | 全量覆盖 16 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
+| **🛠️ 原生 MCP 扩展** | 支持本地 stdio 与远程 Streamable HTTP / SSE 协议 | 设置 → MCP；支持自定义 Header 传递，按 Harness 独立生效 |
+| **📋 原生消息队列** | 完整接入 Codex 会话排队机制（增删改查、排序、插队抢占与自动排空） | 原生 Composer 队列；当前回合完成后自动顺序调度执行排队消息 |
+| **🌐 ChatGPT 侧边栏桥接** | 安全脱敏提取当前会话上下文并一键生成结构化草稿 | Web 快捷聊天面板；直通注入 ChatGPT，实现跨工具无缝协作 |
+| **👤 账户与用量隔离** | Codex 多账户隔离与即时切换；实时追踪 Token / Credits 用量 | 原生侧边栏与设置面板；各 Harness 凭据、模型与审批原生自理 |
 
 <p align="center">
   <img src="docs/images/codex-desktop-session.png" width="960" alt="Codex Desktop 原生会话中的 Harness Mix">
 </p>
 
-## 特色功能：跨 Harness 任务接力
+## 原生 Harness 功能支持矩阵
 
-一个 Harness 负责分析，另一个执行方案，再切回原 Harness 复核——整个过程都留在同一个 Codex Desktop 原生任务窗口中。点击输入框旁带接力角标的 Harness 图标，选择目标 Harness 和接力方式即可，不需要复制 Prompt、另开终端或重新整理上下文。
+> 💡 **设计原则**：所有能力严格在 Adapter `manifest` 中诚实声明，界面按真实能力渲染，不依靠名称猜测。凭据、模型、工具与权限审批始终由原生 Harness 独立掌控。
 
-- **现场不丢**：保留任务标题、对话记录、工作目录、未提交文件、Git 状态和 Review 记录。
-- **上下文可追溯**：Host 创建持久化、带内容哈希的接力检查点；目标先收到紧凑摘要，支持原生 MCP 时还可按需读取历史、计划、文件与脱敏测试证据。
-- **四种接力方式**：继续执行、执行上一方案、独立审查、重新分析，可在确认弹窗中选择要交接的内容并补充说明。
-- **可以切回来**：每个 Harness 的原生 Session、模型和选项独立保存；切回时使用其原生恢复能力继续原会话。
-- **原生安全边界不变**：不迁移账号凭据、审批决定、待审批状态、原始 Tool Call ID 或私有协议对象；目标 Harness 必须重新核对真实工作区并自行发起权限请求。
+| Harness | 原生接入协议 | 流式输出 | 思考推理 | 工具审批 | 用户提问 | 会话恢复/Fork | 图片附件 | 原生 Skills | MCP 扩展 |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
+| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
+| **DeepSeek** | 普通 Web Remote / 协作 ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ➖ |
+| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
+| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
+| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **ZCode** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Trae** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
 
-不支持按需读取工具的 Harness 会明确退化为有界摘要，不会伪装成完整上下文迁移。完整流程、数据结构和验收边界见 [跨 Harness 接力设计](docs/harness-handoff-design.md) 与 [Harness 管理说明](docs/harness-management.md)。
+<sub>注：✅ 为原生支持并已打通；➖ 为上游协议当前未开放或未声明；只有本机已安装且握手成功的 Harness 才会进入真实运行。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
 
-## 原生接入
+## 核心功能特色
 
-通过 Codex Desktop 内的 Harness 选择器统一查看连接、筛选模型和保存每个 Harness 的新对话默认模型。具体流程与原生边界见 [Harness 管理说明](docs/harness-management.md)。
+### 🔄 跨 Harness 任务接力（Task Handoff）
+一个 Harness 负责深入分析，另一个编写具体实现，再切回原 Harness 交叉复核——整个过程无缝保留在同一个 Codex Desktop 原生窗口中：
+- **现场完整保留**：保留对话历史、未提交代码改动、Git 状态与 Review 记录。
+- **持久化检查点**：创建带哈希的接力快照，自动脱敏测试证据与敏感密钥，支持随时暂停与恢复。
+- **独立会话恢复**：每个 Harness 的原生 Session 与参数独立保存，切回时调用其原生恢复机制（如 Pi `--session` 或 Claude `resume`）。
+- **四种接力方式**：支持「继续执行」、「执行上一方案」、「独立审查」与「重新分析」。
 
-| Harness | 原生接口 | 当前接入重点 |
-| --- | --- | --- |
-| Antigravity | `agy` CLI (`stream-json` / PreToolUse Hook) | 流式输出、Gemini 模型目录与思考档位、Desktop 审批与提问桥接、文件变更、配额查询与 Fork |
-| Codex | `codex app-server --stdio` | Thread / Turn / Item、流式事件、审批、Usage、Resume、Fork、Compact |
-| Pi | `pi --mode rpc` | 会话恢复、模型目录、Usage、原生命令、Fork |
-| Oh My Pi | `omp --mode rpc`（Pi 家族协议，见 `pi-family.js`） | 与 Pi 同源：会话、模型、思考档位、权限、Fork、Usage |
-| Claude Code | `@anthropic-ai/claude-agent-sdk` 的 `query()` | 持久会话、流式消息、工具、权限、模型与 Resume |
-| DeepSeek Harness | 普通任务 `npm run dsh -- web`；协作主任务 `npm run dsh -- --profile acp` | Web Remote/Typert RPC；主任务使用官方 ACP 的会话级 MCP；WebSocket 事件、会话与模型控制 |
-| OpenCode | `opencode serve`（原生 HTTP / SSE，见 `opencode.js`） | 会话、模型目录、权限模式、图片、Fork |
-| Grok | `grok agent stdio`（独立适配 ACP 基础消息与 `_x.ai/*` 厂商扩展，见 `grok.js`） | 会话、模型、思考档位、原生命令目录、Token Usage、原生 Fork |
-| OpenClaw | 本机 Gateway loopback WebSocket（`openclaw-gateway.js` + `openclaw.js`） | 会话与恢复、流式增量、工具与命令输出、exec/plugin 审批回路由、模型与思考档位逐轮覆盖 |
-| Hermes | `hermes acp`（ACP over stdio，共享 `acp.js` 工厂） | 会话持久化/恢复/Fork、流式回答与思考、工具、审批、模型选择 |
-| Qoder | `qodercli --acp` / `qoder --acp`（官方 CLI，`native-acp.js`） | 原生会话、配置、审批、工具、恢复；图片按握手能力启用 |
-| CodeBuddy | `codebuddy --acp` + `_codebuddy.ai/*` | 原生提问与提交重试、审批作用范围、取消后重连恢复、模型/思考/模式、原生历史导入、去重 Token/Credits |
-| Kiro CLI | `kiro-cli acp --agent-engine v3 --auth-method cli` + `_kiro/*` | 原生提问、带作用范围的 consent、模型/effort、上下文查询、原生压缩与 fork（后两项需握手支持） |
-| Cursor CLI | `cursor-agent acp` + `cursor/*` | 单选/多选提问、计划接受/拒绝、原生模型变体/模式、会话恢复、完成后的 Diff 投影 |
-| ZCode | 需显式配置兼容 ACP 桥接程序（尚未验证） | 本机 0.16.5 仅确认 `app-server --stdio`；不能直接作为 ACP 启动 |
-| Trae | 需显式配置兼容 ACP 程序（尚未验证） | 官方 trae-agent 未发现 ACP 入口；不再使用猜测的启动/安装命令 |
+### 🤝 多 Agent 协同编排（Multi-Agent Collaboration）
+- **触发符解耦**：在原生输入框输入 `#` 调出协同菜单（`#pi`、`#claude`、`#codex`、`#dsh`），完全保留官方 `@` 菜单给 Codex 原生功能。
+- **标签可视化**：已选协同 Agent 在输入框顶部呈现为胶囊标签，支持点击快速删除或 Backspace 撤销。
+- **严谨编排约束**：自动为主控 Coordinator 注入硬约束，严禁越界派发给未指定的 Harness；完善级联取消与子任务超时熔断机制。
 
-CodeBuddy、Kiro CLI、Cursor CLI、Qoder、ZCode 和 Trae 均已接入默认选择器、模型偏好、侧栏图标与共享 ACP 引擎；其中只有已安装且握手成功的 Harness 才会进入真实运行。原 Workbuddy 已更名为 CodeBuddy；旧任务、切换历史、模型偏好与名称别名保留兼容。DSH 协作主任务也使用官方 ACP，普通任务继续使用 Web Remote。
-
-2026-09-12 健康检查：Pi、DSH、Claude Code、Codex、Grok、CodeBuddy 的真实文本回路通过；OpenCode 被账户余额阻断，Qoder 被 Credits 额度阻断，OMP、Hermes、Kiro、Cursor 本机未安装。图片真实回路通过 Antigravity、Pi、Claude Code、Codex、Grok、CodeBuddy；DSH 与 OpenClaw 的当前模型拒绝图片，Qoder/OpenCode 分别被额度/余额阻断。ZCode、Trae 目前只有显式 ACP 桥接配置入口，未证明官方 CLI 提供 ACP 服务。报告见 [`output/harness-health/1789191914230/report.json`](output/harness-health/1789191914230/report.json) 和 [`output/harness-health/1789191791797/report.json`](output/harness-health/1789191791797/report.json)；完整安装与边界见 [原生 ACP 深度适配](docs/native-acp.md)。
-
-能力只在 Adapter 的 `manifest` 中声明。界面根据真实能力显示入口，不靠 Harness 名称猜测功能；厂商特有字段会保留在原生引用和载荷中。
+### 🧩 原生 Skills 与 MCP 管理
+- **16 平台免配置预建**：打开会话时自动预建全部 16 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。
+- **拖拽安装**：在「设置 → Skills」中可将单个 `SKILL.md` 或完整技能文件夹直接拖拽安装，自带安全路径校验。
+- **作用域与安全停用**：支持 Global（全局）与 Project（项目级）无缝切换；停用时安全移入保留目录，绝不损坏用户源文件。
+- **远程 MCP 支持**：支持配置带自定义 Headers 的 Streamable HTTP / SSE 远程服务。
 
 ## 本地运行
 
 开发环境需要 Windows、macOS 或 Linux，近期 Node.js LTS 和 npm。应用不会读取或保存 Harness 的账户密钥，请先在对应的原生 CLI 中完成安装与登录；平台前提和真机验收范围见 [跨平台指南](docs/cross-platform.md)。
-
 ```powershell
 git clone https://github.com/emo-xiaoyu/harness-mix.git
 cd harness-mix
