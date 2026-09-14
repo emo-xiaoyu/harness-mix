@@ -27,7 +27,7 @@ import {
   type RendererImportedThreadOpener,
 } from "./session-import-page.js";
 import { createReleaseNotesElement } from "./release-notes.js";
-import { createIntegrationsSettingsPage } from './integrations-page.js';
+import { createMcpSettingsPage, createSkillsSettingsPage } from './integrations-page.js';
 import type { RendererIntegrationsClient } from '../renderer-integrations-client.js';
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
 
@@ -74,7 +74,8 @@ function windowsInstallerDownloadUrl(window: Window | null | undefined, version:
 export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "connections",
   "accounts",
-  "integrations",
+  "mcp",
+  "skills",
   "session-import",
   "updates",
   "about",
@@ -629,7 +630,8 @@ export function createDefaultRendererSettingsPages(
   return Object.freeze([
     createConnectionsSettingsPage(messages, getDiagnostics),
     createAccountsSettingsPage(messages, getAccountClient),
-    createIntegrationsSettingsPage(messages, getIntegrationsClient),
+    createMcpSettingsPage(messages, getIntegrationsClient),
+    createSkillsSettingsPage(messages, getIntegrationsClient),
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
     updatesPage(messages, getUpdateClient),
     aboutPage(messages, getUpdateClient),
