@@ -5,6 +5,7 @@ output/
 .learnings/
 .gemini/
 .workbuddy/
+.workbuddy-ai/
 .agents/
 src/main/native/rs/target/
 src/native-ui/*/dist/
