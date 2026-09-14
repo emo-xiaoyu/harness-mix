@@ -55,6 +55,25 @@ export type {
   RendererHarnessHandoffRequest,
 } from "./renderer-harness-handoff.js";
 export {
+  CHATGPT_CONTEXT_MAX_LENGTH,
+  CHATGPT_CONTEXT_MAX_MESSAGES,
+  buildChatGptContextDraft,
+  captureChatGptContext,
+  findChatGptQuickChatPanel,
+  insertChatGptContextDraft,
+  installChatGptContextBridge,
+  isChatGptQuickChatEditor,
+  redactChatGptContextText,
+  sanitizeChatGptSourceUrl,
+} from "./renderer-chatgpt-context.js";
+export type {
+  ChatGptContextBridge,
+  ChatGptContextBridgeOptions,
+  ChatGptContextCapture,
+  ChatGptContextMessage,
+  ChatGptContextTarget,
+} from "./renderer-chatgpt-context.js";
+export {
   TRANSCRIPT_ITEM_IDS_ATTRIBUTE,
   TRANSCRIPT_ITEM_SELECTOR,
   TRANSCRIPT_TEXT_BODY_SELECTOR,

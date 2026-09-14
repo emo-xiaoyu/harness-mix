@@ -1,6 +1,6 @@
 # ChatGPT 网页侧边对话
 
-> 历史设计记录：当前 Harness Mix 原生模式不包含下文所述的 `side-chat` / `web-chat` 实现，相关源码和 `smoke:web-chat` 入口已不在当前仓库中。本文仅保留方案边界，不能作为当前功能或可执行验收说明。
+> `side-chat` / `web-chat` 是历史设计，相关源码和 `smoke:web-chat` 入口已不在当前仓库中。当前原生模式只增强 Codex Desktop 自带的 Quick chat，提供“添加到会话”上下文桥。
 
 ## 官方实现参考
 
@@ -19,6 +19,12 @@
 侧边聊天直接使用 ChatGPT 网页，不调用 Codex app-server，不占用 Codex 编码额度。ChatGPT 网页自身的模型与使用限制仍适用。将内容添加到主输入框后，再发送给编码 Harness，会按该 Harness 正常计费或消耗额度。
 
 “添加到当前 Harness”优先导入网页选中文字；未选择时读取当前页面已加载的用户与助手消息文本，附带页面标题和来源链接。只填入草稿，由用户点击发送。图片附件不会自动下载或导入；网页未加载的历史消息也不会导入。网页结构变化导致读取失败时会显示提示，可选中文字重试。
+
+当前实现位于 `src/native-ui/renderer-extension/src/renderer-chatgpt-context.ts`。Quick chat 标题栏的“添加到会话”优先使用面板内选中文字，否则读取当前已打开聊天中明确标记为 user/assistant 的已加载消息；内容经脱敏、最多 12 条/24000 字符截断后，作为“不可信历史资料”写入当前主 Composer 草稿。只写草稿，不自动发送，同一草稿只允许一条引用。
+
+- 添加到其他 Harness：发送时由当前 Harness 创建/继续它自己的原生 Session，使用该 Harness 的模型、工具、权限和账号额度；不继承 ChatGPT 的会话 ID、系统提示或工具状态。
+- 添加到 Codex：发送时由当前 Composer 绑定的 Codex 账号处理并消耗该账号额度；同样只是上下文引用，不把 ChatGPT conversation 恢复成 Codex Thread。新任务使用 Composer 当前选择的账号，旧任务保持原账号。
+- 两种目标共用原生 Composer 和同一份上下文包。发送前可用现有 Harness/账号选择器确认目标，Quick chat 不增加第二套会话 UI。
 
 登录和模型选择使用网站原生界面。浏览器会话由 Electron 管理；应用不读取、导出或代理 Cookie、Token。远程页面启用 sandbox、contextIsolation，关闭 nodeIntegration，不注入本地 IPC preload。登录弹窗使用相同浏览器会话。
 

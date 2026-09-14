@@ -72,7 +72,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - 原生 Diff、审批与提问组件直接渲染，审批路由回原生 Harness，不代替用户作出权限决定。
 - CodeBuddy、Kiro 和 Cursor 使用原生 ACP 加厂商专用接口：提问、计划确认、配置确认、取消恢复、上下文与历史按各自协议处理。功能和验证范围见下表，不将通用 ACP 能力视为所有 CLI 都已支持。
 - 通过 Adapter 注册新 Harness，UI 侧无需理解厂商协议。
-- 在原生设置中的「MCP / Skills」按 Harness 管理全局/项目 MCP 和已确认的原生 Skills 目录；配置在下一次原生会话打开时生效，凭据和审批继续由原生 Harness 管理。
+- 原生设置中的「MCP」和「Skills」是独立页面：MCP 使用服务器列表与详情编辑流程，Skills 支持把 Markdown 文件或完整技能文件夹直接拖入安装；配置在下一次原生会话打开时生效，凭据和审批继续由原生 Harness 管理。
 
 <p align="center">
   <img src="docs/images/codex-desktop-session.png" width="960" alt="Codex Desktop 原生会话中的 Harness Mix">
