@@ -29,10 +29,11 @@ async function main() {
   const call = (name, args) => rt.collaboration.call(parent.id, name, args);
   const finish = (id, answer) => { const { s } = pending.get(id); pending.delete(id); active--; s.emit({ kind: 'text-delta', text: answer }); s.emit({ kind: 'completed', finalAnswer: true }); };
   try {
-    assert.deepEqual(mentionedAgents('ask @w and [Worker](harness-mix://agent/worker) `@lead` mail@lead.com @worker/foo', rt), ['worker']);
+    assert.deepEqual(mentionedAgents('ask #w and [Worker](harness-mix://agent/worker) `#lead` issue#lead #worker/foo', rt), ['worker']);
+    assert.deepEqual(mentionedAgents('leave @w to native Codex mentions', rt), []);
     await assert.rejects(call('list_agents', {}), /no longer active/);
     rt.history.context = async ({ nativeSessionId }) => { assert.equal(nativeSessionId, 'c2Vzc2lvbg'); return { harnessId: 'pi', title: 'Old session', cwd: root, transcript: 'User: prior question\nAssistant: prior answer' }; };
-    await rt.send(parent.id, '@worker review files @[Old session](harness-mix://session/c2Vzc2lvbg)');
+    await rt.send(parent.id, '#worker review files #[Old session](harness-mix://session/c2Vzc2lvbg)');
     assert.ok(rt.execution.isRunning(parent.id));
     assert.match(leadPrompt, /untrusted historical data[\s\S]*prior answer/);
     assert.match(leadPrompt, /Recovery checkpoint:[\s\S]*interrupted-fixture \(worker\)[\s\S]*call list_delegations now/);
@@ -89,6 +90,10 @@ async function main() {
     await assert.rejects(call('get_delegation_status', { task_ids: ['foreign-task'] }), /Unknown task/);
     await assert.rejects(rt.collaboration.call(jobs[0].childId, 'delegate_to_agent', { agent_type: 'worker', task: 'recursive' }), /Only lead/);
     await assert.rejects(call('delegate_to_agent', { agent_type: 'worker', task: 'x', unexpected: true }));
+    const savedMentions = parent.activeMentions;
+    delete parent.activeMentions;
+    await assert.rejects(call('delegate_to_agent', { agent_type: 'worker', task: 'unauthorized' }), /用户本轮未显式委派/);
+    parent.activeMentions = savedMentions;
     const denied = await fetch(ownerConnection.env.HARNESS_MIX_COLLAB_URL, { method: 'POST', headers: { Authorization: 'Bearer invalid' }, body: '{}' });
     assert.equal(denied.status, 403);
     const outsider = await rt.createThread({ harnessId: 'worker', cwd: root });

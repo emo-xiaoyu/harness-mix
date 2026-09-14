@@ -18,6 +18,12 @@ const manifest = {
   capabilities: { streaming: true, thinking: false, tools: true, approvals: true, questions: false, models: true, thinkingLevels: true, permissionModes: false, resume: true, fork: false, forkFromMessage: false, compaction: false, usage: true, contextUsage: true, attachments: true },
 };
 
+manifest.integrations = { mcp: false, skills: {
+  global: ['.openclaw/skills', '.agents/skills'],
+  project: ['skills', '.agents/skills'],
+  overrides: { '.openclaw/skills': { env: 'OPENCLAW_STATE_DIR', suffix: 'skills' } },
+} };
+
 const textOfContent = (result) => (result?.content ?? []).map((c) => (c?.type === "text" ? c.text : "")).filter(Boolean).join("\n");
 const stringifyArgs = (args) => {
   if (args == null) return undefined;

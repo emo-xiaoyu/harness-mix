@@ -401,8 +401,19 @@ function create() {
     },
 
     async cancel(session) {
+      for (const pending of session.pendingApprovals?.values() ?? []) {
+        pending.resolve({ action: 'decline' });
+      }
+      session.pendingApprovals?.clear();
       if (!session.state.nativeTurnId) return;
-      await session.host.request('turn/interrupt', { threadId: session.nativeSessionId, turnId: session.state.nativeTurnId });
+      await Promise.race([
+        session.host.request('turn/interrupt', { threadId: session.nativeSessionId, turnId: session.state.nativeTurnId }).catch(() => {}),
+        new Promise((r) => setTimeout(r, 2_000)),
+      ]);
+      if (session.state.turn) {
+        session.state.turn.resolve();
+        session.state.turn = null;
+      }
     },
 
     async respond(session, requestId, response) {
@@ -557,5 +568,12 @@ function create() {
   };
 }
 
-manifest.integrations = { mcp: true, skills: { global: ['.agents/skills'], project: ['.agents/skills'] } };
+// Global discovery: ~/.agents/skills is the recommended location; $CODEX_HOME/skills
+// (~/.codex/skills) is deprecated upstream but still loaded for backwards compatibility.
+// https://developers.openai.com/codex/skills
+manifest.integrations = { mcp: true, skills: {
+  global: ['.agents/skills', '.codex/skills'],
+  project: ['.agents/skills'],
+  overrides: { '.codex/skills': { env: 'CODEX_HOME', suffix: 'skills' } },
+} };
 module.exports = { manifest, create, projectNotification, queueRequest, usageView, modelView };

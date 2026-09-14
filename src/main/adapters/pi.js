@@ -8,4 +8,8 @@ module.exports = piFamily({
   bin: 'pi',
   packageHint: 'npm i -g @earendil-works/pi-coding-agent',
 });
-module.exports.manifest.integrations = { mcp: false, skills: { global: ['.pi/agent/skills'], project: ['.pi/skills'], overrides: { '.pi/agent/skills': { env: 'PI_CODING_AGENT_DIR', suffix: 'skills' } } } };
+module.exports.manifest.integrations = { mcp: false, skills: {
+  global: ['.pi/agent/skills', '.agents/skills'],
+  project: ['.pi/skills', '.agents/skills'],
+  overrides: { '.pi/agent/skills': { env: 'PI_CODING_AGENT_DIR', suffix: 'skills' } },
+} };
