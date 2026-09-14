@@ -26,6 +26,9 @@ function mergeThreadPage(page, threads, query, project) {
   const local = threads.filter(thread => includesThread(thread, query, threads));
   if (query.sortKey === 'section_position') local.sort((a, b) => (a.sectionPosition || 0) - (b.sectionPosition || 0));
   const byId = new Map(page.data.map(thread => [thread.id, thread]));
+  for (const thread of threads) {
+    if (!includesThread(thread, query, threads)) byId.delete(thread.id);
+  }
   for (const thread of local) byId.set(thread.id, project(thread));
   const data = [...byId.values()];
   if (query.sortKey !== 'section_position') {

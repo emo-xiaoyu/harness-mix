@@ -202,6 +202,7 @@ class NativeProtocol {
     this.published = new Map();
     this.steering = new Map();      // threadId -> in-flight steer promise
     this.steerReceipts = new Map(); // `${threadId}\0${clientUserMessageId}` -> bounded delivery receipt
+    this.queues = new Map();        // threadId -> Array<{ id, input, clientUserMessageId, createdAt }>
     this.unsubscribe = runtime.core.subscribe(({ event, projected }) => this.onCore(event, projected));
     // Host 侧新建的线程（协作子任务等）也要通知 Desktop 侧栏，与 thread/start 同一契约
     this.unsubscribeRuntime = runtime.subscribe(event => {
@@ -210,6 +211,13 @@ class NativeProtocol {
         this.emit({ method: 'thread/name/updated', params: { threadId: event.thread.id, threadName: event.thread.title } });
       }
     });
+  }
+  getQueue(threadId) {
+    if (!this.queues.has(threadId)) this.queues.set(threadId, []);
+    return this.queues.get(threadId);
+  }
+  emitQueueChanged(threadId) {
+    this.emit({ method: 'thread/queue/changed', params: { threadId } });
   }
   thread(id) { return this.runtime.threads.find(t => t.id === id); }
   owns(id) { return Boolean(this.thread(id)); }
@@ -644,9 +652,83 @@ class NativeProtocol {
       return undefined;
     }
     if (method === 'thread/read') return { thread: this.projectThread(thread, params.includeTurns !== false) };
-    // External sessions currently accept immediate turns only, so their Desktop
-    // submission queue is empty. Do not forward their IDs to the stock server.
-    if (method === 'thread/queue/list') return { data: [], nextCursor: null };
+    if (method === 'thread/queue/list') {
+      const queue = this.getQueue(thread.id);
+      return {
+        data: queue.map(item => ({
+          id: item.id,
+          input: item.input,
+          clientUserMessageId: item.clientUserMessageId,
+          createdAt: item.createdAt,
+        })),
+        nextCursor: null,
+      };
+    }
+    if (method === 'thread/queue/add') {
+      const input = Array.isArray(params.input) ? params.input : [];
+      if (!input.length) throw new Error('Queue submission requires non-empty input');
+      const queue = this.getQueue(thread.id);
+      const submission = {
+        id: randomUUID(),
+        input,
+        clientUserMessageId: typeof params.clientUserMessageId === 'string' && params.clientUserMessageId ? params.clientUserMessageId : null,
+        createdAt: Date.now(),
+      };
+      queue.push(submission);
+      this.emitQueueChanged(thread.id);
+      return { queuedSubmission: submission };
+    }
+    if (method === 'thread/queue/delete') {
+      const queue = this.getQueue(thread.id);
+      const idx = queue.findIndex(item => item.id === params.queuedSubmissionId);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+        this.emitQueueChanged(thread.id);
+        return { deleted: true };
+      }
+      return { deleted: false };
+    }
+    if (method === 'thread/queue/update') {
+      const queue = this.getQueue(thread.id);
+      const item = queue.find(it => it.id === params.queuedSubmissionId);
+      if (!item) throw new Error('Queued submission not found');
+      if (Array.isArray(params.input)) item.input = params.input;
+      this.emitQueueChanged(thread.id);
+      return { queuedSubmission: item };
+    }
+    if (method === 'thread/queue/reorder') {
+      const queue = this.getQueue(thread.id);
+      const ids = Array.isArray(params.queuedSubmissionIds) ? params.queuedSubmissionIds : [];
+      const map = new Map(queue.map(item => [item.id, item]));
+      const reordered = ids.map(id => map.get(id)).filter(Boolean);
+      for (const item of queue) {
+        if (!ids.includes(item.id)) reordered.push(item);
+      }
+      this.queues.set(thread.id, reordered);
+      this.emitQueueChanged(thread.id);
+      return {};
+    }
+    if (method === 'thread/queue/start') {
+      const queue = this.getQueue(thread.id);
+      const idx = params.queuedSubmissionId
+        ? queue.findIndex(item => item.id === params.queuedSubmissionId)
+        : 0;
+      if (idx === -1 || !queue[idx]) throw new Error('Queued submission not found');
+      const [submission] = queue.splice(idx, 1);
+      this.emitQueueChanged(thread.id);
+      const { text, attachments } = await prepareInput(submission.input, thread.cwd);
+      if (attachments.length && !this.runtime.getCapabilities(thread.harnessId).conversation.attachments) {
+        throw new Error('当前 Harness 不支持图片附件');
+      }
+      if (this.runtime.execution.isRunning(thread.id)) {
+        // 正在执行中：打断当前回合并立即执行该排队消息
+        const turnId = await this.steerExclusive(thread, thread.currentTurn?.id, text, attachments);
+        const started = this.runtime.core.getTurn(turnId) || thread.currentTurn;
+        return { turn: this.turn(started) };
+      }
+      const turn = await this.startNativeTurn(thread, text, attachments);
+      return { turn: this.turn(turn) };
+    }
     if (method === 'thread/metadata/update') return { thread: this.projectThread(await this.runtime.updateThreadMetadata(thread.id, params.gitInfo)) };
     if (method === 'thread/section/move') {
       if (params.sectionId !== null && (typeof params.sectionId !== 'string' || !params.sectionId)) throw new Error('Invalid sectionId');
@@ -707,7 +789,17 @@ class NativeProtocol {
     }
     if (method === 'thread/rollback') return { thread: this.projectThread(await this.runtime.rollbackThread(thread.id, params.numTurns)) };
     if (method === 'thread/name/set') { await this.runtime.renameThread(thread.id, params.name); return {}; }
-    if (method === 'thread/archive' || method === 'thread/unarchive') { await this.runtime.setThreadArchived(thread.id, method === 'thread/archive'); return method === 'thread/archive' ? {} : { thread: this.projectThread(thread) }; }
+    if (method === 'thread/archive' || method === 'thread/unarchive') {
+      const isArchive = method === 'thread/archive';
+      await this.runtime.setThreadArchived(thread.id, isArchive);
+      if (isArchive) {
+        this.emit({ method: 'thread/archived', params: { threadId: thread.id } });
+        return {};
+      }
+      const projected = this.projectThread(thread);
+      this.emit({ method: 'thread/unarchived', params: { thread: projected } });
+      return { thread: projected };
+    }
     if (method === 'thread/loaded/list') return { data: [...this.runtime.sessions.keys()] };
     if (method === 'codexhost/thread/usage/inspect') {
       const usage = params.refresh === 'exact' ? await this.runtime.refreshUsage(thread.id) : this.runtime.core.getThread(thread.id)?.usage;
@@ -810,6 +902,25 @@ class NativeProtocol {
       notify('thread/status/changed', { status: { type: 'idle' } });
       if (Array.isArray(projected.turn.itemIds)) {
         for (const id of projected.turn.itemIds) this.published.delete(id);
+      }
+      for (const [id, app] of this.approvals.entries()) {
+        if (app.threadId === threadId) this.approvals.delete(id);
+      }
+      if (projected.turn.status === 'completed') {
+        setTimeout(async () => {
+          const queue = this.getQueue(threadId);
+          const currentThread = this.thread(threadId);
+          if (queue.length > 0 && currentThread && !this.runtime.execution.isRunning(threadId) && !this.steering.has(threadId) && !this.runtime.sending?.has(threadId)) {
+            const [submission] = queue.splice(0, 1);
+            this.emitQueueChanged(threadId);
+            try {
+              const { text, attachments } = await prepareInput(submission.input, currentThread.cwd);
+              await this.startNativeTurn(currentThread, text, attachments);
+            } catch (err) {
+              console.error(`Failed to auto-drain queued submission for thread ${threadId}:`, err);
+            }
+          }
+        }, 2500);
       }
     }
   }

@@ -326,7 +326,108 @@ async function main() {
     assert.equal(discardResult.discarded, true);
     assert.equal(discardResult.branch, 'codexhost/test-wt-branch');
     assert.equal(dummyTargetThread.workspace, undefined, 'Discard deletes thread.workspace');
-    console.log('PASS: native protocol, external steering, command execution and Usage projection');
+
+    // 消息排队（thread/queue/add, list, update, reorder, delete, start）能力验证
+    const qThread = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
+    const qThreadId = qThread.thread.id;
+    assert.deepEqual(await bridge.request('thread/queue/list', { threadId: qThreadId }), { data: [], nextCursor: null });
+    const q1 = await bridge.request('thread/queue/add', {
+      threadId: qThreadId,
+      input: [{ type: 'text', text: '排队补充需求 1' }],
+      clientUserMessageId: 'client-msg-1',
+    });
+    assert.equal(typeof q1.queuedSubmission.id, 'string');
+    assert.equal(q1.queuedSubmission.clientUserMessageId, 'client-msg-1');
+    assert.equal(events.at(-1)?.method, 'thread/queue/changed');
+    assert.equal(events.at(-1)?.params?.threadId, qThreadId);
+
+    const q2 = await bridge.request('thread/queue/add', {
+      threadId: qThreadId,
+      input: [{ type: 'text', text: '排队补充需求 2' }],
+      clientUserMessageId: 'client-msg-2',
+    });
+    let qList = await bridge.request('thread/queue/list', { threadId: qThreadId });
+    assert.equal(qList.data.length, 2);
+    assert.equal(qList.data[0].id, q1.queuedSubmission.id);
+    assert.equal(qList.data[1].id, q2.queuedSubmission.id);
+
+    // 更新排队项
+    const updated = await bridge.request('thread/queue/update', {
+      threadId: qThreadId,
+      queuedSubmissionId: q1.queuedSubmission.id,
+      input: [{ type: 'text', text: '更新后的补充需求 1' }],
+    });
+    assert.equal(updated.queuedSubmission.input[0].text, '更新后的补充需求 1');
+
+    // 重排序
+    await bridge.request('thread/queue/reorder', {
+      threadId: qThreadId,
+      queuedSubmissionIds: [q2.queuedSubmission.id, q1.queuedSubmission.id],
+    });
+    qList = await bridge.request('thread/queue/list', { threadId: qThreadId });
+    assert.equal(qList.data[0].id, q2.queuedSubmission.id);
+    assert.equal(qList.data[1].id, q1.queuedSubmission.id);
+
+    // 删除排队项
+    const del = await bridge.request('thread/queue/delete', {
+      threadId: qThreadId,
+      queuedSubmissionId: q2.queuedSubmission.id,
+    });
+    assert.equal(del.deleted, true);
+    qList = await bridge.request('thread/queue/list', { threadId: qThreadId });
+    assert.equal(qList.data.length, 1);
+    assert.equal(qList.data[0].id, q1.queuedSubmission.id);
+
+    // 空闲状态启动排队消息
+    const startedQ = await bridge.request('thread/queue/start', {
+      threadId: qThreadId,
+      queuedSubmissionId: q1.queuedSubmission.id,
+    });
+    assert.equal(typeof startedQ.turn?.id, 'string');
+    assert.deepEqual(await bridge.request('thread/queue/list', { threadId: qThreadId }), { data: [], nextCursor: null });
+
+    // 运行中打断执行排队消息（中途补充并打断执行）
+    let releaseHold;
+    const holdGate = new Promise(resolve => { releaseHold = resolve; });
+    const holdAdapter = {
+      manifest: { id: 'hold-adapter', name: 'Hold', capabilities: { streaming: true, models: true, resume: true } },
+      async open() { return {}; },
+      async send(session, text, { emit }) {
+        if (text.includes('长任务')) {
+          await holdGate;
+        } else {
+          emit({ kind: 'completed', finalAnswer: true });
+        }
+      },
+      async cancel() { releaseHold(); },
+      async close() {},
+    };
+    runtime.adapters.set('hold-adapter', holdAdapter);
+    runtime.status['hold-adapter'] = { available: true };
+    const steerThread = await bridge.request('thread/start', { cwd: root, model: routeModel('hold-adapter') });
+    const steerThreadId = steerThread.thread.id;
+    // 启动初始任务，使其进入运行中状态
+    const initTurn = await bridge.request('turn/start', {
+      threadId: steerThreadId,
+      input: [{ type: 'text', text: '长任务运行中...' }],
+    });
+    assert.equal(runtime.execution.isRunning(steerThreadId), true);
+    // 运行时添加排队补充
+    const steerQueue = await bridge.request('thread/queue/add', {
+      threadId: steerThreadId,
+      input: [{ type: 'text', text: '中途打断补充并立即执行' }],
+    });
+    assert.equal(typeof steerQueue.queuedSubmission.id, 'string');
+    // 执行 thread/queue/start：打断当前任务并立即执行补充内容
+    const midTurnStart = await bridge.request('thread/queue/start', {
+      threadId: steerThreadId,
+      queuedSubmissionId: steerQueue.queuedSubmission.id,
+    });
+    assert.notEqual(midTurnStart.turn.id, initTurn.turn.id, '排队消息中途启动已成功打断并派生新 Turn');
+    releaseHold();
+    await wait(() => !runtime.execution.isRunning(steerThreadId));
+
+    console.log('PASS: native protocol, external steering, command execution, message queue and Usage projection');
   } finally { bridge.close(); await runtime.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
