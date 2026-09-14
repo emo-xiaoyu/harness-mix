@@ -1,6 +1,6 @@
 {
   "name": "@harness-mix/cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
@@ -30,7 +30,8 @@
     "harness-mix": "scripts/launch-codex.cjs"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "postinstall": "node scripts/install-native.cjs",
   "files": [
@@ -176,11 +177,11 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@harness-mix/native-win32-x64": "0.1.5",
-    "@harness-mix/native-win32-arm64": "0.1.5",
-    "@harness-mix/native-darwin-x64": "0.1.5",
-    "@harness-mix/native-darwin-arm64": "0.1.5",
-    "@harness-mix/native-linux-x64": "0.1.5",
-    "@harness-mix/native-linux-arm64": "0.1.5"
+    "@harness-mix/native-win32-x64": "0.1.6",
+    "@harness-mix/native-win32-arm64": "0.1.6",
+    "@harness-mix/native-darwin-x64": "0.1.6",
+    "@harness-mix/native-darwin-arm64": "0.1.6",
+    "@harness-mix/native-linux-x64": "0.1.6",
+    "@harness-mix/native-linux-arm64": "0.1.6"
   }
 }
