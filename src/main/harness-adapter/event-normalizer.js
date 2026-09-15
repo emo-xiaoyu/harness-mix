@@ -1,6 +1,8 @@
 // Event Normalizer：把 Runtime 现有的统一事件（legacy kind）标准化为 CoreEvent（§12）。
 // 第一阶段不重写任何 Adapter，只在公共入口处 normalize。
 // 本模块对 Harness 名称零感知：输入已经是 Adapter 转换后的统一事件。
+const { classifyError, codexErrorInfoKey } = require('./error-kind');
+
 class EventNormalizer {
   /**
    * @param {{ threadId: string, source?: string }} context source 仅为溯源标签，不参与逻辑分支
@@ -97,7 +99,11 @@ class EventNormalizer {
       case 'error':
         if (!this.turnActive) return [];
         this.turnActive = false;
-        return [this.#event({ type: 'turn.failed', payload: { message: String(legacy.message ?? 'unknown error') } })];
+        return [this.#event({ type: 'turn.failed', payload: {
+          message: String(legacy.message ?? 'unknown error'),
+          errorKind: classifyError(legacy),
+          ...(codexErrorInfoKey(legacy.codexErrorInfo) ? { codexErrorInfo: codexErrorInfoKey(legacy.codexErrorInfo) } : {}),
+        } })];
       default:
         return [];
     }

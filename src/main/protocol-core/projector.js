@@ -133,7 +133,10 @@ class Projector {
     } else if (kind === 'cancelled') {
       this.turns.cancel(turn.id, {}, event.timestamp);
     } else {
-      this.turns.fail(turn.id, event.payload?.message ?? event.payload?.error, {}, event.timestamp);
+      this.turns.fail(turn.id, event.payload?.message ?? event.payload?.error, {
+        ...(event.payload?.errorKind ? { errorKind: event.payload.errorKind } : {}),
+        ...(event.payload?.codexErrorInfo ? { codexErrorInfo: event.payload.codexErrorInfo } : {}),
+      }, event.timestamp);
     }
     // Turn 结算：所有未终态 Item 一并收尾（语义等同 legacy finishMessage）
     this.#finalizeOpenItems(turn, event.timestamp);

@@ -159,6 +159,7 @@ describe("production Desktop Controller", () => {
         "codex-harness",
         "zcode",
         "trae",
+        "cline",
       ],
       timeoutMs: 90_000,
     });

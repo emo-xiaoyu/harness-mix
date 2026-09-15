@@ -6,6 +6,7 @@ const { Store } = require('./store');
 const { redactText } = require('../native/redact');
 
 const INTENTS = new Set(['continue', 'execute-plan', 'review', 'reanalyze']);
+const CHECKPOINT_STATES = new Set(['checkpoint-created', 'connecting', 'ready', 'delivering', 'active', 'failed', 'rolled-back', 'cancelled']);
 const INCLUDE_KEYS = ['conversation', 'plan', 'evidence', 'files', 'unresolved'];
 const LIMITS = { conversations: 80, conversationChars: 256_000, evidence: 80, excerpt: 8_000, files: 100 };
 const secretAssignment = /\b(token|secret|password|passwd|api[_-]?key|authorization|credential|cookie)\b(\s*[=:]\s*|\s+)([^\s,;]+)/gi;
@@ -206,8 +207,14 @@ class HandoffCheckpoints {
   readEvidence(threadId, checkpointId, evidenceId) { const row = this.owned(threadId, checkpointId); const item = row.includes.evidence ? row.evidence.find(candidate => candidate.evidenceId === evidenceId) : null; if (!item) throw new Error('Handoff evidence not found'); return item; }
   files(threadId, checkpointId) { const row = this.owned(threadId, checkpointId); return { checkpointId, ...(row.includes.files ? row.fileState : { cwd: row.task.cwd, files: [], diffDigest: null }) }; }
   plan(threadId, checkpointId) { const row = this.owned(threadId, checkpointId); return { checkpointId, plan: row.includes.plan ? row.plan : { completed: [], inProgress: [], pending: [] } }; }
-  async mark(threadId, checkpointId, status) { const row = this.owned(threadId, checkpointId); row.status = status; row.statusUpdatedAt = Date.now(); await this.save(); }
+  async mark(threadId, checkpointId, status) {
+    if (!CHECKPOINT_STATES.has(status)) throw new Error(`Invalid handoff checkpoint state: ${status}`);
+    const row = this.owned(threadId, checkpointId);
+    row.status = status;
+    row.statusUpdatedAt = Date.now();
+    await this.save();
+  }
   async close() { await this.save(); }
 }
 
-module.exports = { HandoffCheckpoints, INTENTS, INCLUDE_KEYS, LIMITS, digest, safeText, summaryOf, gitSnapshot };
+module.exports = { HandoffCheckpoints, INTENTS, CHECKPOINT_STATES, INCLUDE_KEYS, LIMITS, digest, safeText, summaryOf, gitSnapshot };

@@ -36,6 +36,9 @@ export const threadHarnessSwitchResultSchema = z
   .object({
     threadId: hostThreadIdSchema,
     checkpointId: z.string().min(1),
+    phase: z.enum(["ready", "rolled-back", "cancelled"]).optional(),
+    fromHarnessId: z.string().min(1).optional(),
+    toHarnessId: z.string().min(1).optional(),
   })
   .strict();
 

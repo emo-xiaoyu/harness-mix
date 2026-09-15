@@ -6,7 +6,7 @@ const path = require('node:path');
   fs.mkdirSync(directory, { recursive: true });
   const reports = [];
   const selected = process.argv.find(a => a.startsWith('--harness='))?.slice(10);
-  for (const file of (selected ? selected.split(',') : ['codebuddy', 'kiro', 'cursor', 'qoder', 'zcode', 'trae'])) {
+  for (const file of (selected ? selected.split(',') : ['codebuddy', 'kiro', 'cursor', 'qoder', 'zcode', 'trae', 'cline'])) {
     const mod = require('../src/main/adapters/' + file), adapter = mod.create();
     const report = { harnessId: mod.manifest.id, inspection: await adapter.inspect(), live: false };
     reports.push(report);

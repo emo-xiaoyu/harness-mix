@@ -97,6 +97,9 @@ async function main() {
   const params = { harnessId: 'all-harnesses', nativeSessionId: rows.candidates[0].nativeSessionId };
   const context = await rt.history.context(params);
   assert.equal(context.harnessId, 'pi'); assert.match(context.transcript, /User: old question[\s\S]*Assistant: old answer/);
+  assert.equal(context.sessionRef, params.nativeSessionId);
+  assert.equal(context.messageCount, 2); assert.equal(context.returned, 2);
+  assert.equal(context.hasMore, false); assert.equal(context.nextOffset, null);
   assert.equal(rt.sessions.size, 0, 'Referencing history does not launch or import a model session');
   const [one, two] = await Promise.all([rt.history.import(params), rt.history.import(params)]);
   assert.equal(one.threadId, two.threadId); assert.equal(calls.filter(c => c === 'read').length, 2);
