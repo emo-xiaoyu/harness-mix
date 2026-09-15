@@ -2,6 +2,7 @@ const { execFile } = require('node:child_process');
 const { CodexAppServer } = require('./codex-app-server');
 const { cliSpawn } = require('../host/jsonl');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
+const { codexErrorInfoKey } = require('../harness-adapter/error-kind');
 
 const manifest = {
   id: 'codex',
@@ -203,10 +204,13 @@ function projectNotification(message, session, emit) {
     case 'configWarning':
       emit({ kind: 'notice', level: 'warning', text: params.message, nativeRef });
       break;
-    case 'error':
-      if (!params.willRetry) emit({ kind: 'error', message: params.error?.message ?? 'Codex 回合失败', nativeRef });
+    case 'error': {
+      // Codex 原生 CodexErrorInfo 随错误透传：分类与桌面原生错误 UX 都以它为准
+      const codexErrorInfo = codexErrorInfoKey(params.error?.codexErrorInfo);
+      if (!params.willRetry) emit({ kind: 'error', message: params.error?.message ?? 'Codex 回合失败', ...(codexErrorInfo ? { codexErrorInfo } : {}), nativeRef });
       else emit({ kind: 'status', text: `Codex 正在重试：${params.error?.message ?? '请求失败'}`, nativeRef });
       break;
+    }
     case 'turn/completed': {
       const turn = params.turn ?? {};
       if (turn.usage || params.usage) {
@@ -226,7 +230,7 @@ function projectNotification(message, session, emit) {
         break;
       }
       const failed = turn.status === 'failed';
-      if (failed) emit({ kind: 'error', message: turn.error?.message ?? 'Codex 回合失败', nativeRef: { ...nativeRef, checkpointId: turn.id } });
+      if (failed) emit({ kind: 'error', message: turn.error?.message ?? 'Codex 回合失败', ...(codexErrorInfoKey(turn.error?.codexErrorInfo) ? { codexErrorInfo: codexErrorInfoKey(turn.error?.codexErrorInfo) } : {}), nativeRef: { ...nativeRef, checkpointId: turn.id } });
       else emit({
         kind: 'completed', finalAnswer: turn.status === 'completed',
         stopReason: turn.status === 'interrupted' ? 'cancelled' : 'completed',
@@ -334,11 +338,59 @@ function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort,
   return session;
 }
 
+// 官方 app-server 的两种权限序列化（实测 26.9.x）：
+// thread/start 与 thread/resume 的 sandbox 只接受 kebab-case 纯字符串；
+// turn/start 的 sandboxPolicy 接受 camelCase type 的对象；approvalsReviewer 枚举有限定。
+const SANDBOX_TO_KEBAB = { dangerFullAccess: 'danger-full-access', readOnly: 'read-only', workspaceWrite: 'workspace-write', 'danger-full-access': 'danger-full-access', 'read-only': 'read-only', 'workspace-write': 'workspace-write' };
+const SANDBOX_TO_CAMEL = { dangerFullAccess: 'dangerFullAccess', readOnly: 'readOnly', workspaceWrite: 'workspaceWrite', externalSandbox: 'externalSandbox', 'danger-full-access': 'dangerFullAccess', 'read-only': 'readOnly', 'workspace-write': 'workspaceWrite' };
+const REVIEWER_TO_WIRE = { user: 'user', auto_review: 'auto_review', guardian_subagent: 'guardian_subagent', guardian: 'guardian_subagent' };
+
+function sandboxToKebabString(sandbox) {
+  if (sandbox == null) return null;
+  const raw = typeof sandbox === 'string' ? sandbox : sandbox.type;
+  return SANDBOX_TO_KEBAB[raw] ?? null;
+}
+
+function sandboxPolicyToCamelObject(sandbox) {
+  if (!sandbox || typeof sandbox !== 'object') return null;
+  const type = SANDBOX_TO_CAMEL[sandbox.type];
+  return type ? { ...sandbox, type } : null;
+}
+
+function reviewerToWire(reviewer) {
+  return typeof reviewer === 'string' ? REVIEWER_TO_WIRE[reviewer] ?? null : null;
+}
+
+const APP_SERVER_BUSY = /^Agent is already processing(?:\.|$)/i;
+
+async function startTurnAfterNativeSettlement(host, params) {
+  // A queue-start can arrive immediately after turn/completed, while app-server is still
+  // clearing its active-turn slot. Keep the same logical Core turn and retry only this
+  // narrow transient; other errors must remain visible and must never be duplicated.
+  for (let attempt = 0, delay = 25; ; attempt++, delay *= 2) {
+    try {
+      return await host.request('turn/start', params);
+    } catch (error) {
+      if (!APP_SERVER_BUSY.test(String(error?.message ?? error)) || attempt >= 5) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 function threadOptions(thread) {
+  // turnPermissions 来自 Desktop 权限菜单（thread/settings/update 或 thread/start 参数），
+  // 转发给原生 app-server 让显示选择与实际生效一致；permissions 优先级高于旧 permissionMode 档案
+  const perms = thread.options?.turnPermissions ?? {};
+  const sandbox = sandboxToKebabString(perms.sandboxPolicy);
+  const approvalsReviewer = reviewerToWire(perms.approvalsReviewer);
   return {
     cwd: thread.cwd,
     ...(thread.options?.model?.id ? { model: thread.options.model.id } : {}),
-    ...(thread.options?.permissionMode && thread.options.permissionMode !== 'default' ? { permissions: thread.options.permissionMode } : {}),
+    ...(perms.approvalPolicy ? { approvalPolicy: perms.approvalPolicy } : {}),
+    ...(approvalsReviewer ? { approvalsReviewer } : {}),
+    ...(sandbox ? { sandbox } : {}),
+    ...(perms.permissions ? { permissions: perms.permissions } : {}),
+    ...(thread.options?.permissionMode && thread.options.permissionMode !== 'default' && !perms.permissions ? { permissions: thread.options.permissionMode } : {}),
   };
 }
 
@@ -361,11 +413,22 @@ function create() {
       try {
         const servers = require('./managed-mcp').namedServers(managedMcp, collaboration);
         const options = { ...threadOptions(thread), ...(Object.keys(servers).length ? { config: Object.fromEntries(Object.entries(servers).map(([name, value]) => [`mcp_servers.${name}`, value])) } : {}) };
-        const result = thread.restore
-          ? await host.request('thread/resume', { threadId: thread.nativeSessionId, ...options })
-          : await host.request('thread/start', options);
+        let result;
+        if (thread.restore) {
+          // 旧版 app-server 可能拒绝 resume 上的权限覆盖字段：降级重试不阻塞会话恢复
+          try {
+            result = await host.request('thread/resume', { threadId: thread.nativeSessionId, ...options });
+          } catch (error) {
+            const { approvalPolicy, approvalsReviewer, sandbox, ...fallback } = options;
+            if (approvalPolicy === undefined && sandbox === undefined && approvalsReviewer === undefined) throw error;
+            result = await host.request('thread/resume', { threadId: thread.nativeSessionId, ...fallback });
+          }
+        } else {
+          result = await host.request('thread/start', options);
+        }
         const model = { id: result.model, name: result.model, provider: result.modelProvider ?? 'openai' };
         const session = attachSession(host, result.thread.id, { emit, diagnostic, model, effort: result.reasoningEffort, cwd: thread.cwd });
+        session.turnPermissions = thread.options?.turnPermissions ?? null;
         session.collaborationEnabled = !!collaboration;
         emit({ kind: 'session', nativeSessionId: result.thread.id, model });
         return session;
@@ -386,11 +449,18 @@ function create() {
           ...(prompt ? [{ type: 'text', text: prompt }] : []),
           ...(attachments?.images ?? []).map((a) => ({ type: 'image', url: `data:${a.mime};base64,${a.data}` })),
         ];
-        const result = await session.host.request('turn/start', {
+        // 回合级权限覆盖优先于线程级（Desktop 每个回合都可能推送最新选择）
+        const perms = attachments?.turnPermissions ?? session.turnPermissions ?? {};
+        const sandboxPolicy = sandboxPolicyToCamelObject(perms.sandboxPolicy);
+        const approvalsReviewer = reviewerToWire(perms.approvalsReviewer);
+        const result = await startTurnAfterNativeSettlement(session.host, {
           threadId: session.nativeSessionId,
           input,
           ...(session.model?.id ? { model: session.model.id } : {}),
           ...(session.state.effort ? { effort: session.state.effort } : {}),
+          ...(perms.approvalPolicy ? { approvalPolicy: perms.approvalPolicy } : {}),
+          ...(approvalsReviewer ? { approvalsReviewer } : {}),
+          ...(sandboxPolicy ? { sandboxPolicy } : {}),
         });
         session.state.nativeTurnId = result.turn.id;
       } catch (error) {

@@ -16,13 +16,20 @@ async function main() {
   const adapter = { manifest: { id: 'pi', name: 'Pi', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true } },
     async open(input) { emits.push(input.emit); emit = input.emit; return {}; },
     async describe() { return { models: [{ id: 'demo', name: 'Demo', provider: 'test' }], thinkingLevels: [{ id: 'high', label: 'High', default: true }, { id: 'low', label: 'Low' }], permissionModes: [] }; },
-    async send() {}, async cancel() {}, async close() {},
+    async send(session, text, hooks, extras) { sendExtras.push(extras); }, async cancel() {}, async close() {},
     async respond(session, id, answer) { answers.push({ id, answer }); } };
+  const sendExtras = [];
   runtime.adapters.set('pi', adapter); runtime.status.pi = { available: true };
   const events = [];
+  let observeQueueOrder = false;
+  let queueResponseResolved = false;
+  let queueNotificationBeforeResponse = false;
   const section = { id: 'test-pinned-section', name: 'Pinned', appearance: null };
   const officialRequests = [];
-  const bridge = new NativeProtocol(runtime, event => events.push(event), async (method, params) => {
+  const bridge = new NativeProtocol(runtime, event => {
+    if (observeQueueOrder && event?.method === 'thread/queue/changed' && !queueResponseResolved) queueNotificationBeforeResponse = true;
+    events.push(event);
+  }, async (method, params) => {
     officialRequests.push({ method, params });
     if (method === 'threadSection/list') return { data: [section], nextCursor: null };
     if (method === 'account/read') return { account: { type: 'chatgpt', email: 'native@example.com', planType: 'plus' }, requiresOpenaiAuth: true };
@@ -149,13 +156,18 @@ async function main() {
     await wait(() => !runtime.threads.find(t => t.id === prewarmed.thread.id).reviewPending && !runtime.sending.has(prewarmed.thread.id));
     emit = emits[0]; // 恢复主线程的事件源（open 顺序：主线程序，预热线程后）
     schemas.threadInspectionSchema.parse(await bridge.request('codexhost/thread/inspect', { threadId }));
-    const turn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'test' }] });
+    const turn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'test' }], approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+    // turn/start 在 currentTurn 建立后即返回，adapter.send 的调用在其后；等待透传到达
+    await wait(() => sendExtras.at(-1)?.turnPermissions != null);
+    assert.deepEqual(sendExtras.at(-1).turnPermissions, { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } }, 'turn/start 权限参数透传到适配器');
     assert.ok(runtime.core.getTurn(turn.turn.id), 'Native turn IDs come from the existing ProtocolCore');
     emit({ kind: 'thinking-delta', text: 'reason' });
     emit({ kind: 'text-delta', text: 'hello' });
     emit({ kind: 'text-delta', text: ' world' });
     emit({ kind: 'tool', toolCallId: 't', title: 'Read', state: 'running', input: '{}' });
     emit({ kind: 'tool', toolCallId: 't', title: 'Read', state: 'completed', output: 'done' });
+    emit({ kind: 'tool', toolCallId: 'sh', title: 'Bash', state: 'running', input: '{"command":"cat package.json"}' });
+    emit({ kind: 'tool', toolCallId: 'sh', title: 'Bash', state: 'completed', output: '{}' });
     emit({ kind: 'approval', requestId: 'permission', method: 'confirm', title: 'Allow?' });
     const approval = events.find(e => e.id?.startsWith('harness-mix:approval:'));
     assert.equal(answers.length, 0, 'Approval is not fabricated');
@@ -169,7 +181,13 @@ async function main() {
     emit({ kind: 'completed', finalAnswer: true });
     await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(events.filter(e => e.method === 'item/agentMessage/delta').map(e => e.params.delta).join(''), 'hello world');
-    assert.ok(events.some(e => e.method === 'item/completed' && e.params.item.type === 'mcpToolCall'));
+    // 非终端工具投影为 dynamicToolCall（摘要显示真实工具名），终端命令投影为原生 commandExecution
+    assert.ok(events.some(e => e.method === 'item/completed' && e.params.item.type === 'dynamicToolCall' && e.params.item.tool === 'Read'));
+    const execItem = events.filter(e => e.method === 'item/completed').map(e => e.params.item).find(i => i.type === 'commandExecution');
+    assert.equal(execItem?.command, 'cat package.json', 'Shell tool projects the real command text');
+    assert.equal(execItem?.commandActions?.[0]?.type, 'read', 'Simple cat command classifies as a read action');
+    assert.equal(execItem?.commandActions?.[0]?.path, 'package.json');
+    assert.equal(typeof execItem?.durationMs, 'number', 'Command execution carries a real duration');
     // Desktop 以 `diff --git a/x b/x` 切分文件并提取路径，且只在 @@ hunk 头之后计数增删行
     const turnDiff = events.filter(e => e.method === 'turn/diff/updated').at(-1).params.diff;
     assert.ok(turnDiff.includes('diff --git a/a.txt b/a.txt'), 'turn diff carries git-style file headers');
@@ -177,11 +195,26 @@ async function main() {
     assert.ok(turnDiff.includes('@@ -0,0 +1,1 @@') && turnDiff.includes('+hello'), 'turn diff carries a countable hunk');
     assert.ok(events.some(e => e.method === 'turn/diff/updated' && e.params.diff.includes('a.txt')));
     assert.equal(events.filter(e => e.method === 'turn/completed' && e.params.threadId === threadId).length, 1);
+    // Desktop「已处理/用时」计时契约：item/started 带 startedAtMs、item/completed 带
+    // completedAtMs，终态 Turn 带 startedAt/completedAt（epoch 秒）与 durationMs（毫秒）；
+    // 缺这些字段时 Desktop 无法合成 worked-for 计时项，完成回合只显示集成摘要。
+    const completedTurn = events.filter(e => e.method === 'turn/completed' && e.params.threadId === threadId && e.params.turn.status === 'completed').at(-1).params.turn;
+    assert.equal(typeof completedTurn.durationMs, 'number', 'Completed turn carries durationMs for the Desktop worked-for timer');
+    assert.ok(Number.isInteger(completedTurn.startedAt) && Number.isInteger(completedTurn.completedAt), 'Completed turn carries epoch-second startedAt/completedAt');
+    assert.ok(completedTurn.durationMs >= 0 && completedTurn.completedAt >= completedTurn.startedAt, 'Turn timing fields are coherent');
+    assert.ok(events.filter(e => e.method === 'item/started').every(e => typeof e.params.startedAtMs === 'number'), 'item/started carries startedAtMs');
+    assert.ok(events.filter(e => e.method === 'item/completed').every(e => typeof e.params.completedAtMs === 'number'), 'item/completed carries completedAtMs');
     const history = await bridge.request('thread/read', { threadId });
     assert.equal(history.thread.turns[0].status, 'completed');
+    assert.equal(typeof history.thread.turns[0].durationMs, 'number', 'Restored turns keep durationMs');
     const projectedChange = history.thread.turns[0].items.flatMap(i => i.type === 'fileChange' ? i.changes : []).find(change => change.path === 'a.txt');
     assert.equal(projectedChange?.kind.type, 'add', 'fileChange item projects the added kind');
     assert.ok(projectedChange?.diff.includes('diff --git a/a.txt b/a.txt') && projectedChange.diff.includes('@@ -0,0 +1,1 @@'), 'fileChange item carries a full unified diff');
+    await bridge.request('thread/settings/update', { threadId, approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+    assert.deepEqual(runtime.threads.find(t => t.id === threadId).options.turnPermissions, { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } }, 'Desktop 权限菜单设置存储到线程');
+    const resumed = await bridge.request('thread/resume', { threadId });
+    assert.equal(resumed.approvalPolicy, 'never', 'thread/resume 回显实际生效的权限');
+    assert.deepEqual(resumed.sandbox, { type: 'dangerFullAccess' }, 'thread/resume 回显实际生效的沙箱');
     await bridge.request('thread/name/set', { threadId, name: 'Local Core' });
     await bridge.request('thread/archive', { threadId });
     assert.equal(runtime.threads.find(t => t.id === threadId).archived, true);
@@ -341,13 +374,18 @@ async function main() {
     const qThread = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
     const qThreadId = qThread.thread.id;
     assert.deepEqual(await bridge.request('thread/queue/list', { threadId: qThreadId }), { data: [], nextCursor: null });
+    observeQueueOrder = true;
     const q1 = await bridge.request('thread/queue/add', {
       threadId: qThreadId,
       input: [{ type: 'text', text: '排队补充需求 1' }],
       clientUserMessageId: 'client-msg-1',
     });
+    queueResponseResolved = true;
     assert.equal(typeof q1.queuedSubmission.id, 'string');
     assert.equal(q1.queuedSubmission.clientUserMessageId, 'client-msg-1');
+    await wait(() => events.at(-1)?.method === 'thread/queue/changed' && events.at(-1)?.params?.threadId === qThreadId);
+    assert.equal(queueNotificationBeforeResponse, false, 'Queue mutation response precedes changed notification so Desktop edits keep the current id');
+    observeQueueOrder = false;
     assert.equal(events.at(-1)?.method, 'thread/queue/changed');
     assert.equal(events.at(-1)?.params?.threadId, qThreadId);
 
@@ -387,6 +425,24 @@ async function main() {
     qList = await bridge.request('thread/queue/list', { threadId: qThreadId });
     assert.equal(qList.data.length, 1);
     assert.equal(qList.data[0].id, q1.queuedSubmission.id);
+
+    // 输入准备或原生启动失败时不得丢失排队项，仍可编辑后重试。
+    await bridge.request('thread/queue/update', {
+      threadId: qThreadId,
+      queuedSubmissionId: q1.queuedSubmission.id,
+      input: [{ type: 'unsupported-test-input' }],
+    });
+    await assert.rejects(bridge.request('thread/queue/start', {
+      threadId: qThreadId,
+      queuedSubmissionId: q1.queuedSubmission.id,
+    }), /Unsupported native input type/);
+    qList = await bridge.request('thread/queue/list', { threadId: qThreadId });
+    assert.equal(qList.data[0]?.id, q1.queuedSubmission.id, 'Failed queue start keeps the item for editing or retry');
+    await bridge.request('thread/queue/update', {
+      threadId: qThreadId,
+      queuedSubmissionId: q1.queuedSubmission.id,
+      input: [{ type: 'text', text: '修正后的排队消息' }],
+    });
 
     // 空闲状态启动排队消息
     const startedQ = await bridge.request('thread/queue/start', {

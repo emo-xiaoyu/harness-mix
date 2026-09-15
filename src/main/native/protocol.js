@@ -28,6 +28,7 @@ const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
 
 const ALIASES = { workbuddy: 'codebuddy', 'claude-code': 'claude', 'deepseek-harness': 'dsh', 'codex-harness': 'codex' };
 const externalId = id => ({ workbuddy: 'codebuddy', claude: 'claude-code', dsh: 'deepseek-harness', codex: 'codex-harness' }[id] || id);
+const { errorActions } = require('../harness-adapter/error-kind');
 const modelRef = model => ({ id: Buffer.from(JSON.stringify({ id: model.id, provider: model.provider })).toString('base64url') });
 const routeModel = harnessId => ['pi', 'claude-code', 'deepseek-harness', 'antigravity', 'omp', 'opencode', 'grok'].includes(harnessId)
   ? `codexhost/${harnessId}-native`
@@ -47,6 +48,7 @@ const HARNESS_INSTALL_COMMANDS = {
   antigravity: { win32: 'npm install -g @google/antigravity-cli', default: 'npm install -g @google/antigravity-cli' },
   openclaw: { win32: 'npm install -g openclaw', default: 'npm install -g openclaw' },
   hermes: { win32: 'pip install hermes-agent', default: 'pip3 install hermes-agent' },
+  cline: { win32: 'npm install -g cline', default: 'npm install -g cline' },
 };
 
 const HARNESS_AUTH_INFO = {
@@ -66,6 +68,7 @@ const HARNESS_AUTH_INFO = {
   hermes: { name: 'Hermes', plan: 'Nous Hermes', label: 'Hermes Agent 配置', loginCommand: null, configHint: '~/.hermes/ 配置文件或各模型 API Key' },
   zcode: { name: 'ZCode', plan: 'ZCode AI', label: 'ZCode 账号与配置', loginCommand: null, configHint: 'ZCode 客户端或配置文件' },
   trae: { name: 'Trae', plan: 'Trae AI', label: 'Trae 账号与配置', loginCommand: null, configHint: 'Trae 客户端登录状态' },
+  cline: { name: 'Cline', plan: 'Cline Providers', label: 'Cline CLI 认证', loginCommand: 'cline auth', configHint: '命令行 cline auth 或 ~/.cline/data 配置' },
 };
 
 const MODEL_REF_ID = /^[A-Za-z0-9._~-]{1,512}$/;
@@ -150,6 +153,52 @@ function unifiedDiff(change, kindType) {
   return [`diff --git a/${file} b/${file}`, ...(/^---\s/m.test(body) ? [] : headers), body].filter(Boolean).join('\n');
 }
 
+// 各 harness 终端工具的命名集合；命中即把该工具调用投影为原生 commandExecution，
+// 让 Desktop 显示「正在运行/运行了命令」而不是笼统的「已使用 Harness Mix 集成」。
+const SHELL_TOOL_TITLE = /bash|shell|terminal|console|exec|powershell|pwsh|\bcmd\b|command|命令|终端/i;
+
+function shellCommandText(item) {
+  if (!SHELL_TOOL_TITLE.test(String(item.title || ''))) return null;
+  const input = item.input;
+  if (typeof input !== 'string' || !input.trim()) return String(item.title || 'command');
+  try {
+    const parsed = JSON.parse(input);
+    if (parsed && typeof parsed === 'object') {
+      const cmd = parsed.command ?? parsed.cmd ?? parsed.script ?? parsed.input;
+      if (typeof cmd === 'string' && cmd.trim()) return cmd;
+    }
+  } catch {}
+  return input;
+}
+
+// 官方 app-server 由 Rust 把命令解析成 commandActions；这里只对无引号/管道/重定向的
+// 简单单命令做保守分类（读取/搜索/列目录），其余一律 unknown，不臆造命令行为。
+function classifyCommandAction(command) {
+  if (/["'`|;&<>()[\]{}$]/.test(command)) return { type: 'unknown', command };
+  const tokens = command.trim().split(/\s+/).filter(Boolean);
+  const exe = (tokens[0] || '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
+  const args = tokens.slice(1).filter(t => !t.startsWith('-'));
+  if (['cat', 'head', 'tail', 'type', 'get-content', 'more'].includes(exe) && args.length === 1)
+    return { type: 'read', command, name: args[0].split(/[\\/]/).pop(), path: args[0] };
+  if (['rg', 'grep', 'egrep', 'fgrep', 'findstr'].includes(exe) && args.length >= 1)
+    return { type: 'search', command, query: args[0] };
+  if (['ls', 'dir', 'tree'].includes(exe))
+    return { type: 'listFiles', command, ...(args[0] ? { path: args[0] } : {}) };
+  return { type: 'unknown', command };
+}
+
+// Desktop 权限菜单/回合参数中的权限字段（thread/settings/update 与 turn/start 用 sandboxPolicy，
+// thread/start 用 sandbox），统一存为 turnPermissions { approvalPolicy, approvalsReviewer, sandboxPolicy, permissions }
+function pickTurnPermissions(params = {}) {
+  const picked = {};
+  if (typeof params.approvalPolicy === 'string') picked.approvalPolicy = params.approvalPolicy;
+  if (typeof params.approvalsReviewer === 'string') picked.approvalsReviewer = params.approvalsReviewer;
+  const sandbox = params.sandboxPolicy ?? params.sandbox;
+  if (sandbox && typeof sandbox === 'object') picked.sandboxPolicy = sandbox;
+  if (typeof params.permissions === 'string') picked.permissions = params.permissions;
+  return Object.keys(picked).length ? picked : null;
+}
+
 function projectItem(item) {
   const base = { id: item.id };
   if (item.type === 'user_message') return { ...base, type: 'userMessage', content: [
@@ -175,10 +224,20 @@ function projectItem(item) {
       agentsStates: job.child_thread_id ? { [job.child_thread_id]: { status,
         message: job.attention?.message || job.attention?.title || job.result || job.error || null } } : {} };
   }
-  if (item.type === 'tool_call') return { ...base, type: 'mcpToolCall', server: 'harness-mix', tool: item.title || 'tool',
-    arguments: item.input || {}, status: terminal(item.status) ? (item.state === 'error' ? 'failed' : 'completed') : 'inProgress',
-    result: item.output ? { content: [{ type: 'text', text: String(item.output) }], structuredContent: null } : null,
-    error: item.state === 'error' ? { message: String(item.output || item.detail || 'Tool failed') } : null, durationMs: null };
+  if (item.type === 'tool_call') {
+    const status = terminal(item.status) ? (item.state === 'error' ? 'failed' : 'completed') : 'inProgress';
+    const command = shellCommandText(item);
+    if (command != null) {
+      // 退出码未知不臆造（exitCode: null）；durationMs 来自 Core 真实时间戳
+      return { ...base, type: 'commandExecution', command, cwd: null, status,
+        commandActions: [classifyCommandAction(command)],
+        aggregatedOutput: item.output ? String(item.output) : null,
+        exitCode: null, durationMs: terminal(item.status) ? Math.max(0, (item.updatedAt ?? 0) - (item.createdAt ?? 0)) : null, processId: null };
+    }
+    return { ...base, type: 'dynamicToolCall', namespace: 'harness-mix', tool: item.title || 'tool',
+      arguments: item.input || {}, contentItems: item.output ? [{ type: 'inputText', text: String(item.output) }] : null,
+      status, success: terminal(item.status) ? item.state !== 'error' : null };
+  }
   if (item.type === 'file_change') return { ...base, type: 'fileChange', status: terminal(item.status) ? 'completed' : 'inProgress',
     changes: (item.changes || [item]).map(change => {
       const kind = change.changeType === 'deleted' ? { type: 'delete' } : change.changeType === 'added' ? { type: 'add' } : { type: 'update', move_path: null };
@@ -206,10 +265,14 @@ class NativeProtocol {
       emit,
     });
     this.approvals = new Map();
+    this.pets = require('./pets').createPetMarket();
     this.published = new Map();
     this.steering = new Map();      // threadId -> in-flight steer promise
     this.steerReceipts = new Map(); // `${threadId}\0${clientUserMessageId}` -> bounded delivery receipt
     this.queues = new Map();        // threadId -> Array<{ id, input, clientUserMessageId, createdAt }>
+    this.queueNotifications = new Map(); // response-first queue notifications, coalesced per thread
+    this.queueStarts = new Set();   // queued submission ids currently being accepted by a native harness
+    this.closed = false;
     this.unsubscribe = runtime.core.subscribe(({ event, projected }) => this.onCore(event, projected));
     // Host 侧新建的线程（协作子任务等）也要通知 Desktop 侧栏，与 thread/start 同一契约
     this.unsubscribeRuntime = runtime.subscribe(event => {
@@ -224,15 +287,35 @@ class NativeProtocol {
     return this.queues.get(threadId);
   }
   emitQueueChanged(threadId) {
-    this.emit({ method: 'thread/queue/changed', params: { threadId } });
+    // Desktop mutates its local queue cache after the request promise resolves. Emitting
+    // synchronously lets its refresh replace that cache first; an edit then holds the old
+    // message id and fails with "queued follow-up no longer exists". Match app-server
+    // ordering: return the mutation response first, then notify this and other windows.
+    if (this.closed || this.queueNotifications.has(threadId)) return;
+    const timer = setTimeout(() => {
+      this.queueNotifications.delete(threadId);
+      this.emit({ method: 'thread/queue/changed', params: { threadId } });
+    }, 0);
+    timer.unref?.();
+    this.queueNotifications.set(threadId, timer);
   }
   thread(id) {
     if (!id) return undefined;
     return this.runtime.threads.some(t => t.id === id) ? this.runtime.getThread(id) : undefined;
   }
   owns(id) { return Boolean(this.thread(id)); }
-  turn(turn) { return { id: turn.id, status: turnStatus(turn.status), error: turn.error ? { message: String(turn.error), codexErrorInfo: null, additionalDetails: null } : null,
-    items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) }; }
+  turn(turn) {
+    // 官方 Turn 合约的时间字段：startedAt/completedAt（epoch 秒，Desktop 恢复线程时经
+    // kBt(x*1e3) 还原）与 durationMs（turn/completed 处理器直接采用）。缺失时 Desktop
+    // 无法合成 worked-for 计时项，完成回合只回退显示“已使用 Harness Mix 集成”。
+    const startedAt = turn.startedAt ?? turn.createdAt ?? null;
+    const completedAt = turn.completedAt ?? null;
+    return { id: turn.id, status: turnStatus(turn.status), error: turn.error ? { message: String(turn.error), codexErrorInfo: turn.codexErrorInfo ?? null, additionalDetails: null } : null,
+      startedAt: startedAt != null ? Math.floor(startedAt / 1000) : null,
+      completedAt: completedAt != null ? Math.floor(completedAt / 1000) : null,
+      durationMs: startedAt != null && completedAt != null ? Math.max(0, completedAt - startedAt) : null,
+      items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) };
+  }
   projectThread(thread, includeTurns = true) {
     // Projection shape mirrors the upstream codexhost external-thread contract: every
     // field the Desktop sidebar/composer reads must be present with the same defaults.
@@ -249,7 +332,14 @@ class NativeProtocol {
       sessionId: thread.id, forkedFromId: thread.forkedFrom ?? null, parentThreadId: thread.parentThreadId ?? null,
       // 跨 Harness 原地切换血缘：链上每条是某 Harness 曾用的原生会话引用（切回可 resume）
       harnessChain: (thread.harnessChain ?? []).map(e => ({ harnessId: externalId(e.harnessId), at: e.at })),
-      pendingHarnessSwitch: thread.pendingHandoff ? { fromHarnessId: externalId(thread.pendingHandoff.fromHarnessId), note: thread.pendingHandoff.note ?? null } : null,
+      pendingHarnessSwitch: thread.pendingHandoff ? {
+        checkpointId: thread.pendingHandoff.checkpointId,
+        fromHarnessId: externalId(thread.pendingHandoff.fromHarnessId),
+        toHarnessId: externalId(thread.pendingHandoff.toHarnessId || thread.harnessId),
+        phase: thread.pendingHandoff.phase || 'ready',
+        intent: thread.pendingHandoff.intent || 'continue',
+        note: thread.pendingHandoff.note ?? null,
+      } : null,
       canAcceptDirectInput: true, historyMode: 'legacy', isPinned: false, extra: null,
       isolation: thread.isolation ?? 'shared',
       workspace: thread.workspace ? { mode: thread.workspace.mode, branch: thread.workspace.branch, root: thread.workspace.root } : null,
@@ -350,7 +440,24 @@ class NativeProtocol {
     if (method === 'codexhost/harness/session-import/list') return this.runtime.history.list(params);
     if (method === 'codexhost/harness/session-import/import') return this.runtime.history.import(params);
     if (method === 'codexhost/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
+    // 桌宠市场：官方预载（Codex 安装包 asar 提取）与 ~/.codex/pets 安装管理
+    if (method === 'codexhost/pets/catalog') return this.pets.catalog();
+    if (method === 'codexhost/pets/preview') return this.pets.preview(params);
+    if (method === 'codexhost/pets/install') return this.pets.install(params);
+    if (method === 'codexhost/pets/uninstall') return this.pets.uninstall(params);
     const thread = this.thread(params.threadId);
+    // 失败回合分类查询：Renderer 据此在输入框下方渲染只真正帮得上忙的动作按钮
+    if (method === 'codexhost/harness/turn-error') {
+      if (!thread) throw new Error('Unknown thread');
+      const kind = thread.errorKind ?? null;
+      const meta = HARNESS_AUTH_INFO[externalId(thread.harnessId)] || HARNESS_AUTH_INFO[thread.harnessId];
+      return {
+        threadId: thread.id,
+        error: thread.error ?? null,
+        errorKind: kind,
+        actions: kind ? errorActions(kind, { canLogin: Boolean(meta?.loginCommand) }) : [],
+      };
+    }
     if (method === 'harness-mix/runtime/inspect') return {
       owner: 'harness-mix',
       runtime: 'src/main/host/runtime.js',
@@ -648,6 +755,7 @@ class NativeProtocol {
           model: selectedModel, thinking: effectiveRoute.thinkingOptionId, permissionMode: effectiveRoute.permissionModeId,
           ...(accountContext || {}),
           ...(isWorktree ? { worktree: true } : {}),
+          ...(pickTurnPermissions(params) ? { turnPermissions: pickTurnPermissions(params) } : {}),
         } });
       if (created.error) throw new Error(created.error);
       const result = { thread: this.projectThread(created), model: params.model, modelProvider: 'harness-mix', cwd: created.cwd,
@@ -729,22 +837,16 @@ class NativeProtocol {
         ? queue.findIndex(item => item.id === params.queuedSubmissionId)
         : 0;
       if (idx === -1 || !queue[idx]) throw new Error('Queued submission not found');
-      const [submission] = queue.splice(idx, 1);
-      this.emitQueueChanged(thread.id);
-      const { text, attachments } = await prepareInput(submission.input, thread.cwd);
-      if (attachments.length && !this.runtime.getCapabilities(thread.harnessId).conversation.attachments) {
-        throw new Error('当前 Harness 不支持图片附件');
-      }
-      if (this.runtime.execution.isRunning(thread.id)) {
-        // 正在执行中：打断当前回合并立即执行该排队消息
-        const turnId = await this.steerExclusive(thread, thread.currentTurn?.id, text, attachments);
-        const started = this.runtime.core.getTurn(turnId) || thread.currentTurn;
-        return { turn: this.turn(started) };
-      }
-      const turn = await this.startNativeTurn(thread, text, attachments);
-      return { turn: this.turn(turn) };
+      return { turn: this.turn(await this.startQueuedSubmission(thread, queue[idx])) };
     }
     if (method === 'thread/metadata/update') return { thread: this.projectThread(await this.runtime.updateThreadMetadata(thread.id, params.gitInfo)) };
+    // Desktop 权限菜单（请求批准/帮我批准/完全访问）推送的线程级设置：原样存储并持久化，
+    // 后续回合经 codex 适配器转发到原生 app-server，让显示选择与实际生效一致
+    if (method === 'thread/settings/update') {
+      const picked = pickTurnPermissions(params);
+      if (picked) await this.runtime.setOptions(thread.id, { turnPermissions: { ...(thread.options?.turnPermissions ?? {}), ...picked } });
+      return {};
+    }
     if (method === 'thread/section/move') {
       if (params.sectionId !== null && (typeof params.sectionId !== 'string' || !params.sectionId)) throw new Error('Invalid sectionId');
       let section = null;
@@ -761,10 +863,17 @@ class NativeProtocol {
       await this.runtime.setThreadSection(thread.id, section, params.beforeThreadId);
       return {};
     }
-    if (method === 'thread/resume') return { thread: this.projectThread(thread), model: routeModel(externalId(thread.harnessId)), modelProvider: 'harness-mix', cwd: thread.cwd, approvalPolicy: 'on-request', sandbox: { type: 'workspaceWrite', writableRoots: [thread.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null };
+    if (method === 'thread/resume') {
+      // 回显线程实际生效的权限（Desktop 据此渲染 composer 权限指示），而不是硬编码默认值
+      const perms = thread.options?.turnPermissions ?? null;
+      return { thread: this.projectThread(thread), model: routeModel(externalId(thread.harnessId)), modelProvider: 'harness-mix', cwd: thread.cwd,
+        approvalPolicy: perms?.approvalPolicy ?? 'on-request', approvalsReviewer: perms?.approvalsReviewer ?? null,
+        sandbox: perms?.sandboxPolicy ?? { type: 'workspaceWrite', writableRoots: [thread.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null };
+    }
     if (method === 'turn/start') {
       const { text, attachments } = await prepareInput(params.input, thread.cwd);
-      return { turn: this.turn(await this.startNativeTurn(thread, text, attachments)) };
+      // Desktop fallback 路径在每个回合都携带完整权限参数；缺失时由适配器回退到线程级设置
+      return { turn: this.turn(await this.startNativeTurn(thread, text, attachments, undefined, pickTurnPermissions(params))) };
     }
     // External steering: cancel the active Turn, wait for it to fully settle, then start
     // the new input as a real new Turn. Never guess a stale target, never auto-start on
@@ -851,12 +960,12 @@ class NativeProtocol {
     }
     // 原地切换 Harness：会话历史保留，下条消息携带一次性上下文信封（/switch 指令的 RPC 等价物）
     if (method === 'codexhost/thread/harness/switch') {
-      await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, {
+      const result = await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, {
         note: typeof params.note === 'string' ? params.note : undefined,
         intent: params.intent,
         includes: params.includes,
       });
-      return { threadId: thread.id, checkpointId: thread.pendingHandoff.checkpointId };
+      return { ...result, fromHarnessId: externalId(result.fromHarnessId), toHarnessId: externalId(result.toHarnessId) };
     }
     if (method === 'thread/fork' || method === 'codexhost/thread/fork') {
       if (params.ephemeral || params.threadSource || params.excludeTurns) {
@@ -889,10 +998,10 @@ class NativeProtocol {
       const converted = projectItem(item);
       if (converted) {
         const previous = this.published.get(item.id);
-        if (!previous) notify('item/started', { item: converted });
+        if (!previous) notify('item/started', { item: converted, startedAtMs: item.createdAt ?? Date.now() });
         if (item.type === 'agent_message' && item.content?.length > (previous?.content?.length || 0)) notify('item/agentMessage/delta', { itemId: item.id, delta: item.content.slice(previous?.content?.length || 0) });
         if (item.type === 'reasoning' && item.content?.length > (previous?.content?.length || 0)) notify('item/reasoning/summaryTextDelta', { itemId: item.id, summaryIndex: 0, delta: item.content.slice(previous?.content?.length || 0) });
-        if (terminal(item.status) && (!terminal(previous?.status) || ['file_change', 'tool_call'].includes(item.type) && JSON.stringify(converted) !== JSON.stringify(projectItem(previous)))) notify('item/completed', { item: converted });
+        if (terminal(item.status) && (!terminal(previous?.status) || ['file_change', 'tool_call'].includes(item.type) && JSON.stringify(converted) !== JSON.stringify(projectItem(previous)))) notify('item/completed', { item: converted, completedAtMs: item.updatedAt ?? item.createdAt ?? Date.now() });
         this.published.set(item.id, structuredClone(item));
         if (this.published.size > 200) {
           const oldest = this.published.keys().next().value;
@@ -926,11 +1035,8 @@ class NativeProtocol {
           const queue = this.getQueue(threadId);
           const currentThread = this.thread(threadId);
           if (queue.length > 0 && currentThread && !this.runtime.execution.isRunning(threadId) && !this.steering.has(threadId) && !this.runtime.sending?.has(threadId)) {
-            const [submission] = queue.splice(0, 1);
-            this.emitQueueChanged(threadId);
             try {
-              const { text, attachments } = await prepareInput(submission.input, currentThread.cwd);
-              await this.startNativeTurn(currentThread, text, attachments);
+              await this.startQueuedSubmission(currentThread, queue[0]);
             } catch (err) {
               console.error(`Failed to auto-drain queued submission for thread ${threadId}:`, err);
             }
@@ -939,13 +1045,41 @@ class NativeProtocol {
       }
     }
   }
-  async startNativeTurn(thread, text, attachments, commandId) {
+  async startQueuedSubmission(thread, submission) {
+    if (this.queueStarts.has(submission.id)) throw new Error('Queued submission is already starting');
+    this.queueStarts.add(submission.id);
+    try {
+      // Keep the item addressable until the native harness has accepted a real Turn. If
+      // input preparation or turn startup fails, Desktop can still edit/retry/delete it.
+      const { text, attachments } = await prepareInput(submission.input, thread.cwd);
+      if (attachments.length && !this.runtime.getCapabilities(thread.harnessId).conversation.attachments) {
+        throw new Error('当前 Harness 不支持图片附件');
+      }
+      let started;
+      if (this.runtime.execution.isRunning(thread.id)) {
+        const turnId = await this.steerExclusive(thread, thread.currentTurn?.id, text, attachments);
+        started = this.runtime.core.getTurn(turnId) || thread.currentTurn;
+      } else {
+        started = await this.startNativeTurn(thread, text, attachments);
+      }
+      const queue = this.getQueue(thread.id);
+      const idx = queue.findIndex(item => item.id === submission.id);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+        this.emitQueueChanged(thread.id);
+      }
+      return started;
+    } finally {
+      this.queueStarts.delete(submission.id);
+    }
+  }
+  async startNativeTurn(thread, text, attachments, commandId, turnPermissions) {
     const before = thread.currentTurn?.id;
     for (let i = 0; i < 100 && this.runtime.sending?.has(thread.id) && !this.runtime.execution.isRunning(thread.id); i++) {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     let failure;
-    const running = (commandId ? this.runtime.executeCommand(thread.id, commandId) : this.runtime.send(thread.id, text, { attachments })).catch(error => { failure = error; });
+    const running = (commandId ? this.runtime.executeCommand(thread.id, commandId) : this.runtime.send(thread.id, text, { attachments, turnPermissions })).catch(error => { failure = error; });
     for (let attempt = 0; attempt < 600 && thread.currentTurn?.id === before && !failure; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
     if (failure) throw failure;
     if (!thread.currentTurn || thread.currentTurn.id === before) throw new Error('Native turn did not start');
@@ -1008,6 +1142,13 @@ class NativeProtocol {
     this.approvals.delete(message.id);
     return true;
   }
-  close() { this.codexAccounts.close(); this.unsubscribe(); this.unsubscribeRuntime(); }
+  close() {
+    this.closed = true;
+    this.codexAccounts.close();
+    this.unsubscribe();
+    this.unsubscribeRuntime();
+    for (const timer of this.queueNotifications.values()) clearTimeout(timer);
+    this.queueNotifications.clear();
+  }
 }
 module.exports = { NativeProtocol, decodeRoute, projectItem, externalId, routeModel };
