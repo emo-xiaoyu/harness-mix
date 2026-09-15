@@ -28,7 +28,7 @@ async function main() {
   icons.harnesses['deepseek-harness'] = icons.harnesses.dsh;
   await esbuild.build({ ...common, entryPoints: ['src/native-ui/renderer-extension/src/production-entry.ts'],
     platform: 'browser', format: 'iife', outfile: path.join(out, 'renderer-extension.js'),
-    loader: { '.svg': 'dataurl', '.png': 'dataurl', '.css': 'text' },
+    loader: { '.svg': 'dataurl', '.png': 'dataurl', '.webp': 'dataurl', '.css': 'text' },
     banner: { js: `globalThis.__HARNESS_MIX_ICONS__=${JSON.stringify(icons)};globalThis.__HARNESS_MIX_MODEL_FAMILIES__=${JSON.stringify(MODEL_FAMILIES.map(f => ({ id: f.id, pattern: f.regex.source })))};` } });
   await esbuild.build({ ...common, entryPoints: ['src/native-ui/desktop-control/src/release-main.ts'],
     platform: 'node', format: 'esm', outfile: path.join(out, 'desktop-controller.mjs') });

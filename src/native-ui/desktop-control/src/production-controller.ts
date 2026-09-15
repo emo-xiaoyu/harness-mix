@@ -260,6 +260,7 @@ export async function runDesktopController(
           "codex-harness",
           "zcode",
           "trae",
+          "cline",
         ],
         timeoutMs: PRODUCTION_INSTALL_TIMEOUT_MS,
       },

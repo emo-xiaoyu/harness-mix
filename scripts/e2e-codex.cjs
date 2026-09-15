@@ -50,7 +50,9 @@ async function settle(thread) {
     runtime = new HostRuntime({ dataDirectory });
     await runtime.initialize();
     const resumed = runtime.threads.find(thread => thread.nativeSessionId === forkNativeId);
-    assert.ok(resumed?.restore, 'persisted Codex task is lazily resumable');
+    assert.ok(resumed, 'persisted Codex task survives reload');
+    // 分片存储：重启后线程是 storage stub，getThread 水合后才标记惰性恢复
+    assert.ok(runtime.getThread(resumed.id)?.restore, 'persisted Codex task is lazily resumable');
     await runtime.send(resumed.id, 'What CODEX-FORK token did I ask you to remember? Reply only the token.');
     await settle(resumed);
     assert.match(resumed.messages.at(-1).text, /CODEX-FORK-4172/);

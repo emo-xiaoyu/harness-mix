@@ -47,7 +47,7 @@ if (process.argv.includes('--fixture')) {
   });
 } else {
   (async () => {
-    for (const vendor of ['codebuddy', 'kiro-cli', 'cursor-cli', 'qoder', 'zcode', 'trae']) {
+    for (const vendor of ['codebuddy', 'kiro-cli', 'cursor-cli', 'qoder', 'zcode', 'trae', 'cline']) {
       const module = nativeAcp({ id: vendor, name: vendor, args: [], timeoutMs: 2000, command: () => ({ command: process.execPath, args: [__filename, '--fixture'] }) });
       const adapter = module.create(), events = [];
       let s;

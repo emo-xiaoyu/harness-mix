@@ -59,7 +59,7 @@ class CoreSession {
     thread.coreThread = structuredClone(coreThread);
     if (last && thread.connectionStatus !== 'opening' && thread.connectionStatus !== 'error') {
       thread.status = active(last) ? 'working' : last.status === 'error' ? 'error' : 'ready';
-      if (last.error) thread.error = last.error;
+      if (last.error) { thread.error = last.error; thread.errorKind = last.errorKind ?? null; }
     }
     thread.tools = [];
     for (const message of thread.messages ?? []) {
