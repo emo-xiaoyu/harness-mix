@@ -10,6 +10,10 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
   ⭐ 如果这个项目对你有帮助，请给我们一个 <a href="https://github.com/emo-xiaoyu/harness-mix">Star</a>！ ⭐
 </p>
 
+<p align="center">
+  <a href="https://linux.do/"><img alt="Linux DO" src="https://img.shields.io/badge/Linux%20DO-%E7%A4%BE%E5%8C%BA-0A66C2.svg"></a>
+</p>
+
 <p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness，并让任务在它们之间无缝接力。</strong></p>
 
 <p align="center">
@@ -66,36 +70,10 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 
 预览来自当前 Codex Desktop 原生窗口：Harness Mix 作为原生扩展入口出现在桌面工具栏和 Composer 中，会话、模型、工具与权限仍由 Codex Desktop 及各 Harness 管理。
 
-### 核心特性全景
-
-```mermaid
-flowchart TD
-    subgraph UI["🖥️ Codex Desktop 原生界面"]
-        Composer["Composer 输入框<br/>（# 协同 · 任务接力 · 排队）"]
-        Settings["设置面板<br/>（MCP 服务 · Skills 拖拽安装）"]
-        Sidebar["ChatGPT Web 侧边栏<br/>（上下文安全脱敏注入）"]
-    end
-
-    subgraph Core["⚡ Harness Mix 本地内核"]
-        Shim["CLI Shim<br/>（app-server 协议桥）"]
-        Host["Host Runtime<br/>（会话映射 · 检查点 · 协作编排 · 消息排队）"]
-    end
-
-    subgraph Engines["🤖 原生 Coding Harnesses（17 个已接入）"]
-        H1["Antigravity / Codex"]
-        H2["Claude Code / Pi / OMP"]
-        H3["DeepSeek / Grok / OpenCode"]
-        H4["CodeBuddy / Kiro / Cursor"]
-        H5["Hermes / Qoder / ZCode / Trae / OpenClaw"]
-        H6["Cline"]
-    end
-
-    UI --> Shim --> Host --> Engines
-```
-
 | 功能模块 | 核心能力 | 交互入口与特点 |
 | :--- | :--- | :--- |
 | **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
+| **🎨 皮肤市场** | 内置 HeiGe 与 Codex Styler 主题，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
 | **📚 历史会话导入与引用** | 一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑；`#` 引用任意旧会话注入脱敏上下文 | 引用仅预取最近一页；MCP 只读工具 `get_session_info` / `list_session_messages` 供 Harness 按需翻页与读取分支 / 模型 / 用量元数据 |
 | **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
 | **🧩 原生 Skills 管理** | 全量覆盖 17 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
@@ -107,9 +85,20 @@ flowchart TD
 | **🌐 ChatGPT 侧边栏桥接** | 安全脱敏提取当前会话上下文并一键生成结构化草稿 | Web 快捷聊天面板；直通注入 ChatGPT，实现跨工具无缝协作 |
 | **👤 账户与用量隔离** | Codex 多账户隔离与即时切换；实时追踪 Token / Credits 用量 | 原生侧边栏与设置面板；各 Harness 凭据、模型与审批原生自理 |
 
-<p align="center">
-  <img src="docs/images/codex-desktop-session.png" width="960" alt="Codex Desktop 原生会话中的 Harness Mix">
-</p>
+### 🎨 皮肤市场预览
+
+主题资源随项目发布，图片直接使用仓库内的授权素材；应用皮肤只改变视觉层，不改变 Codex 原生交互和 Harness 执行行为。
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="src/assets/skins/heige/themes/miku-488137/hero.webp" width="360" alt="Miku 主题"><br><sub>🎀 Miku</sub></td>
+    <td align="center"><img src="src/assets/skins/heige/themes/genshin-night/hero.webp" width="360" alt="Genshin Night 主题"><br><sub>🌌 Genshin Night</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="src/assets/skins/heige/themes/deepspace-star/hero.webp" width="360" alt="Deepspace Star 主题"><br><sub>🌠 Deepspace Star</sub></td>
+    <td align="center"><img src="src/assets/skins/heige/themes/wuthering-tide/hero.webp" width="360" alt="Wuthering Tide 主题"><br><sub>🌊 Wuthering Tide</sub></td>
+  </tr>
+</table>
 
 ## 原生 Harness 功能支持矩阵
 
@@ -156,6 +145,12 @@ flowchart TD
 - **拖拽安装**：在「设置 → Skills」中可将单个 `SKILL.md` 或完整技能文件夹直接拖拽安装，自带安全路径校验。
 - **作用域与安全停用**：支持 Global（全局）与 Project（项目级）无缝切换；停用时安全移入保留目录，绝不损坏用户源文件。
 - **远程 MCP 支持**：支持配置带自定义 Headers 的 Streamable HTTP / SSE 远程服务。
+
+### 🎨 皮肤市场与可读性保护
+- **主题预览与切换**：设置 → 皮肤中可预览并应用内置主题，也可随时恢复原生 Codex 外观。
+- **全界面覆盖**：背景、侧边栏、消息卡片、输入框、按钮和文字颜色统一使用主题令牌。
+- **暗色可读性**：自动增加遮罩和对比度，避免侧边栏、任务列表和消息内容在深色背景上消失。
+- **交互零侵入**：不替换 Codex 控件，不修改模型、工具、权限、队列或原生会话。
 
 ## 本地运行
 
