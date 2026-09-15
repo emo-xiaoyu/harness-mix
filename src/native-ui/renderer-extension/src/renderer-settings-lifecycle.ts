@@ -20,6 +20,7 @@ import {
   installRendererSettingsHeaderTrigger,
   type RendererSettingsHeaderTriggerControl,
 } from "./settings/trigger.js";
+import { restoreRendererSkin } from "./settings/skin-runtime.js";
 
 const UPDATE_CHECK_TIMEOUT_MS = 5_000;
 const UPDATE_RETRY_DELAYS_MS = [1_000, 3_000, 10_000, 30_000] as const;
@@ -45,6 +46,7 @@ export function installRendererSettingsLifecycle(
   ownerWindow: Window = window,
   options: RendererSettingsLifecycleOptions = {},
 ): RendererSettingsLifecycleControl {
+  restoreRendererSkin(ownerWindow);
   const lifecycleController = new AbortController();
   let locale = resolveRendererSettingsLocale(ownerWindow.navigator.languages);
   let shell: RendererSettingsShell | null = null;
