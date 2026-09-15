@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "naruto-sasuke",
+  "name": "火影 · 佐助",
+  "hero": "hero.webp",
+  "appearance": "dark",
+  "previewFocus": { "x": 50, "y": 24 },
+  "colors": {
+    "accent": "#d8443c",
+    "secondary": "#7fb3ff",
+    "surface": "#171019",
+    "text": "#ffd9d2"
+  }
+}

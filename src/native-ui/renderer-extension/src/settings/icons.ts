@@ -33,6 +33,8 @@ import X from "lucide/dist/esm/icons/x.mjs";
 import Users from "lucide/dist/esm/icons/users.mjs";
 import Plus from "lucide/dist/esm/icons/plus.mjs";
 import Database from 'lucide/dist/esm/icons/database.mjs';
+import Palette from "lucide/dist/esm/icons/palette.mjs";
+import ShieldCheck from "lucide/dist/esm/icons/shield-check.mjs";
 import harnessMixLogoUrl from "../../../../assets/brand-harness-mix.png";
 
 export const RENDERER_SETTINGS_ICON_NAMES = [
@@ -69,6 +71,8 @@ export const RENDERER_SETTINGS_ICON_NAMES = [
   "terminal",
   "search",
   "help",
+  "palette",
+  "shield",
   "storage",
 ] as const;
 
@@ -108,6 +112,8 @@ const iconNodes = {
   terminal: Terminal,
   search: Search,
   help: CircleHelp,
+  palette: Palette,
+  shield: ShieldCheck,
   storage: Database,
 } satisfies Record<RendererSettingsIconName, IconNode>;
 
