@@ -24,6 +24,7 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   zcode: "ZCode",
   trae: "Trae",
   'cursor-cli': "Cursor",
+  cline: "Cline",
   'codex-harness': 'Codex（Harness Mix 协作）',
 };
 

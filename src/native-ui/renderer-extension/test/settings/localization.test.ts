@@ -75,6 +75,16 @@ describe("Renderer settings localization", () => {
       createDefaultRendererSettingsPages(rendererSettingsMessages("zh-CN")).map(
         ({ label }) => label,
       ),
-    ).toEqual(["连接", "账号", "MCP", "Skills", "会话导入", "存储与验证", "更新", "关于"]);
+    ).toEqual([
+      "连接",
+      "账号",
+      "MCP",
+      "Skills",
+      "会话导入",
+      "存储与验证",
+      "皮肤",
+      "更新",
+      "关于",
+    ]);
   });
 });

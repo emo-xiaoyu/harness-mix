@@ -109,6 +109,7 @@ const externalHarnessIds = {
   zcode: harnessIdSchema.parse("zcode"),
   trae: harnessIdSchema.parse("trae"),
   'cursor-cli': harnessIdSchema.parse("cursor-cli"),
+  cline: harnessIdSchema.parse("cline"),
   'codex-harness': harnessIdSchema.parse('codex-harness'),
 } as const;
 
@@ -128,6 +129,7 @@ const externalAgents: readonly ExternalRendererAgent[] = [
   "zcode",
   "trae",
   "cursor-cli",
+  "cline",
   'codex-harness',
 ];
 type HarnessAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
@@ -503,7 +505,7 @@ export function restoredThreadOwnership(inspection: ThreadInspection): RestoredT
       ...(permissionModeId ? { permissionModeId } : {}),
     };
   }
-  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'codebuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae' || inspection.harnessId === 'cursor-cli') {
+  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'codebuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae' || inspection.harnessId === 'cursor-cli' || inspection.harnessId === 'cline') {
     const harnessId = inspection.harnessId;
     const route = decodeHarnessPluginRoute(inspection.transportModelId);
     if (!route || route.harnessId !== harnessId) {
@@ -803,6 +805,7 @@ export function installRendererBindingProbe(
       zcode: undefined,
       trae: undefined,
       'cursor-cli': undefined,
+      cline: undefined,
       'codex-harness': undefined,
     },
     webUi: Object.fromEntries(

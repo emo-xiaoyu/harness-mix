@@ -20,7 +20,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624.svg">
 </p>
 
-<p align="center"><strong>当前注册的 Harness（16 个）</strong></p>
+<p align="center"><strong>当前注册的 Harness（17 个）</strong></p>
 
 <table align="center">
   <tbody>
@@ -48,12 +48,15 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
       <td align="center"><img src="src/assets/icons/zcode-color.svg" width="28" height="28" alt="ZCode"><br><sub>ZCode</sub></td>
       <td align="center"><img src="src/assets/icons/trae-color.svg" width="28" height="28" alt="Trae"><br><sub>Trae</sub></td>
     </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/cline-color.svg" width="28" height="28" alt="Cline"><br><sub>Cline</sub></td>
+    </tr>
   </tbody>
 </table>
 
 <p align="center"><sub>图标与 Harness 能力均来自项目自身的注册表；只有本机已安装且握手成功的 Harness 才会进入真实运行。</sub></p>
 
-Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通过本地编译的 CLI Shim 对接桌面的 app-server 协议，把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode 和 Trae 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理任务映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通过本地编译的 CLI Shim 对接桌面的 app-server 协议，把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae 和 Cline 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理任务映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
 
 ## 界面预览
 
@@ -78,12 +81,13 @@ flowchart TD
         Host["Host Runtime<br/>（会话映射 · 检查点 · 协作编排 · 消息排队）"]
     end
 
-    subgraph Engines["🤖 原生 Coding Harnesses（16 个已接入）"]
+    subgraph Engines["🤖 原生 Coding Harnesses（17 个已接入）"]
         H1["Antigravity / Codex"]
         H2["Claude Code / Pi / OMP"]
         H3["DeepSeek / Grok / OpenCode"]
         H4["CodeBuddy / Kiro / Cursor"]
         H5["Hermes / Qoder / ZCode / Trae / OpenClaw"]
+        H6["Cline"]
     end
 
     UI --> Shim --> Host --> Engines
@@ -92,12 +96,14 @@ flowchart TD
 | 功能模块 | 核心能力 | 交互入口与特点 |
 | :--- | :--- | :--- |
 | **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
+| **📚 历史会话导入与引用** | 一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑；`#` 引用任意旧会话注入脱敏上下文 | 引用仅预取最近一页；MCP 只读工具 `get_session_info` / `list_session_messages` 供 Harness 按需翻页与读取分支 / 模型 / 用量元数据 |
 | **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
-| **🧩 原生 Skills 管理** | 全量覆盖 16 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
+| **🧩 原生 Skills 管理** | 全量覆盖 17 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
 | **🛠️ 原生 MCP 扩展** | 支持本地 stdio 与远程 Streamable HTTP / SSE 协议 | 设置 → MCP；支持自定义 Header 传递，按 Harness 独立生效 |
 | **📋 原生消息队列** | 完整接入 Codex 会话排队机制（增删改查、排序、插队抢占与自动排空） | 原生 Composer 队列；当前回合完成后自动顺序调度执行排队消息 |
 | **✅ 可配置验证门禁** | 任务级 off / advisory / required 策略，内置一致性检查与自定义验证命令 | 命令面板 `/gate`、`/verify`；强制模式保护隔离分支合并与推送 |
 | **💾 会话存储治理** | schema v3 分片惰性加载、无损紧凑存储、迁移备份与体积诊断 | 冷启动只读任务索引；打开任务时才恢复对应 Core checkpoint |
+| **🩹 失败分类与恢复** | 失败回合归类为连接 / 登录 / 额度 / 被拒 / 服务异常五类，分类来自原生结构化错误（Codex `codexErrorInfo` 透传）、状态码或消息特征，无法归类时诚实标注 unknown | 错误状态随任务投影；Renderer 可查 `codexhost/harness/turn-error` 获取分类与动作（重试 / 去登录 / 新建会话），login 按钮按 Harness 真实登录能力出现 |
 | **🌐 ChatGPT 侧边栏桥接** | 安全脱敏提取当前会话上下文并一键生成结构化草稿 | Web 快捷聊天面板；直通注入 ChatGPT，实现跨工具无缝协作 |
 | **👤 账户与用量隔离** | Codex 多账户隔离与即时切换；实时追踪 Token / Credits 用量 | 原生侧边栏与设置面板；各 Harness 凭据、模型与审批原生自理 |
 
@@ -127,6 +133,7 @@ flowchart TD
 | **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
 | **ZCode** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
 | **Trae** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
 
 <sub>注：✅ 为原生支持并已打通；➖ 为上游协议当前未开放或未声明；只有本机已安装且握手成功的 Harness 才会进入真实运行。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
 
@@ -145,7 +152,7 @@ flowchart TD
 - **严谨编排约束**：自动为主控 Coordinator 注入硬约束，严禁越界派发给未指定的 Harness；完善级联取消与子任务超时熔断机制。
 
 ### 🧩 原生 Skills 与 MCP 管理
-- **16 平台免配置预建**：打开会话时自动预建全部 16 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。
+- **17 平台免配置预建**：打开会话时自动预建全部 17 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。
 - **拖拽安装**：在「设置 → Skills」中可将单个 `SKILL.md` 或完整技能文件夹直接拖拽安装，自带安全路径校验。
 - **作用域与安全停用**：支持 Global（全局）与 Project（项目级）无缝切换；停用时安全移入保留目录，绝不损坏用户源文件。
 - **远程 MCP 支持**：支持配置带自定义 Headers 的 Streamable HTTP / SSE 远程服务。
@@ -192,6 +199,7 @@ npm start
 - CodeBuddy：安装官方 `codebuddy` CLI 并完成登录；旧 WorkBuddy 安装也可通过兼容别名继续使用。
 - Kiro CLI：安装 `kiro-cli`，启用 `acp` 子命令并完成 CLI 登录。
 - Cursor CLI：安装 `cursor-agent` 并完成 CLI 登录。
+- Cline：安装 `cline`（`npm i -g cline`）并通过 `cline auth` 完成登录；Harness Mix 以官方 `cline --acp` 接入。
 - Qoder：安装 `qodercli`（或 `qoder`）并完成 CLI 登录；ACP 入口由本机版本决定。
 - ZCode / Trae：只有在拥有已验证的 ACP 兼容桥接程序时才配置 `HARNESS_MIX_ZCODE_ACP_EXECUTABLE` / `HARNESS_MIX_TRAE_EXECUTABLE`，项目不会猜测官方入口。
 

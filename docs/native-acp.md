@@ -1,6 +1,6 @@
 # CodeBuddy、Kiro CLI、Cursor CLI 与其他原生 ACP 接入
 
-CodeBuddy、Kiro CLI、Cursor CLI 和 Qoder 使用原生 ACP stdio，并在 `native-acp.js`、
+CodeBuddy、Kiro CLI、Cursor CLI、Qoder 和 Cline 使用原生 ACP stdio，并在 `native-acp.js`、
 `acp-interactions.js` 中处理厂商差异。ZCode、Trae 也复用此引擎，但当前只有显式
 ACP 程序配置入口，尚未验证可用桥接程序，不能称为已完成官方原生接入。
 不替换原生账号、不代理模型供应商、不自动批准工具请求。
@@ -15,6 +15,7 @@ ACP 程序配置入口，尚未验证可用桥接程序，不能称为已完成�
 | `qoder` | `qodercli --acp` / `qoder --acp` | `HARNESS_MIX_QODER_EXECUTABLE` | [Qoder 官方 ACP 文档](https://docs.qoder.com/cli/acp) |
 | `zcode` | 显式指定 ACP 桥接程序，无附加参数 | `HARNESS_MIX_ZCODE_ACP_EXECUTABLE` | [ZCode](https://zcode.z.ai/)；本机原生 CLI 仅确认 app-server |
 | `trae` | 显式指定兼容 ACP 程序，无附加参数 | `HARNESS_MIX_TRAE_EXECUTABLE` | [官方 trae-agent](https://github.com/bytedance/trae-agent)；未确认 ACP 支持 |
+| `cline` | `cline --acp` | `HARNESS_MIX_CLINE_EXECUTABLE` | [Cline CLI](https://docs.cline.bot/usage/cli-overview)；官方文档与源码均确认 ACP |
 
 Qoder 在 Windows 上识别 npm 包并直接启动官方 JavaScript bundle。ZCode 的
 `app-server --stdio` 使用厂商协议，不能直接填入 ACP 程序路径。旧的 `zcode acp`、
@@ -69,8 +70,12 @@ Cursor 在 Windows 上识别官方版本目录并直接运行其 Node bundle。
   OpenClaw 的当前模型明确拒绝图片，属于模型能力限制而非 Host 丢图。
 - 精确消息回退、CodeBuddy/Cursor fork、账号配额查询不声明支持。
 - Kiro autopilot 不伪装为 Host 权限级别；未知扩展请求明确报不支持。
+- Cline 官方 ACP（apps/cli/src/acp）已核对：握手声明 loadSession 与图片输入，
+  session/new 返回 plan/act 模式与模型目录，审批走标准 session/request_permission。
+  其事件投影没有 plan 条目、diff 内容块、usage_update 或 thinking 档位配置，
+  对应能力一律不声明；提问以审批选项形式出现，不伪造独立提问通道。
 - 部分 CLI 不提供原生 Diff 或用量，缺失时不从当前文件/估算值补造。
-- CodeBuddy/Kiro/Cursor/Qoder/ZCode/Trae 的 ACP 会话可接收每会话 MCP 定义，
+- CodeBuddy/Kiro/Cursor/Qoder/Cline/ZCode/Trae 的 ACP 会话可接收每会话 MCP 定义，
   但只有本机安装且握手成功的程序才会开放入口；ZCode、Trae 仍需显式兼容 ACP
   桥接器，不能把其 app-server 或普通 CLI 当成 ACP。
 - DSH 协作主任务走官方 `dsh --profile acp`，由同一 ACP 引擎接收 session-scoped

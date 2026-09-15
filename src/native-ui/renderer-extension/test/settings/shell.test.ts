@@ -27,6 +27,7 @@ describe("Renderer settings foundation", () => {
       "Skills",
       "Session Import",
       "Storage & verification",
+      "Skins",
       "Updates",
       "About",
     ]);
@@ -37,6 +38,7 @@ describe("Renderer settings foundation", () => {
       "session-import",
       "session-import",
       "storage",
+      "palette",
       "updates",
       "about",
     ]);
@@ -73,6 +75,7 @@ describe("Renderer settings foundation", () => {
       "skills",
       "session-import",
       "storage",
+      "skins",
       "updates",
       "about",
     ]);

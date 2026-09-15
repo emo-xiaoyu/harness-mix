@@ -70,6 +70,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   trae: 'Trae 原生协同',
   'kiro-cli': 'Kiro CLI 智能编程',
   'cursor-cli': 'Cursor CLI 原生协同',
+  cline: 'Cline 自主编程智能体',
 };
 
 const AGENT_COLORS: Record<string, string> = {
@@ -93,6 +94,7 @@ const AGENT_COLORS: Record<string, string> = {
   zcode: '#4f46e5',
   trae: '#0284c7',
   'cursor-cli': '#475569',
+  cline: '#be185d',
 };
 
 function getAgentColor(agentId: string): string {
