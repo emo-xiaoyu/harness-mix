@@ -26,6 +26,7 @@ describe("Renderer settings foundation", () => {
       "MCP",
       "Skills",
       "Session Import",
+      "Storage & verification",
       "Updates",
       "About",
     ]);
@@ -35,6 +36,7 @@ describe("Renderer settings foundation", () => {
       "connections",
       "session-import",
       "session-import",
+      "storage",
       "updates",
       "about",
     ]);
@@ -70,6 +72,7 @@ describe("Renderer settings foundation", () => {
       "mcp",
       "skills",
       "session-import",
+      "storage",
       "updates",
       "about",
     ]);

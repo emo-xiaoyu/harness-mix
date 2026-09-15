@@ -3,7 +3,7 @@ const { promises: fs } = require("node:fs");
 const path = require("node:path");
 const { CapabilityManager } = require('../protocol-core/capability-manager');
 const { normalizeCapabilities } = require('../harness-adapter/manifest');
-const { Store } = require("./store");
+const { ThreadStore } = require('./thread-store');
 const { buildAdapters } = require("../adapters");
 const { ReviewController } = require('../workspace/review-controller');
 const { ReviewStore } = require('../workspace/review');
@@ -14,6 +14,8 @@ const { Integrations } = require('./integrations');
 const { buildHandoffContext, composeHandoffEnvelope } = require('./handoff');
 const { HandoffCheckpoints } = require('./handoff-checkpoints');
 const { HandoffAccess } = require('./handoff-access');
+const { VerificationGates } = require('./verification-gates');
+const { storageProjection } = require('./thread-storage');
 const { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace } = require('./collaboration-worktree');
 
 /**
@@ -24,7 +26,7 @@ const { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, disca
  */
 class HostRuntime {
   constructor({ dataDirectory, observer = null }) {
-    this.store = new Store(dataDirectory);
+    this.store = new ThreadStore(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
     this.listeners = new Set();
@@ -45,6 +47,7 @@ class HostRuntime {
     this.integrations = new Integrations(this);
     this.handoffs = new HandoffCheckpoints(this);
     this.handoffAccess = new HandoffAccess(this);
+    this.verificationGates = new VerificationGates(this);
     this.reviewController = new ReviewController(this, { save: () => this.#save(), broadcast: () => this.#broadcast() });
     this.execution = new CoreSession();
     this.core = this.execution.core;
@@ -52,7 +55,7 @@ class HostRuntime {
   }
 
   async initialize() {
-    this.threads = await this.store.load();
+    this.threads = await this.store.loadIndex();
     await this.collaboration.initialize();
     await this.handoffs.initialize();
     const emit = (event) => this.#applyEvent(event);
@@ -65,6 +68,14 @@ class HostRuntime {
       thread.harnessId = this.resolveHarnessId(thread.harnessId) || thread.harnessId;
       for (const entry of thread.harnessChain || []) entry.harnessId = this.resolveHarnessId(entry.harnessId) || entry.harnessId;
       if (thread.pendingHandoff) thread.pendingHandoff.fromHarnessId = this.resolveHarnessId(thread.pendingHandoff.fromHarnessId) || thread.pendingHandoff.fromHarnessId;
+      if (thread._storageStub) {
+        if (isDefaultTitle(thread.title) && thread.preview) {
+          const derived = deriveThreadTitle(thread.preview, [], { isWorktree: thread.workspace?.mode === 'worktree' });
+          if (derived && !isDefaultTitle(derived)) thread.title = derived;
+        }
+        if (thread.status === 'interrupted') thread.error = '宿主异常退出，任务已中断；打开任务后即可继续。';
+        continue;
+      }
       thread.connectionStatus = 'ready';
       if (thread.nativeSessionId && thread.messages?.length) thread.restore = true;
       if (thread.status === "working") {
@@ -129,7 +140,7 @@ class HostRuntime {
 
   snapshot() {
     return {
-      threads: this.threads.map(({ coreState, ...thread }) => ({ ...thread, capabilities: this.getCapabilities(thread.harnessId), coreEnabled: true })),
+      threads: this.threads.map(({ coreState, _storageStub, ...thread }) => ({ ...thread, capabilities: this.getCapabilities(thread.harnessId), coreEnabled: true })),
       adapters: [...this.adapters.values()].map((a) => ({ id: a.manifest.id, name: a.manifest.name, icon: a.manifest.icon, capabilities: a.manifest.capabilities, coreCapabilities: this.getCapabilities(a.manifest.id), ...this.status[a.manifest.id] })),
     };
   }
@@ -192,6 +203,11 @@ class HostRuntime {
       : [];
     const hostCommands = [
       { id: 'delegate', label: '/delegate', description: '委派子任务给其他 Harness：/delegate <Harness 名> <任务>', action: 'insert', text: '/delegate ' },
+      { id: 'verify', label: '/verify', description: '立即运行当前任务的验证门禁', action: 'execute' },
+      { id: 'gate', label: '/gate', description: '配置门禁：/gate required|advisory|off [--auto] [--clean] [-- 验证命令]', action: 'insert', text: '/gate required ' },
+      { id: 'gate-required', label: '/gate-required', description: '启用强制验证门禁；未通过时禁止合并或推送', action: 'execute' },
+      { id: 'gate-advisory', label: '/gate-advisory', description: '启用建议型验证门禁；失败只报告、不阻止交付', action: 'execute' },
+      { id: 'gate-off', label: '/gate-off', description: '关闭当前任务的验证门禁', action: 'execute' },
       ...(switchTargets.length ? [
         { id: 'switch', label: '/switch', description: `原地切换 Harness 继续当前会话（历史与文件现场保留）：/switch <Harness 名> [备注]（可用：${switchTargets.join('、')}）`, action: 'insert', text: '/switch ' },
       ] : []),
@@ -204,6 +220,17 @@ class HostRuntime {
 
   async executeCommand(threadId, commandId) {
     const thread = this.#requireThread(threadId);
+    if (commandId === 'verify') {
+      await this.runVerification(threadId);
+      return;
+    }
+    if (commandId === 'gate-required' || commandId === 'gate-advisory' || commandId === 'gate-off') {
+      const mode = commandId === 'gate-required' ? 'required' : commandId === 'gate-advisory' ? 'advisory' : 'off';
+      const previous = this.verificationGates.policy(thread);
+      await this.configureVerification(threadId, { ...previous, mode });
+      this.#notify('status', mode === 'off' ? '验证门禁已关闭' : `验证门禁已设为 ${mode}`, thread.id);
+      return;
+    }
     if (commandId === 'apply-worktree') {
       await this.applyThreadWorkspace(threadId);
       return;
@@ -228,6 +255,7 @@ class HostRuntime {
     const thread = this.#requireThread(threadId);
     if (thread.workspace?.mode !== 'worktree') throw new Error('该任务未使用 Worktree 隔离工作区');
     if (this.execution.isRunning(thread.id) || thread.reviewPending) throw new Error('请等待任务完成后再合并隔离分支');
+    this.verificationGates.assertSatisfied(thread, '合并隔离分支');
     const review = await reviewWorkspace(thread.workspace);
     const result = await applyWorkspace(thread.workspace, digest || review.digest);
     this.#notify('status', '已成功将隔离分支改动应用到主项目', thread.id);
@@ -252,6 +280,7 @@ class HostRuntime {
     const thread = this.#requireThread(threadId);
     if (thread.workspace?.mode !== 'worktree') throw new Error('该任务未使用 Worktree 隔离工作区');
     if (this.execution.isRunning(thread.id) || thread.reviewPending) throw new Error('请等待任务完成后再推送分支');
+    this.verificationGates.assertSatisfied(thread, '推送分支');
     const result = await pushWorkspace(thread.workspace, remote, branch);
     this.#notify('status', `已成功将分支 ${result.branch} 推送到远程 ${result.remote}`, thread.id);
     return result;
@@ -281,6 +310,13 @@ class HostRuntime {
     if (!commandId && !delegateOf && !collaborationOf && /^\/(switch|切换)(\s|$)/.test(typed)) {
       const { target, note } = parseSwitchCommand(typed);
       return this.switchHarness(thread.id, target, { note });
+    }
+    if (!commandId && !delegateOf && !collaborationOf && /^\/gate(\s|$)/.test(typed)) {
+      const policy = parseVerificationCommand(typed, this.verificationGates.policy(thread));
+      return this.configureVerification(thread.id, policy);
+    }
+    if (!commandId && !delegateOf && !collaborationOf && /^\/verify\s*$/.test(typed)) {
+      return this.runVerification(thread.id);
     }
     // 首个真实输入让预热（ephemeral）线程转正为持久会话
     if (thread.ephemeral) delete thread.ephemeral;
@@ -346,6 +382,7 @@ class HostRuntime {
         }
       }
     }
+    this.verificationGates.invalidate(thread);
     thread.messages.push({ id: randomUUID(), role: "user", text: text ?? '', at: Date.now(), ...(prepared.meta.length ? { attachments: prepared.meta } : {}), ...(hasConcurrentTurn ? { concurrent: true } : {}) });
     thread.updatedAt = Date.now();
     delete thread.error;
@@ -799,6 +836,43 @@ class HostRuntime {
     await this.#save(); this.#broadcast();
   }
 
+  getThread(threadId) { return this.#requireThread(threadId); }
+
+  verificationState(threadId) {
+    return this.verificationGates.inspect(this.#requireThread(threadId));
+  }
+
+  async configureVerification(threadId, policy) {
+    const thread = this.#requireThread(threadId);
+    if (this.execution.isRunning(thread.id)) throw new Error('任务执行中不能修改验证门禁');
+    this.verificationGates.configure(thread, policy);
+    await this.#save();
+    this.#broadcast();
+    return this.verificationGates.inspect(thread);
+  }
+
+  async runVerification(threadId) {
+    const thread = this.#requireThread(threadId);
+    if (this.execution.isRunning(thread.id) || thread.reviewPending) throw new Error('请等待任务与文件审查结算后再运行验证');
+    const report = await this.verificationGates.run(thread);
+    await this.#save();
+    this.#broadcast();
+    this.#notify(report.status === 'passed' ? 'status' : 'error', report.status === 'passed' ? '验证门禁已通过' : '验证门禁未通过', thread.id);
+    return report;
+  }
+
+  async inspectStorage() {
+    const result = storageProjection(this.threads);
+    return { ...result, ...await this.store.inspectFiles(), backupFile: `${this.store.legacyFile}.bak` };
+  }
+
+  async optimizeStorage() {
+    const before = await this.inspectStorage();
+    await this.#save();
+    const after = await this.inspectStorage();
+    return { before, after };
+  }
+
   async setThreadSection(threadId, section, beforeThreadId) {
     const thread = this.#requireThread(threadId);
     const peers = this.threads.filter(t => t.id !== threadId && t.section?.id === section?.id)
@@ -821,6 +895,7 @@ class HostRuntime {
     }
     this.threads = this.threads.filter((t) => t.id !== threadId);
     await this.#save();
+    await this.store.remove(threadId);
     this.#broadcast();
   }
 
@@ -863,6 +938,15 @@ class HostRuntime {
   #requireThread(threadId) {
     const thread = this.threads.find((t) => t.id === threadId);
     if (!thread) throw new Error("任务不存在");
+    if (thread._storageStub) {
+      this.store.hydrateInto(thread);
+      thread.harnessId = this.resolveHarnessId(thread.harnessId) || thread.harnessId;
+      thread.connectionStatus = 'ready';
+      if (thread.nativeSessionId && thread.messages?.length) thread.restore = true;
+      thread.reviewPending = false;
+      thread.pendingApprovals = [];
+      this.execution.threadCreated(thread);
+    }
     return thread;
   }
 
@@ -951,7 +1035,14 @@ class HostRuntime {
       const message = thread.messages.find(m => m.coreTurnId === turn.id);
       const activeChildren = [...this.collaboration.jobs.values()].some(job => job.owner === thread.id && job.status === 'running');
       if (activeChildren) thread.reviewPending = true;
-      const task = activeChildren ? this.collaboration.cancelOwner(thread.id).catch(() => {}).then(() => this.#settleReview(thread, message)) : this.#settleReview(thread, message);
+      const settle = activeChildren ? this.collaboration.cancelOwner(thread.id).catch(() => {}).then(() => this.#settleReview(thread, message)) : this.#settleReview(thread, message);
+      const task = Promise.resolve(settle).then(async () => {
+        if (this.verificationGates.policy(thread).autoRun) {
+          await this.verificationGates.run(thread, { turnId: turn.id });
+          await this.#save();
+          this.#broadcast();
+        }
+      });
       this.reviewTasks.add(task);
       void task.finally(() => this.reviewTasks.delete(task));
     }
@@ -1038,8 +1129,14 @@ class HostRuntime {
   #syncCore(thread) { this.execution.sync(thread); }
 
   #save() {
-    for (const thread of this.threads) this.#syncCore(thread);
-    return this.store.save(this.threads);
+    for (const thread of this.threads) {
+      if (thread._storageStub) continue;
+      this.#syncCore(thread);
+      thread.coreState = this.execution.checkpoint(thread);
+    }
+    const saving = this.store.save(this.threads);
+    for (const thread of this.threads) delete thread.coreState;
+    return saving;
   }
 
   #saveSoon() {
@@ -1063,6 +1160,23 @@ function parseDelegationCommand(text) {
   const match = /^\/(?:delegate|委派)\s+(\S+)\s+([\s\S]+)/.exec(text);
   if (!match) throw new Error('用法：/delegate <harness> <任务>，例如 /delegate <目标 Harness> 审查 src/ 的改动');
   return { target: match[1], task: match[2].trim() };
+}
+
+function parseVerificationCommand(text, previous) {
+  const match = /^\/gate\s+(off|advisory|required)([\s\S]*)$/i.exec(text);
+  if (!match) throw new Error('用法：/gate required|advisory|off [--auto] [--clean] [-- 验证命令]');
+  const tail = match[2].trim();
+  const separator = tail.indexOf('-- ');
+  const flags = (separator >= 0 ? tail.slice(0, separator) : tail).trim().split(/\s+/).filter(Boolean);
+  if (flags.some(flag => !['--auto', '--clean'].includes(flag))) throw new Error(`未知门禁选项：${flags.find(flag => !['--auto', '--clean'].includes(flag))}`);
+  const command = separator >= 0 ? tail.slice(separator + 3).trim() : '';
+  return {
+    ...previous,
+    mode: match[1].toLowerCase(),
+    autoRun: flags.includes('--auto'),
+    checks: { ...previous.checks, cleanWorkingTree: flags.includes('--clean') },
+    commands: command ? [{ id: 'custom', command }] : previous.commands,
+  };
 }
 
 /** /switch <harness> [备注] 指令解析（宿主级切换入口，支持中文别名；目标名解析见 resolveHarnessId） */

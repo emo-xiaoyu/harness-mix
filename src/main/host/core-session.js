@@ -17,6 +17,9 @@ class CoreSession {
     const turns = this.core.turns.turnsForThread(thread.id);
     if (turns.length) this.lastTurns.set(thread.id, turns.at(-1).id);
     this.sync(thread);
+    // The authoritative state now lives in ProtocolCore. Retaining the loaded
+    // checkpoint would keep a second complete copy of every item in memory.
+    delete thread.coreState;
   }
   lastTurn(id) { return this.core.getTurn(this.lastTurns.get(id)); }
   isRunning(id) { return Boolean(active(this.lastTurn(id))); }
@@ -73,7 +76,10 @@ class CoreSession {
       delete message.items;
       thread.tools.push(...items.filter(i => i.type === 'tool_call').map(i => ({ ...i, id: i.nativeRef?.toolCallId ?? i.id, messageId: message.id, at: i.createdAt, endedAt: i.updatedAt })));
     }
-    thread.coreState = { version: 1, thread: structuredClone(coreThread), turns: structuredClone(this.core.turns.turnsForThread(thread.id)), items: structuredClone([...this.core.projector.items.values()].filter(i => i.threadId === thread.id)) };
+  }
+  checkpoint(thread) {
+    const coreThread = this.core.getThread(thread.id);
+    return coreThread ? { version: 1, thread: structuredClone(coreThread), turns: structuredClone(this.core.turns.turnsForThread(thread.id)), items: structuredClone([...this.core.projector.items.values()].filter(i => i.threadId === thread.id)) } : null;
   }
   snapshot() { return this.core.snapshot(); }
 }

@@ -1821,6 +1821,12 @@ button {
   flex-wrap: wrap;
 }
 
+.settings-storage-block {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .settings-command-button,
 .settings-update-link {
   display: inline-flex;
@@ -2337,5 +2343,4 @@ button {
 .settings-mcp-distribute-modal::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
 .settings-mcp-distribute-modal h3 { margin: 0 0 8px; font-size: 16px; }
 .settings-mcp-distribute-modal p { margin: 0 0 12px; font-size: 12px; color: var(--settings-muted); }
-
 

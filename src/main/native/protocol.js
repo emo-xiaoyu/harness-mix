@@ -185,6 +185,13 @@ function projectItem(item) {
       return { path: change.path || change.file || '', kind, diff: unifiedDiff(change, kind.type) };
     }) };
   if (item.type === 'context_compaction' || item.type === 'contextCompaction') return { ...base, type: 'contextCompaction' };
+  if (item.type === 'verification_report') {
+    const report = item.report ?? {};
+    const failed = report.status === 'failed';
+    return { ...base, type: 'mcpToolCall', server: 'harness-mix', tool: 'verification_gate',
+      arguments: { mode: report.mode ?? 'off' }, result: { content: [{ type: 'text', text: JSON.stringify(report) }], structuredContent: report },
+      status: failed ? 'failed' : 'completed', error: failed ? { message: 'Verification gate failed' } : null, durationMs: Math.max(0, (report.completedAt ?? 0) - (report.startedAt ?? 0)) };
+  }
   return null;
 }
 
@@ -219,7 +226,10 @@ class NativeProtocol {
   emitQueueChanged(threadId) {
     this.emit({ method: 'thread/queue/changed', params: { threadId } });
   }
-  thread(id) { return this.runtime.threads.find(t => t.id === id); }
+  thread(id) {
+    if (!id) return undefined;
+    return this.runtime.threads.some(t => t.id === id) ? this.runtime.getThread(id) : undefined;
+  }
   owns(id) { return Boolean(this.thread(id)); }
   turn(turn) { return { id: turn.id, status: turnStatus(turn.status), error: turn.error ? { message: String(turn.error), codexErrorInfo: null, additionalDetails: null } : null,
     items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) }; }
@@ -227,7 +237,7 @@ class NativeProtocol {
     // Projection shape mirrors the upstream codexhost external-thread contract: every
     // field the Desktop sidebar/composer reads must be present with the same defaults.
     const updatedAt = Math.floor((thread.updatedAt || thread.createdAt) / 1000);
-    return { id: thread.id, preview: thread.messages.find(m => m.role === 'user')?.text || thread.title,
+    return { id: thread.id, preview: thread.messages?.find(m => m.role === 'user')?.text || thread.preview || thread.title,
       ephemeral: thread.ephemeral === true, modelProvider: 'codexhost', model: routeModel(externalId(thread.harnessId)), reasoningEffort: null,
       section: thread.section ?? null, sectionEnteredAt: thread.sectionEnteredAt ?? null, projectId: thread.projectId ?? null,
       createdAt: Math.floor(thread.createdAt / 1000),
@@ -566,6 +576,8 @@ class NativeProtocol {
       return { accounts };
     }
     if (method === 'codexhost/harness/plugins/list') return { plugins: this.runtime.snapshot().adapters.map(a => ({ id: externalId(a.id), name: a.id === 'codex' ? 'Codex（协作）' : a.name, version: '0.1.0', icon: `data:image/svg+xml;base64,${Buffer.from(getHarnessSvg(a.id)).toString('base64')}` })) };
+    if (method === 'codexhost/storage/inspect') return this.runtime.inspectStorage();
+    if (method === 'codexhost/storage/optimize') return this.runtime.optimizeStorage();
     if (method === 'codexhost/harness/inspect') return this.inspect(params.harnessId);
     if (method === 'codexhost/harness/install') {
       const local = ALIASES[params.harnessId] || params.harnessId;
@@ -647,6 +659,9 @@ class NativeProtocol {
     if (method === 'codexhost/thread/workspace/apply') return this.runtime.applyThreadWorkspace(params.threadId, params.digest);
     if (method === 'codexhost/thread/workspace/discard') return this.runtime.discardThreadWorkspace(params.threadId);
     if (method === 'codexhost/thread/workspace/push') return this.runtime.pushThreadWorkspace(params.threadId, params);
+    if (method === 'codexhost/thread/verification/get') return this.runtime.verificationState(params.threadId);
+    if (method === 'codexhost/thread/verification/configure') return this.runtime.configureVerification(params.threadId, params.policy);
+    if (method === 'codexhost/thread/verification/run') return this.runtime.runVerification(params.threadId);
     if (!thread) {
       if (method.startsWith('codexhost/')) throw new Error(`Harness Mix does not implement ${method}`);
       return undefined;

@@ -20,6 +20,7 @@ const EVENT_TYPES = [
   'usage.updated',
   'files.updated',
   'plan.updated',
+  'verification.updated',
 ];
 
 function createCoreEvent({ eventId, sequence, timestamp, threadId, turnId, itemId, source, nativeRef, type, payload } = {}, now = Date.now()) {

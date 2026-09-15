@@ -65,6 +65,7 @@ class Collaboration {
     if (job.appliedDigest) throw new Error('此任务已应用；后续修改请创建新任务');
     const parent = this.runtime.threads.find(t => t.id === job.owner);
     if (!parent || this.runtime.threads.some(t => (this.runtime.execution.isRunning(t.id) || t.reviewPending) && [parent.cwd, job.workspace?.cwd].includes(t.cwd))) throw new Error('请等待主任务和工作区任务结算后再应用');
+    if (job.childId) this.runtime.verificationGates.assertSatisfied(this.runtime.getThread(job.childId), '应用子任务改动');
     job.applying = true;
     try {
       const result = await applyWorkspace(job.workspace, digest);
@@ -89,6 +90,7 @@ class Collaboration {
     const job = this.jobs.get(id);
     if (!job) throw new Error('子任务不存在');
     if (job.status === 'running') throw new Error('请等待子任务完成后再推送分支');
+    if (job.childId) this.runtime.verificationGates.assertSatisfied(this.runtime.getThread(job.childId), '推送子任务分支');
     return pushWorkspace(job.workspace, remote, branch);
   }
 

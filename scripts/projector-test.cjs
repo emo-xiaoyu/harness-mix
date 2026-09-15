@@ -129,6 +129,19 @@ test('usage.updated：upsert usage item + thread.usage 合并', () => {
   assert.deepStrictEqual(thread.usage, { inputTokens: 10, outputTokens: 5 });
 });
 
+test('verification.updated：终态 Turn 可追加并更新可审计验证报告', () => {
+  const { core } = coreWithThread();
+  const turn = core.createTurn({ threadId: 'thread_1' });
+  core.dispatch({ threadId: 'thread_1', turnId: turn.id, type: 'turn.started' });
+  core.dispatch({ threadId: 'thread_1', turnId: turn.id, type: 'turn.completed' });
+  core.dispatch({ threadId: 'thread_1', turnId: turn.id, type: 'verification.updated', payload: { report: { reportId: 'r1', status: 'failed' } } });
+  const item = core.getItemsForTurn(turn.id).find(candidate => candidate.type === 'verification_report');
+  assert.strictEqual(item.report.status, 'failed');
+  core.dispatch({ threadId: 'thread_1', turnId: turn.id, type: 'verification.updated', payload: { report: { reportId: 'r2', status: 'passed' } } });
+  assert.strictEqual(core.getItemsForTurn(turn.id).filter(candidate => candidate.type === 'verification_report').length, 1);
+  assert.strictEqual(item.report.status, 'passed');
+});
+
 test('snapshot / reset', () => {
   const { core } = coreWithThread();
   const turn = core.createTurn({ threadId: 'thread_1' });

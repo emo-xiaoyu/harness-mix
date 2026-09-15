@@ -91,7 +91,7 @@ async function until(fn) {
     assert.deepEqual(rt.shadowReport().errors, []);
     await rt.close();
     const saved = await rt.store.load();
-    assert.equal(saved[0].messages.find(m => m.coreTurnId === first).coreTurn.status, 'completed');
+    assert.equal(saved[0].coreState.turns.find(turn => turn.id === first).status, 'completed');
     const restored = new HostRuntime({ dataDirectory: directory });
     restored.threads = await restored.store.load();
     for (const record of restored.threads) restored.execution.threadCreated(record);
@@ -99,6 +99,14 @@ async function until(fn) {
     assert.ok(restored.core.getItemsForTurn(first).some(i => i.type === 'file_change' && i.undone));
     assert.equal(restored.shadowReport().enabled, false);
     await restored.close();
+    const lazy = new HostRuntime({ dataDirectory: directory });
+    lazy.threads = await lazy.store.loadIndex();
+    assert.equal(lazy.threads[0]._storageStub, true, 'cold start reads only the thread index');
+    assert.equal(lazy.core.getThread(lazy.threads[0].id), null, 'unopened transcript is absent from Core memory');
+    const hydrated = lazy.getThread(lazy.threads[0].id);
+    assert.equal(hydrated._storageStub, undefined);
+    assert.equal(lazy.core.getTurn(first).status, 'completed', 'opening one task restores only its Core checkpoint');
+    await lazy.close();
     console.log('core-runtime: independent turns, waiting/responses, failure, cancel races, persistence passed');
   } finally { await rt.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

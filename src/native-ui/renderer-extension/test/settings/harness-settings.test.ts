@@ -15,8 +15,13 @@ import { rendererSettingsMessages } from "../../src/settings/localization.js";
 import { RendererSettingsPageScope } from "../../src/settings/core.js";
 import { KNOWN_RENDERER_AGENTS, type ExternalRendererAgent } from "../../src/agent-selection-state.js";
 import { installRendererSettingsLifecycle } from "../../src/harness-mix-settings.js";
+import { installRendererSettingsLifecycle as installCanonicalRendererSettingsLifecycle } from "../../src/renderer-settings-lifecycle.js";
 
 describe("Harness Mix Settings & Model Configuration", () => {
+  it("uses the canonical settings lifecycle from the live renderer entrypoint", () => {
+    expect(installRendererSettingsLifecycle).toBe(installCanonicalRendererSettingsLifecycle);
+  });
+
   it("provides known install commands without guessing npm packages for native CLIs", () => {
     const externalAgents = KNOWN_RENDERER_AGENTS.filter(
       (agent): agent is ExternalRendererAgent => agent !== "codex",

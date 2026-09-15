@@ -174,6 +174,8 @@ function notificationTarget(manager: RequestManagerCandidate): RequestManagerCan
 }
 
 export interface RendererModelClient extends Partial<RendererSessionImportClient>, Partial<RendererIntegrationsClient> {
+  inspectStorage?(): Promise<import('./settings/storage-page.js').RendererStorageInspection>;
+  optimizeStorage?(): Promise<{ before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }>;
   listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>>;
   currentHostId?(): string | null;
   listHarnessPlugins?(): Promise<HarnessPluginListResult>;
@@ -330,6 +332,8 @@ export function createRendererModelClient(
   };
 
   return Object.freeze({
+    async inspectStorage() { return await manager.sendRequest('codexhost/storage/inspect', {}) as import('./settings/storage-page.js').RendererStorageInspection; },
+    async optimizeStorage() { return await manager.sendRequest('codexhost/storage/optimize', {}) as { before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }; },
     async listCollaborationAgents(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>> {
       const result = await manager.sendRequest('codexhost/collaboration/agents', {});
       if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');

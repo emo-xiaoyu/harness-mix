@@ -9,6 +9,7 @@ import {
   type RendererConnectionDiagnostics,
   type RendererCodexAccountClient,
   type RendererUpdateClient,
+  type RendererStorageClient,
 } from "./settings/pages.js";
 import type {
   RendererSessionImportClient,
@@ -29,6 +30,7 @@ export interface RendererSettingsLifecycleOptions {
   getConnectionDiagnostics?(): RendererConnectionDiagnostics | null;
   getAccountClient?(): RendererCodexAccountClient | null;
   getSessionImportClient?(): RendererSessionImportClient | null;
+  getStorageClient?(): RendererStorageClient | null;
   openImportedThread?: RendererImportedThreadOpener;
   onLocaleChange?(locale: RendererSettingsLocale): void;
 }
@@ -76,6 +78,7 @@ export function installRendererSettingsLifecycle(
         if (!disposed && !signal.aborted) shell?.close();
       },
       options.getIntegrationsClient,
+      options.getStorageClient,
     );
     const nextShell = installRendererSettingsShell(definitions, messages, ownerWindow.document);
     const nextTrigger = installRendererSettingsHeaderTrigger({
@@ -212,7 +215,15 @@ export function installRendererSettingsLifecycle(
       });
   };
 
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+      event.preventDefault();
+      shell?.openSettings(undefined, "connections");
+    }
+  };
+
   mount();
+  ownerWindow.addEventListener?.("keydown", onKeyDown);
   void refreshLocale();
   refreshUpdateIndicator();
 
@@ -228,6 +239,7 @@ export function installRendererSettingsLifecycle(
     dispose() {
       if (disposed) return;
       disposed = true;
+      ownerWindow.removeEventListener?.("keydown", onKeyDown);
       openGeneration += 1;
       updateCheckGeneration += 1;
       lifecycleController.abort();

@@ -749,6 +749,10 @@ export function installRendererBindingProbe(
     getUpdateClient: () => modelControl,
     getAccountClient: () => modelControl,
     getConnectionDiagnostics: () => connectionDiagnostics,
+    getStorageClient: () => {
+      const client = modelClientForHost('local');
+      return client?.inspectStorage && client.optimizeStorage ? { inspectStorage: () => client.inspectStorage!(), optimizeStorage: () => client.optimizeStorage!() } : null;
+    },
     getIntegrationsClient: () => {
       const client = modelClientForHost('local');
       if (!client?.integrationCatalog || !client.listIntegrations || !client.saveMcp || !client.removeMcp || !client.changeSkill) return null;
