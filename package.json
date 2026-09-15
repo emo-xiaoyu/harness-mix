@@ -178,11 +178,11 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@harness-mix/native-win32-x64": "0.1.6",
-    "@harness-mix/native-win32-arm64": "0.1.6",
-    "@harness-mix/native-darwin-x64": "0.1.6",
-    "@harness-mix/native-darwin-arm64": "0.1.6",
-    "@harness-mix/native-linux-x64": "0.1.6",
-    "@harness-mix/native-linux-arm64": "0.1.6"
+    "@harness-mix/native-win32-x64": "0.1.9",
+    "@harness-mix/native-win32-arm64": "0.1.9",
+    "@harness-mix/native-darwin-x64": "0.1.9",
+    "@harness-mix/native-darwin-arm64": "0.1.9",
+    "@harness-mix/native-linux-x64": "0.1.9",
+    "@harness-mix/native-linux-arm64": "0.1.9"
   }
 }
