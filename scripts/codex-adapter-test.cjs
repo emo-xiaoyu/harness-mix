@@ -79,5 +79,49 @@ function fakeSession() {
 
   assert.equal(usageView({ last: { totalTokens: 50 }, total: {}, modelContextWindow: 200 }).contextPercent, 25);
   assert.deepEqual(modelView({ model: 'gpt-x', displayName: 'GPT X', supportedReasoningEfforts: [], isDefault: true }).id, 'gpt-x');
+
+  // 权限透传：Desktop 选择（回合级）优先，缺失时回退线程级设置，均转发到原生 turn/start
+  const sendSession = fakeSession();
+  sendSession.model = { id: 'gpt-x' };
+  sendSession.turnPermissions = { approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly' } };
+  const sentRequests = [];
+  sendSession.host = { async request(method, params) { sentRequests.push({ method, params }); return { turn: { id: `turn-${sentRequests.length}` } }; } };
+  const first = adapter.send(sendSession, '第一轮', {}, { images: [], turnPermissions: { approvalPolicy: 'never', approvalsReviewer: 'guardian', sandboxPolicy: { type: 'dangerFullAccess' } } });
+  const turnStart = sentRequests.find(r => r.method === 'turn/start');
+  assert.equal(turnStart.params.approvalPolicy, 'never', '回合级权限覆盖优先转发');
+  assert.equal(turnStart.params.approvalsReviewer, 'guardian_subagent', 'Desktop 的 guardian 归一化为原生枚举');
+  assert.deepEqual(turnStart.params.sandboxPolicy, { type: 'dangerFullAccess' });
+  projectNotification({ method: 'turn/completed', params: { threadId: 'thread-native', turn: { id: 'turn-1', status: 'completed' } } }, sendSession, () => {});
+  await first;
+  sentRequests.length = 0;
+  const second = adapter.send(sendSession, '第二轮', {}, { images: [] });
+  const fallbackStart = sentRequests.find(r => r.method === 'turn/start');
+  assert.equal(fallbackStart.params.approvalPolicy, 'on-request', '无线索级覆盖时回退线程级设置');
+  assert.deepEqual(fallbackStart.params.sandboxPolicy, { type: 'readOnly' });
+  projectNotification({ method: 'turn/completed', params: { threadId: 'thread-native', turn: { id: 'turn-1', status: 'completed' } } }, sendSession, () => {});
+  await second;
+
+  // Queue resume can race app-server's active-turn cleanup. Retry only that transient
+  // without surfacing a failed Core turn or duplicating unrelated failures.
+  const retrySession = fakeSession();
+  let startAttempts = 0;
+  retrySession.host = { async request(method) {
+    assert.equal(method, 'turn/start');
+    startAttempts++;
+    if (startAttempts < 3) throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
+    return { turn: { id: 'turn-after-settlement' } };
+  } };
+  const retried = adapter.send(retrySession, '编辑后的排队消息', {}, { images: [] });
+  while (startAttempts < 3) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(retrySession.state.nativeTurnId, 'turn-after-settlement');
+  projectNotification({ method: 'turn/completed', params: { threadId: 'thread-native', turn: { id: 'turn-after-settlement', status: 'completed' } } }, retrySession, () => {});
+  await retried;
+  assert.equal(startAttempts, 3, 'Only the transient app-server busy race is retried');
+
+  const fatalSession = fakeSession();
+  let fatalAttempts = 0;
+  fatalSession.host = { async request() { fatalAttempts++; throw new Error('Authentication required'); } };
+  await assert.rejects(adapter.send(fatalSession, '不可重试的错误', {}, { images: [] }), /Authentication required/);
+  assert.equal(fatalAttempts, 1, 'Unrelated app-server errors are never retried or hidden');
   console.log('codex adapter: native notifications, usage, multi-question and approvals passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
