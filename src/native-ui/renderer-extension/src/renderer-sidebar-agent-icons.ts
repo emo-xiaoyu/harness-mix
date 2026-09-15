@@ -147,6 +147,7 @@ export function rendererAgentForThreadOwnership(
   if (ownership.harnessId === "zcode") return "zcode";
   if (ownership.harnessId === "trae") return "trae";
   if (ownership.harnessId === "cursor-cli") return "cursor-cli";
+  if (ownership.harnessId === "cline") return "cline";
   if (ownership.harnessId === 'codex-harness') return 'codex-harness';
   return null;
 }

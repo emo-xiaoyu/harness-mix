@@ -21,6 +21,7 @@ export const KNOWN_RENDERER_AGENTS = [
   "zcode",
   "trae",
   "cursor-cli",
+  "cline",
   "codex-harness",
 ] as const;
 export const DEFAULT_RENDERER_AGENTS = [
@@ -40,6 +41,7 @@ export const DEFAULT_RENDERER_AGENTS = [
   'trae',
   'cursor-cli',
   'kiro-cli',
+  'cline',
   'codex-harness',
 ] as const;
 export type RendererAgent = (typeof KNOWN_RENDERER_AGENTS)[number];
@@ -82,6 +84,8 @@ export interface DraftComposerState {
   cursorModel?: HarnessModelRef;
   traeThinkingOptionId?: HarnessThinkingOptionId;
   cursorThinkingOptionId?: HarnessThinkingOptionId;
+  clineModel?: HarnessModelRef;
+  clineThinkingOptionId?: HarnessThinkingOptionId;
   codexHarnessModel?: HarnessModelRef;
   codexHarnessThinkingOptionId?: HarnessThinkingOptionId;
   permissionModeByAgent?: Partial<Record<ExternalRendererAgent, HarnessPermissionModeId>>;
@@ -259,6 +263,7 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "zcode" && model) state.zcodeModel = model;
     if (agent === "trae" && model) state.traeModel = model;
     if (agent === "cursor-cli" && model) state.cursorModel = model;
+    if (agent === "cline" && model) state.clineModel = model;
     if (agent === "codex-harness" && model) state.codexHarnessModel = model;
     if (agent === "pi" && thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
     else if (agent === "pi") delete state.piThinkingOptionId;
@@ -299,6 +304,9 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "cursor-cli" && thinkingOptionId) {
       state.cursorThinkingOptionId = thinkingOptionId;
     } else if (agent === "cursor-cli") delete state.cursorThinkingOptionId;
+    if (agent === "cline" && thinkingOptionId) {
+      state.clineThinkingOptionId = thinkingOptionId;
+    } else if (agent === "cline") delete state.clineThinkingOptionId;
     if (agent === 'codex-harness' && thinkingOptionId) state.codexHarnessThinkingOptionId = thinkingOptionId;
     else if (agent === 'codex-harness') delete state.codexHarnessThinkingOptionId;
     if (agent !== "codex") {
@@ -319,6 +327,7 @@ export class DraftAgentController<Composer extends object> {
         "zcode",
         "trae",
         "cursor-cli",
+        "cline",
         "codex-harness",
       ] as const) {
         const current = state.permissionModeByAgent?.[candidate];
@@ -351,6 +360,7 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "zcode") return state.zcodeModel;
     if (agent === "trae") return state.traeModel;
     if (agent === "cursor-cli") return state.cursorModel;
+    if (agent === "cline") return state.clineModel;
     if (agent === 'codex-harness') return state.codexHarnessModel;
     return undefined;
   }
@@ -374,6 +384,7 @@ export class DraftAgentController<Composer extends object> {
     if (agent === "zcode") return state.zcodeThinkingOptionId;
     if (agent === "trae") return state.traeThinkingOptionId;
     if (agent === "cursor-cli") return state.cursorThinkingOptionId;
+    if (agent === "cline") return state.clineThinkingOptionId;
     if (agent === 'codex-harness') return state.codexHarnessThinkingOptionId;
     return undefined;
   }
@@ -419,6 +430,7 @@ export class DraftAgentController<Composer extends object> {
     else if (agent === "zcode") state.zcodeModel = model;
     else if (agent === "trae") state.traeModel = model;
     else if (agent === "cursor-cli") state.cursorModel = model;
+    else if (agent === "cline") state.clineModel = model;
     else if (agent === 'codex-harness') state.codexHarnessModel = model;
     return state;
   }
@@ -499,6 +511,10 @@ export class DraftAgentController<Composer extends object> {
       state.cursorThinkingOptionId = thinkingOptionId;
     } else if (agent === "cursor-cli") {
       delete state.cursorThinkingOptionId;
+    } else if (agent === "cline" && thinkingOptionId) {
+      state.clineThinkingOptionId = thinkingOptionId;
+    } else if (agent === "cline") {
+      delete state.clineThinkingOptionId;
     } else if (agent === 'codex-harness' && thinkingOptionId) {
       state.codexHarnessThinkingOptionId = thinkingOptionId;
     } else if (agent === 'codex-harness') {

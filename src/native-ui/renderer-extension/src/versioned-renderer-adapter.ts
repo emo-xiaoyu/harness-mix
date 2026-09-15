@@ -156,6 +156,7 @@ function transportModelIdForAgent(agent: RendererAgent): string | null {
   if (agent === "zcode") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("zcode") });
   if (agent === "trae") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("trae") });
   if (agent === "cursor-cli") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("cursor-cli") });
+  if (agent === "cline") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("cline") });
   if (agent === 'codex-harness') return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse(agent) });
   return null;
 }
@@ -955,7 +956,7 @@ export function modelSelectionForAgent(
                         ...(thinkingOptionId ? { thinkingOptionId } : {}),
                         ...(permissionModeId ? { permissionModeId } : {}),
                       })
-                    : agent === "openclaw" || agent === "hermes" || agent === 'codex-harness' || agent === 'qoder' || agent === 'codebuddy' || agent === 'zcode' || agent === 'trae' || agent === 'cursor-cli'
+                    : agent === "openclaw" || agent === "hermes" || agent === 'codex-harness' || agent === 'qoder' || agent === 'codebuddy' || agent === 'zcode' || agent === 'trae' || agent === 'cursor-cli' || agent === 'cline'
                       ? encodeHarnessPluginRoute({
                           harnessId: harnessIdSchema.parse(agent),
                           ...(model ? { model } : {}),

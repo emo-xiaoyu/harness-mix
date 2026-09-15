@@ -86,6 +86,7 @@ export const RENDERER_AGENT_INSTALL_URLS: Readonly<Record<ExternalRendererAgent,
   zcode: "https://zcode.z.ai/",
   trae: "https://www.trae.ai/",
   'cursor-cli': "https://cursor.com/docs/cli/installation",
+  cline: "https://docs.cline.bot/usage/cli-overview",
   'codex-harness': 'https://developers.openai.com/codex/',
 };
 

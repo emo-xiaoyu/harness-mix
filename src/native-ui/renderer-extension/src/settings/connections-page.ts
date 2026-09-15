@@ -31,6 +31,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererA
   antigravity: { command: "npm install -g @google/antigravity-cli" },
   openclaw: { command: "npm install -g openclaw" },
   hermes: { command: "pip install hermes-agent" },
+  cline: { command: "npm install -g cline" },
   "codex-harness": { command: "npm install -g @openai/codex" },
 });
 
@@ -50,6 +51,7 @@ const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Ob
   zcode: "https://zcode.z.ai/",
   trae: "https://www.trae.ai/",
   'cursor-cli': "https://cursor.com/docs/cli/installation",
+  cline: "https://docs.cline.bot/usage/cli-overview",
   'codex-harness': 'https://developers.openai.com/codex/',
 });
 
