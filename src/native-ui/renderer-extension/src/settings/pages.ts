@@ -31,6 +31,7 @@ import { createMcpSettingsPage, createSkillsSettingsPage } from './integrations-
 import type { RendererIntegrationsClient } from '../renderer-integrations-client.js';
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
 import { createStorageSettingsPage, type RendererStorageClient } from './storage-page.js';
+import { createSkinSettingsPage } from "./skin-market.js";
 
 export type {
   RendererConnectionAgentSnapshot,
@@ -79,6 +80,7 @@ export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "skills",
   "session-import",
   "storage",
+  "skins",
   "updates",
   "about",
 ] as const;
@@ -637,6 +639,7 @@ export function createDefaultRendererSettingsPages(
     createSkillsSettingsPage(messages, getIntegrationsClient),
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
     createStorageSettingsPage(messages, getStorageClient),
+    createSkinSettingsPage(messages),
     updatesPage(messages, getUpdateClient),
     aboutPage(messages, getUpdateClient),
   ]);

@@ -1,0 +1,213 @@
+.skin-market__intro {
+  max-width: 680px;
+  margin: -8px 0 18px;
+  color: var(--settings-muted);
+  font-size: 13px;
+}
+
+.skin-safety-note {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  color: var(--settings-muted);
+  background: var(--settings-inset);
+  border: 1px solid var(--settings-border);
+  border-radius: 10px;
+}
+
+.skin-safety-note > span,
+.skin-safety-note strong {
+  display: block;
+}
+
+.skin-safety-note strong {
+  margin-bottom: 2px;
+  color: var(--settings-text);
+  font-weight: 600;
+}
+
+.skin-market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.skin-card {
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+  background: var(--settings-panel);
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+}
+
+.skin-card[data-selected] {
+  border-color: color-mix(in srgb, var(--settings-focus) 62%, var(--settings-border));
+  box-shadow: inset 3px 0 0 var(--settings-focus);
+}
+
+.skin-preview {
+  position: relative;
+  height: 128px;
+  overflow: hidden;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.skin-preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(255 255 255 / 8%), transparent 36%);
+  pointer-events: none;
+}
+
+.skin-preview__dots {
+  position: absolute;
+  top: 11px;
+  left: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 70%);
+  box-shadow: 9px 0 rgb(255 255 255 / 42%), 18px 0 rgb(255 255 255 / 24%);
+}
+
+.skin-preview__sidebar,
+.skin-preview__conversation,
+.skin-preview__composer {
+  position: absolute;
+  background: rgb(5 10 16 / 48%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  backdrop-filter: blur(8px);
+}
+
+.skin-preview__sidebar {
+  inset: 27px auto 10px 10px;
+  width: 26%;
+  border-radius: 6px;
+}
+
+.skin-preview__conversation {
+  inset: 27px 10px 42px 31%;
+  border-radius: 7px;
+}
+
+.skin-preview__conversation::before,
+.skin-preview__conversation::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 48%);
+}
+
+.skin-preview__conversation::before {
+  top: 14px;
+  width: 56%;
+}
+
+.skin-preview__conversation::after {
+  top: 27px;
+  width: 38%;
+  opacity: 0.55;
+}
+
+.skin-preview__composer {
+  right: 10px;
+  bottom: 10px;
+  left: 31%;
+  height: 24px;
+  border-radius: 8px;
+}
+
+.skin-card__body {
+  padding: 14px;
+}
+
+.skin-card__title-row,
+.skin-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skin-card__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.skin-card__current {
+  margin-left: auto;
+  color: var(--settings-success);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.skin-card__description {
+  min-height: 38px;
+  margin: 7px 0 13px;
+  color: var(--settings-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.skin-card__description a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--settings-border);
+  text-underline-offset: 3px;
+}
+
+.skin-card__description a:hover {
+  color: var(--settings-text);
+}
+
+.skin-card__palette {
+  display: flex;
+  align-items: center;
+}
+
+.skin-card__palette i {
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border: 2px solid var(--settings-panel);
+  border-radius: 50%;
+}
+
+.skin-card__palette i:first-child {
+  margin-left: 0;
+}
+
+.skin-card__apply {
+  margin-left: auto;
+}
+
+.skin-card__apply:disabled {
+  color: var(--settings-muted);
+  background: var(--settings-surface);
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .skin-market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .skin-market-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skin-card,
+  .skin-card * {
+    transition: none !important;
+  }
+}
