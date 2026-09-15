@@ -2066,4 +2066,50 @@ describe("Renderer Session Import page", () => {
 
     expect(visibleText(content)).toBe(before);
   });
+
+  it("shows sharded storage metrics and optimizes loaded task data", async () => {
+    const inspection = {
+      storageSchemaVersion: 3,
+      threadCount: 12,
+      loadedThreadCount: 2,
+      indexBytes: 2048,
+      recordBytes: 5 * 1024 * 1024,
+      recordCount: 12,
+      legacyBytes: 0,
+    };
+    const client = {
+      inspectStorage: vi.fn(async () => inspection),
+      optimizeStorage: vi.fn(async () => ({ before: inspection, after: { ...inspection, recordBytes: 4 * 1024 * 1024 } })),
+    };
+    const page = createDefaultRendererSettingsPages(
+      rendererSettingsMessages("zh-CN"),
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      undefined,
+      () => null,
+      () => client,
+    ).find(({ id }) => id === "storage");
+    if (!page) throw new Error("Storage page is not registered");
+    const document = new FakeDocument();
+    const content = document.createElement("main");
+    const scope = new RendererSettingsPageScope();
+    page.mount({
+      content: content as unknown as HTMLElement,
+      signal: scope.signal,
+      runLatest: (operation, handlers) => scope.runLatest(operation, handlers),
+    });
+
+    await vi.waitFor(() => expect(visibleText(content)).toContain("12 个任务"));
+    expect(visibleText(content)).toContain("Schema v3");
+    expect(visibleText(content)).toContain("2.0 KB");
+    expect(visibleText(content)).toContain("5.0 MB");
+    const optimize = descendants(content).find((element) => element.className === "settings-command-button");
+    if (!optimize) throw new Error("Optimize storage action is not rendered");
+    optimize.dispatch("click");
+    await vi.waitFor(() => expect(client.optimizeStorage).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(visibleText(content)).toContain("4.0 MB"));
+    scope.dispose();
+  });
 });

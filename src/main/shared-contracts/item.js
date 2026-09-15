@@ -14,6 +14,7 @@ const ITEM_TYPES = [
   'usage',
   'notice',
   'context_compaction',
+  'verification_report',
 ];
 
 // started：刚建立；streaming：持续接收 delta；completed/cancelled/error：终态。

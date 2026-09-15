@@ -26,7 +26,7 @@ registry.buildAdapters = savedBuilder;
   assert.equal(restored.harnessChain[0].nativeSessionId, 'previous-native');
   assert.equal(restored.pendingHandoff.fromHarnessId, 'codebuddy');
   assert.equal(runtime.resolveHarnessId('Workbuddy'), 'codebuddy');
-  assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'threads.json'), 'utf8'))[0].harnessId, 'codebuddy');
+  assert.equal((await runtime.store.load())[0].harnessId, 'codebuddy');
   const history = require('../src/main/adapters/codebuddy-history');
   const savedRoot = process.env.CODEBUDDY_CONFIG_DIR;
   process.env.CODEBUDDY_CONFIG_DIR = path.join(directory, 'native-config');

@@ -118,6 +118,16 @@ async function main() {
     assert.equal(started.thread.model, 'codexhost/pi-native');
     const { includesThread } = require('../src/main/native/thread-list');
     const storedThread = runtime.threads.find(t => t.id === threadId);
+    const hostCommands = await bridge.request('codexhost/thread/commands/inspect', { threadId });
+    assert.ok(hostCommands.commands.some(command => command.id === 'verify'));
+    assert.ok(hostCommands.commands.some(command => command.id === 'gate'));
+    const gate = await bridge.request('codexhost/thread/verification/configure', { threadId, policy: { mode: 'required', checks: { cleanWorkingTree: false } } });
+    assert.equal(gate.policy.mode, 'required');
+    assert.equal(gate.satisfied, false);
+    assert.equal((await bridge.request('codexhost/thread/verification/get', { threadId })).policy.mode, 'required');
+    const storage = await bridge.request('codexhost/storage/inspect');
+    assert.equal(storage.schemaVersion, 2);
+    assert.ok(storage.threadCount >= 1);
     assert.equal(includesThread(storedThread, { sectionId: section.id }), false);
     await bridge.request('thread/section/move', { threadId, sectionId: section.id });
     assert.deepEqual((await bridge.request('thread/read', { threadId })).thread.section, section);
@@ -169,7 +179,7 @@ async function main() {
     assert.equal(events.filter(e => e.method === 'turn/completed' && e.params.threadId === threadId).length, 1);
     const history = await bridge.request('thread/read', { threadId });
     assert.equal(history.thread.turns[0].status, 'completed');
-    const projectedChange = history.thread.turns[0].items.find(i => i.type === 'fileChange')?.changes?.[0];
+    const projectedChange = history.thread.turns[0].items.flatMap(i => i.type === 'fileChange' ? i.changes : []).find(change => change.path === 'a.txt');
     assert.equal(projectedChange?.kind.type, 'add', 'fileChange item projects the added kind');
     assert.ok(projectedChange?.diff.includes('diff --git a/a.txt b/a.txt') && projectedChange.diff.includes('@@ -0,0 +1,1 @@'), 'fileChange item carries a full unified diff');
     await bridge.request('thread/name/set', { threadId, name: 'Local Core' });

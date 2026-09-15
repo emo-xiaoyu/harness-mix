@@ -30,6 +30,7 @@ import { createReleaseNotesElement } from "./release-notes.js";
 import { createMcpSettingsPage, createSkillsSettingsPage } from './integrations-page.js';
 import type { RendererIntegrationsClient } from '../renderer-integrations-client.js';
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
+import { createStorageSettingsPage, type RendererStorageClient } from './storage-page.js';
 
 export type {
   RendererConnectionAgentSnapshot,
@@ -77,6 +78,7 @@ export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "mcp",
   "skills",
   "session-import",
+  "storage",
   "updates",
   "about",
 ] as const;
@@ -626,6 +628,7 @@ export function createDefaultRendererSettingsPages(
   openImportedThread: RendererImportedThreadOpener = () =>
     Promise.reject(new Error("Imported Thread navigation is unavailable")),
   getIntegrationsClient: () => RendererIntegrationsClient | null = () => null,
+  getStorageClient: () => RendererStorageClient | null = () => null,
 ): readonly RendererSettingsPageDefinition[] {
   return Object.freeze([
     createConnectionsSettingsPage(messages, getDiagnostics),
@@ -633,6 +636,7 @@ export function createDefaultRendererSettingsPages(
     createMcpSettingsPage(messages, getIntegrationsClient),
     createSkillsSettingsPage(messages, getIntegrationsClient),
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
+    createStorageSettingsPage(messages, getStorageClient),
     updatesPage(messages, getUpdateClient),
     aboutPage(messages, getUpdateClient),
   ]);
@@ -646,6 +650,7 @@ export function createDefaultRendererSettingsRegistry(
   getSessionImportClient: () => RendererSessionImportClient | null = () => null,
   openImportedThread?: RendererImportedThreadOpener,
   getIntegrationsClient?: () => RendererIntegrationsClient | null,
+  getStorageClient?: () => RendererStorageClient | null,
 ): RendererSettingsPageRegistry {
   return createRendererSettingsPageRegistry(
     createDefaultRendererSettingsPages(
@@ -656,8 +661,10 @@ export function createDefaultRendererSettingsRegistry(
       getSessionImportClient,
       openImportedThread,
       getIntegrationsClient,
+      getStorageClient,
     ),
   );
 }
 
 export type { RendererCodexAccountClient } from "./accounts-page.js";
+export type { RendererStorageClient, RendererStorageInspection } from './storage-page.js';

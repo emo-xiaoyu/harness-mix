@@ -3,9 +3,14 @@ const path = require("node:path");
 
 /** 线程记录的 JSON 持久化：折叠排队保存 + tmp 文件原子替换，避免中间状态内存堆积 */
 class Store {
-  constructor(directory, filename = "threads.json") {
+  constructor(directory, filename = "threads.json", options = {}) {
     this.directory = directory;
     this.file = path.join(directory, filename);
+    this.schemaVersion = options.schemaVersion ?? null;
+    this.serialize = options.serialize ?? ((value) => value);
+    this.deserialize = options.deserialize ?? ((value) => value);
+    this.backup = options.backup === true;
+    this.backupPending = false;
     this.writing = false;
     this.pendingData = null;
     this.pendingResolvers = [];
@@ -21,9 +26,14 @@ class Store {
     }
     await fs.mkdir(this.directory, { recursive: true });
     try {
-      const threads = JSON.parse(await fs.readFile(this.file, "utf8"));
+      const parsed = JSON.parse(await fs.readFile(this.file, "utf8"));
+      if (!Array.isArray(parsed) && this.schemaVersion != null && parsed?.schemaVersion !== this.schemaVersion) {
+        throw new Error(`Unsupported thread store schema: ${parsed?.schemaVersion ?? 'missing'}; original file preserved`);
+      }
+      const threads = Array.isArray(parsed) ? parsed : parsed?.threads;
       if (!Array.isArray(threads)) throw new Error('Invalid thread store; original file preserved');
-      return threads;
+      if (this.backup && Array.isArray(parsed)) this.backupPending = true;
+      return threads.map((thread) => this.deserialize(thread));
     } catch (error) {
       if (error.code === 'ENOENT') return [];
       throw error;
@@ -31,7 +41,9 @@ class Store {
   }
 
   save(threads) {
-    this.pendingData = threads;
+    // Capture the serializable projection now. Callers may release heavyweight
+    // in-memory checkpoint fields immediately after save() returns.
+    this.pendingData = threads.map((value) => this.serialize(value));
     const promise = new Promise((resolve, reject) => {
       this.pendingResolvers.push(resolve);
       this.pendingRejecters.push(reject);
@@ -52,9 +64,17 @@ class Store {
       this.pendingRejecters = [];
       const tmpFile = `${this.file}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
       try {
-        const contents = JSON.stringify(data, null, 2);
+        const payload = this.schemaVersion == null
+          ? data
+          : { schemaVersion: this.schemaVersion, savedAt: Date.now(), threads: data };
+        const contents = JSON.stringify(payload, null, 2);
         await fs.mkdir(this.directory, { recursive: true });
         await fs.writeFile(tmpFile, contents);
+        if (this.backupPending) {
+          await fs.copyFile(this.file, `${this.file}.bak`).catch((error) => {
+            if (error.code !== 'ENOENT') throw error;
+          });
+        }
         for (let attempt = 0; ; attempt++) {
           try { await fs.rename(tmpFile, this.file); break; }
           catch (error) {
@@ -62,6 +82,7 @@ class Store {
             await new Promise(resolve => setTimeout(resolve, 50));
           }
         }
+        this.backupPending = false;
         for (const r of resolvers) r();
       } catch (error) {
         await fs.unlink(tmpFile).catch(() => {});

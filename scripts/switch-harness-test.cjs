@@ -154,7 +154,7 @@ async function main() {
 
     // 8) 持久化：threads.json 里切换链完整（含原生会话引用，供重启后惰性恢复）
     await rt.store.save(rt.threads);
-    const persisted = JSON.parse(await fs.readFile(path.join(root, 'data', 'threads.json'), 'utf8')).find(t => t.id === thread.id);
+    const persisted = (await rt.store.load()).find(t => t.id === thread.id);
     assert.equal(persisted.harnessId, 'a');
     assert.deepEqual(persisted.harnessChain.map(e => e.harnessId), ['a', 'b']);
     assert.equal(persisted.harnessChain[0].nativeSessionId, aNativeId);

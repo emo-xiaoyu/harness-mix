@@ -12,13 +12,20 @@ app.whenReady().then(async () => {
   const icons = getAllIconsDictionary();
   icons.harnesses['claude-code'] = icons.harnesses.claude;
   icons.harnesses['deepseek-harness'] = icons.harnesses.dsh;
-  const bundle = await esbuild.build({ stdin: { contents: `export { createRendererAgentIcon } from './src/native-ui/renderer-extension/src/renderer-agent-icon.ts'; export { mountRendererAgentPicker, renderRendererAgentPicker } from './src/native-ui/renderer-extension/src/renderer-agent-picker.ts'; export { mountRendererModelPicker, renderRendererModelPicker } from './src/native-ui/renderer-extension/src/renderer-model-picker.ts'; export { mountRendererHarnessHandoff } from './src/native-ui/renderer-extension/src/renderer-harness-handoff.ts'; export { restoredThreadOwnership } from './src/native-ui/renderer-extension/src/renderer-binding-probe.ts'; export { installRendererSidebarAgentIcons } from './src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'; export { createAccountsSettingsPage } from './src/native-ui/renderer-extension/src/settings/accounts-page.ts'; export { aboutPage } from './src/native-ui/renderer-extension/src/settings/pages.ts'; export { rendererSettingsMessages } from './src/native-ui/renderer-extension/src/settings/localization.ts'; export { installRendererSettingsShell } from './src/native-ui/renderer-extension/src/settings/shell.ts';`, resolveDir: process.cwd() }, bundle: true, alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, platform: 'browser', format: 'iife', globalName: 'NativeUI', write: false, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.css': 'text' }, logLevel: 'silent' });
+  const bundle = await esbuild.build({ stdin: { contents: `export { createRendererAgentIcon } from './src/native-ui/renderer-extension/src/renderer-agent-icon.ts'; export { mountRendererAgentPicker, renderRendererAgentPicker } from './src/native-ui/renderer-extension/src/renderer-agent-picker.ts'; export { mountRendererModelPicker, renderRendererModelPicker } from './src/native-ui/renderer-extension/src/renderer-model-picker.ts'; export { mountRendererHarnessHandoff } from './src/native-ui/renderer-extension/src/renderer-harness-handoff.ts'; export { restoredThreadOwnership } from './src/native-ui/renderer-extension/src/renderer-binding-probe.ts'; export { installRendererSidebarAgentIcons } from './src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'; export { installRendererSettingsLifecycle } from './src/native-ui/renderer-extension/src/harness-mix-settings.ts'; export { createAccountsSettingsPage } from './src/native-ui/renderer-extension/src/settings/accounts-page.ts'; export { createStorageSettingsPage } from './src/native-ui/renderer-extension/src/settings/storage-page.ts'; export { aboutPage } from './src/native-ui/renderer-extension/src/settings/pages.ts'; export { rendererSettingsMessages } from './src/native-ui/renderer-extension/src/settings/localization.ts'; export { installRendererSettingsShell } from './src/native-ui/renderer-extension/src/settings/shell.ts';`, resolveDir: process.cwd() }, bundle: true, alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, platform: 'browser', format: 'iife', globalName: 'NativeUI', write: false, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.css': 'text' }, logLevel: 'silent' });
   const win = new BrowserWindow({ show: false, width: 900, height: 650, webPreferences: { contextIsolation: true, sandbox: true, offscreen: true, backgroundThrottling: false } });
   await win.loadURL('data:text/html,<html><head><style>body{background:%2317191d;color:white;font:16px Arial;padding:40px}button{background:%23272a30;color:white;border:0;padding:12px}img{vertical-align:middle}main{display:flex;gap:25px;margin-bottom:40px}</style></head><body><h2>Harness Mix native components</h2><main></main></body></html>');
   await win.webContents.executeJavaScript(`globalThis.__HARNESS_MIX_ICONS__=${JSON.stringify(icons)};globalThis.__HARNESS_MIX_MODEL_FAMILIES__=${JSON.stringify(MODEL_FAMILIES.map(f => ({ id: f.id, pattern: f.regex.source })))};${bundle.outputFiles[0].text}`);
+  const liveSettingsPages = await win.webContents.executeJavaScript(`(() => {
+    const lifecycle = NativeUI.installRendererSettingsLifecycle(window, {});
+    const pageIds = globalThis.__codexhostSettingsShellV1.registry.pages.map(page => page.id);
+    lifecycle.dispose();
+    return pageIds;
+  })()`);
+  assert.deepEqual(liveSettingsPages, ['connections', 'accounts', 'mcp', 'skills', 'session-import', 'storage', 'updates', 'about']);
   const { NativeProtocol } = require('../src/main/native/protocol');
   const nativeThreads = ['pi', 'claude', 'dsh', 'antigravity'].map((harnessId, index) => ({ id: 'sidebar-' + index, harnessId, model: { id: 'model-' + index, provider: 'native' }, options: {} }));
-  const protocol = new NativeProtocol({ threads: nativeThreads, subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}) }, () => {});
+  const protocol = new NativeProtocol({ threads: nativeThreads, getThread: id => nativeThreads.find(thread => thread.id === id), subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}) }, () => {});
   const inspections = await Promise.all(nativeThreads.map(thread => protocol.request('codexhost/thread/inspect', { threadId: thread.id })));
   await win.webContents.executeJavaScript(`globalThis.testInspections=${JSON.stringify(inspections)}`);
   const result = await win.webContents.executeJavaScript(`(async () => {
@@ -126,6 +133,10 @@ app.whenReady().then(async () => {
     };
     const shell = NativeUI.installRendererSettingsShell([
       NativeUI.createAccountsSettingsPage(messages, () => client),
+      NativeUI.createStorageSettingsPage(messages, () => ({
+        inspectStorage:async () => ({storageSchemaVersion:3,threadCount:12,loadedThreadCount:2,indexBytes:2048,recordBytes:5242880,recordCount:12,legacyBytes:0}),
+        optimizeStorage:async () => ({before:{storageSchemaVersion:3,threadCount:12,loadedThreadCount:2,indexBytes:2048,recordBytes:5242880,recordCount:12,legacyBytes:0},after:{storageSchemaVersion:3,threadCount:12,loadedThreadCount:2,indexBytes:2048,recordBytes:4194304,recordCount:12,legacyBytes:0}}),
+      })),
       NativeUI.aboutPage(messages, () => ({ readCurrentVersion:async () => ({version:'0.1.4'}), checkUpdate:async () => { throw new Error('not expected'); } })),
     ], messages, document);
     shell.openSettings(undefined, 'accounts');
@@ -135,8 +146,16 @@ app.whenReady().then(async () => {
   })()`);
   assert.match(settingsResult.text, /native.*example\.com/s);
   assert.match(settingsResult.text, /Plus/);
-  assert.equal(settingsResult.addHidden, true);
+  assert.equal(settingsResult.addHidden, false, 'multi-account Add Account action remains visible');
   fs.writeFileSync(path.join(out, 'settings-account.png'), (await win.webContents.capturePage()).toPNG());
+  const storageText = await win.webContents.executeJavaScript(`(async () => {
+    globalThis.__codexhostSettingsShellV1.openSettings(undefined, 'storage');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return globalThis.__codexhostSettingsShellV1.root.shadowRoot.textContent;
+  })()`);
+  assert.match(storageText, /Schema v3/);
+  assert.match(storageText, /12 个任务/);
+  fs.writeFileSync(path.join(out, 'settings-storage.png'), (await win.webContents.capturePage()).toPNG());
   const aboutText = await win.webContents.executeJavaScript(`(async () => {
     globalThis.__codexhostSettingsShellV1.openSettings(undefined, 'about');
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -145,6 +164,6 @@ app.whenReady().then(async () => {
   assert.match(aboutText, /v0\.1\.4/);
   fs.writeFileSync(path.join(out, 'settings-about.png'), (await win.webContents.capturePage()).toPNG());
   win.destroy();
-  console.log('PASS: real Electron native picker, graphical Harness handoff, official Account/Usage, live About version and all project Harness/model SVGs load');
+  console.log('PASS: real Electron native picker, graphical Harness handoff, official Account/Usage, sharded Storage metrics, live About version and all project Harness/model SVGs load');
   app.quit();
 }).catch(error => { console.error(error); app.exit(1); });

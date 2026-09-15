@@ -42,6 +42,7 @@ function conversationSnapshot(thread) {
 }
 
 function evidenceKind(item) {
+  if (item.type === 'verification_report') return 'verification';
   const title = String(item.title || '').toLowerCase();
   if (/test|vitest|jest|pytest|测试/.test(title)) return 'test';
   if (/build|compile|tsc|构建|编译/.test(title)) return 'build';
@@ -51,7 +52,13 @@ function evidenceKind(item) {
 
 function evidenceSnapshot(thread) {
   const items = (thread.messages || []).flatMap(message => message.coreItems || []);
-  return items.filter(item => item.type === 'tool_call' && item.state !== 'running').slice(-LIMITS.evidence).map(item => {
+  return items.filter(item => (item.type === 'tool_call' && item.state !== 'running') || item.type === 'verification_report').slice(-LIMITS.evidence).map(item => {
+    if (item.type === 'verification_report') {
+      const report = redact(item.report ?? {});
+      const content = { kind: 'verification', title: 'Verification gate', state: report.status ?? 'unknown', inputExcerpt: report.mode ?? '', outputExcerpt: JSON.stringify(report).slice(0, LIMITS.excerpt), createdAt: item.updatedAt };
+      const contentDigest = digest(content);
+      return { evidenceId: `evidence_${contentDigest.slice(0, 24)}`, ...content, contentDigest };
+    }
     const content = {
       kind: evidenceKind(item),
       sourceHarnessId: thread.harnessId,

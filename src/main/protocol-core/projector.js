@@ -88,6 +88,23 @@ class Projector {
         const thread = this.threads.update(event.threadId, { usage: event.payload }, event.timestamp);
         return { item, thread };
       }
+      case 'verification.updated': {
+        const turn = this.turns.get(event.turnId);
+        if (!turn) return {};
+        const itemId = event.itemId ?? `verification_${turn.id}`;
+        let item = this.items.get(itemId);
+        if (!item) {
+          item = createItem({ id: itemId, threadId: event.threadId, turnId: turn.id,
+            type: 'verification_report', status: 'completed', report: structuredClone(event.payload.report) }, event.timestamp);
+          this.items.set(item.id, item);
+          if (!turn.itemIds.includes(item.id)) turn.itemIds.push(item.id);
+        } else {
+          item.report = structuredClone(event.payload.report);
+          item.status = 'completed';
+          item.updatedAt = event.timestamp;
+        }
+        return { item };
+      }
       default:
         return {};
     }
