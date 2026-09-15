@@ -13,6 +13,7 @@ function nativeCommand(id, argv) {
     'kiro-cli': ['kiro-cli', 'HARNESS_MIX_KIRO_EXECUTABLE', 'https://kiro.dev/docs/cli/'],
     qoder: ['qodercli', 'HARNESS_MIX_QODER_EXECUTABLE', 'https://docs.qoder.com/cli/acp'],
     trae: ['traecli', 'HARNESS_MIX_TRAE_EXECUTABLE', 'https://github.com/bytedance/trae-agent'],
+    cline: ['cline', 'HARNESS_MIX_CLINE_EXECUTABLE', 'https://docs.cline.bot/usage/cli-overview'],
     zcode: ['zcode-acp-server', 'HARNESS_MIX_ZCODE_ACP_EXECUTABLE', 'https://zcode.z.ai/'],
   };
   if (!specs[id]) throw new Error(`Unknown native CLI: ${id}`);

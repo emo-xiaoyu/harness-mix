@@ -57,6 +57,24 @@ if (process.argv.includes('--fixture')) {
         assert.deepEqual(nativeCommand(module.manifest.id, ['acp']), { command: process.execPath, args: ['acp'] });
       } finally { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; }
     }
+    // Cline：官方 `cline --acp`；诚实能力声明（无 plan/原生 diff/thinking 档/独立提问），
+    // 保留 resume 与 plan/act 权限模式；命令只认 cline 与 HARNESS_MIX_CLINE_EXECUTABLE。
+    {
+      const module = require('../src/main/adapters/cline');
+      const caps = module.manifest.capabilities;
+      assert.deepEqual(module.manifest.integrations.skills, { global: ['.cline/skills'], project: ['.cline/skills'] });
+      for (const [capability, expected] of [['fork', false], ['questions', false], ['thinkingLevels', false], ['plan', false], ['nativeDiff', false], ['usage', false], ['resume', true], ['permissionModes', true], ['models', true], ['attachments', true], ['approvals', true]])
+        assert.equal(caps[capability], expected, `cline ${capability}`);
+      const previous = process.env.HARNESS_MIX_CLINE_EXECUTABLE;
+      try {
+        delete process.env.HARNESS_MIX_CLINE_EXECUTABLE;
+        process.env.HARNESS_MIX_CLINE_EXECUTABLE = __filename + '.missing';
+        assert.throws(() => nativeCommand('cline', ['--acp']), /未安装/);
+        assert.equal((await module.create().inspect()).available, false);
+        process.env.HARNESS_MIX_CLINE_EXECUTABLE = process.execPath;
+        assert.deepEqual(nativeCommand('cline', ['--acp']), { command: process.execPath, args: ['--acp'] });
+      } finally { if (previous === undefined) delete process.env.HARNESS_MIX_CLINE_EXECUTABLE; else process.env.HARNESS_MIX_CLINE_EXECUTABLE = previous; }
+    }
     const adapter = acpAdapter({ id: 'fixture', name: 'Fixture', bin: () => ({ command: process.execPath, args: [__filename, '--fixture'] }), args: [], requestTimeoutMs: 5000 }).create();
     const events = [];
     let session;

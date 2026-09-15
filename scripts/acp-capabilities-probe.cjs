@@ -20,6 +20,7 @@ const TARGETS = {
   },
   zcode: () => cliSpawn(process.env.HARNESS_MIX_ZCODE_EXECUTABLE || 'zcode', ['acp']),
   trae: () => cliSpawn(process.env.HARNESS_MIX_TRAE_EXECUTABLE || 'traecli', ['acp', 'serve']),
+  cline: () => cliSpawn(process.env.HARNESS_MIX_CLINE_EXECUTABLE || 'cline', ['--acp']),
   hermes: () => ({ command: process.env.HARNESS_MIX_HERMES_EXECUTABLE || 'hermes.exe', args: ['acp'] }),
 };
 
