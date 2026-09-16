@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11 — 2026-09-16
+
+- Aligned all six `@harness-mix/native-*` runtime packages at 0.1.11 with the CLI; native binaries are unchanged from 0.1.9.
+- Supersedes 0.1.10, whose manifest kept native pins at 0.1.9 (functionally identical binaries).
+
 ## 0.1.10 — 2026-09-16
 
 - Added a community desktop pet marketplace with browsing, installation, and localization in the native settings shell.
