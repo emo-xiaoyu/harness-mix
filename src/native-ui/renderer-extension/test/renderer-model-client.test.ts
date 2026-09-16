@@ -315,6 +315,7 @@ describe("Renderer fixed Model request client", () => {
       "messageThread",
       "openHarnessWebUi",
       "optimizeStorage",
+      "petsClient",
       "readCurrentVersion",
       "readUpdateStatus",
       "refreshCodexAccounts",

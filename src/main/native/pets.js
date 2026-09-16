@@ -75,6 +75,107 @@ function assetEntries(header) {
   return files && typeof files === 'object' ? files : {};
 }
 
+const CURATED_COMMUNITY_PETS = [
+  {
+    id: 'komi-shouko-pixel',
+    displayName: '古见硝子·像素Q版',
+    description: 'Pixel chibi Komi Shouko with long purple-black hair, a navy school uniform and shy gestures. Unofficial fan art.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789522011437/komi-shouko-pixel/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789522011437/komi-shouko-pixel/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789522011437/komi-shouko-pixel/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'rush',
+    displayName: 'Rush',
+    description: 'A confident training companion who meets every task with energy, focus, and a friendly smile.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789517766302/rush/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789517766302/rush/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789517766302/rush/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'itasca',
+    displayName: 'Itasca',
+    description: 'A cute cat with a larger-than-life personality who loves nothing more than attention, going outside, and his little toy worm.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789484963415/itasca/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789484963415/itasca/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789484963415/itasca/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'milk-mochi-soft',
+    displayName: 'Milk Mochi (牛奶麻薯)',
+    description: '말랑하게 걷고, 키보드로 일하고, 서류를 읽는 작은 우유떡 친구.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789458022939/milk-mochi-soft/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789458022939/milk-mochi-soft/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789458022939/milk-mochi-soft/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'yuanyuan',
+    displayName: 'Yuanyuan (圆圆)',
+    description: 'A black-and-white Jack Russell puppy with a red collar.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789465085706/yuanyuan/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789465085706/yuanyuan/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789465085706/yuanyuan/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'jaehyun-next-door',
+    displayName: 'Jaehyun Next Door',
+    description: 'An unofficial, fan-made desktop companion inspired by BOYNEXTDOOR Myung Jaehyun.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789469671052/jaehyun-next-door/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789469671052/jaehyun-next-door/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789469671052/jaehyun-next-door/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'iu-beside-you',
+    displayName: 'IU Beside You',
+    description: 'An unofficial, fan-made desktop companion inspired by IU.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789469620585/iu-beside-you/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789469620585/iu-beside-you/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789469620585/iu-beside-you/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'haaap',
+    displayName: 'Haaap',
+    description: '작업 중 바람을 계속 빨아들이는 분홍색 펫. 일반 동작 9개.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1789453516001/haaap/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1789453516001/haaap/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1789453516001/haaap/poster.webp',
+    source: 'community',
+  },
+];
+
+function getProxyDispatcher(env = process.env) {
+  const proxy = env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY;
+  if (!proxy) return undefined;
+  try {
+    const { ProxyAgent } = require('undici');
+    return new ProxyAgent(proxy);
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchWithProxy(url, options = {}, env = process.env) {
+  const dispatcher = getProxyDispatcher(env);
+  const opts = { ...options };
+  if (dispatcher) opts.dispatcher = dispatcher;
+  return fetch(url, opts);
+}
+
 function createPetMarket({ env = process.env } = {}) {
   const headerCache = new Map(); // asarPath -> { mtimeMs, header }
   const previewCache = new Map(); // cacheKey -> { mime, dataBase64 }
@@ -130,6 +231,7 @@ function createPetMarket({ env = process.env } = {}) {
         displayName: typeof meta.displayName === 'string' && meta.displayName ? meta.displayName : titleCase(entry.name),
         description: typeof meta.description === 'string' ? meta.description : '',
         source: 'installed',
+        spriteVersionNumber: meta.spriteVersionNumber || 1,
         spritesheet: { name: spritesheet },
       });
     }
@@ -145,6 +247,7 @@ function createPetMarket({ env = process.env } = {}) {
       const data = [
         ...installed,
         ...official.pets.filter(pet => !installedIds.has(pet.id)).map(pet => ({ ...pet, installed: false })),
+        ...CURATED_COMMUNITY_PETS.filter(pet => !installedIds.has(pet.id) && !official.pets.some(o => o.id === pet.id)).map(pet => ({ ...pet, installed: false })),
       ];
       for (const pet of data) pet.installed = pet.installed ?? installedIds.has(pet.id);
       return {
@@ -152,6 +255,47 @@ function createPetMarket({ env = process.env } = {}) {
         officialAvailable: official.asarPath !== null,
         petsDir: petsDirectory(env),
       };
+    },
+
+    async community({ page = 1, pageSize = 24, sort = 'trending', search = '' } = {}) {
+      const installed = installedPets();
+      const installedIds = new Set(installed.map(p => p.id));
+      const queryParams = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        sort: String(sort || 'trending'),
+      });
+      if (search && String(search).trim()) queryParams.set('search', String(search).trim());
+      const apiUrl = `https://codex-pets.net/api/pets?${queryParams.toString()}`;
+      try {
+        const res = await fetchWithProxy(apiUrl, { signal: AbortSignal.timeout(8000) }, env);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const pets = (json.pets || []).map(p => ({
+          id: p.id,
+          displayName: p.displayName || p.id,
+          description: p.description || '',
+          source: 'community',
+          spriteVersionNumber: p.spriteVersionNumber || 1,
+          spritesheetUrl: p.spritesheetUrl,
+          previewUrl: p.previewUrl,
+          posterUrl: p.posterUrl,
+          downloadUrl: p.downloadUrl,
+          installed: installedIds.has(p.id),
+        }));
+        return { data: pets, total: json.total || pets.length, source: 'online' };
+      } catch {
+        let filtered = CURATED_COMMUNITY_PETS;
+        if (search && String(search).trim()) {
+          const q = String(search).trim().toLowerCase();
+          filtered = filtered.filter(p => p.id.toLowerCase().includes(q) || p.displayName.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+        }
+        return {
+          data: filtered.map(p => ({ ...p, installed: installedIds.has(p.id) })),
+          total: filtered.length,
+          source: 'curated-fallback',
+        };
+      }
     },
 
     preview({ id } = {}) {
@@ -184,34 +328,51 @@ function createPetMarket({ env = process.env } = {}) {
       return result;
     },
 
-    install({ id } = {}) {
+    async install({ id, displayName, description, spritesheetUrl, spriteVersionNumber } = {}) {
       if (!PET_ID_PATTERN.test(String(id || ''))) throw new Error('Invalid pet id');
-      const official = officialPets();
-      const pet = official.pets.find(entry => entry.id === id);
-      if (!pet) throw new Error(official.asarPath ? `桌宠 ${id} 不在官方预载目录中` : '未找到 Codex Desktop 安装，无法获取官方桌宠');
       const targetDir = path.join(petsDirectory(env), id);
       const petJsonPath = path.join(targetDir, 'pet.json');
       const spritesheetPath = path.join(targetDir, 'spritesheet.webp');
       if (fs.existsSync(petJsonPath) && fs.existsSync(spritesheetPath)) {
         return { id, path: targetDir, installed: true, alreadyInstalled: true };
       }
-      const fd = fs.openSync(official.asarPath, 'r');
+
+      const curated = CURATED_COMMUNITY_PETS.find(p => p.id === id);
+      const targetUrl = spritesheetUrl || curated?.spritesheetUrl;
+      const targetName = displayName || curated?.displayName || titleCase(id);
+      const targetDesc = description !== undefined ? description : (curated?.description || '');
+      const targetVer = spriteVersionNumber || curated?.spriteVersionNumber || 1;
+
       let buffer;
-      try {
-        buffer = Buffer.alloc(pet.spritesheet.size);
-        const position = official.header.blobBase + Number(pet.spritesheet.offset);
-        if (fs.readSync(fd, buffer, 0, pet.spritesheet.size, position) !== pet.spritesheet.size) {
-          throw new Error('Spritesheet truncated');
+      if (targetUrl) {
+        const res = await fetchWithProxy(targetUrl, { signal: AbortSignal.timeout(30000) }, env);
+        if (!res.ok) throw new Error(`Download failed (${res.status})`);
+        const arrayBuf = await res.arrayBuffer();
+        buffer = Buffer.from(arrayBuf);
+      } else {
+        const official = officialPets();
+        const pet = official.pets.find(entry => entry.id === id);
+        if (!pet) throw new Error(official.asarPath ? `桌宠 ${id} 不在官方预载目录中` : '未找到 Codex Desktop 安装，无法获取官方桌宠');
+        const fd = fs.openSync(official.asarPath, 'r');
+        try {
+          buffer = Buffer.alloc(pet.spritesheet.size);
+          const position = official.header.blobBase + Number(pet.spritesheet.offset);
+          if (fs.readSync(fd, buffer, 0, pet.spritesheet.size, position) !== pet.spritesheet.size) {
+            throw new Error('Spritesheet truncated');
+          }
+        } finally {
+          fs.closeSync(fd);
         }
-      } finally {
-        fs.closeSync(fd);
       }
+
+      if (buffer.length > MAX_SPRITESHEET_BYTES) throw new Error('Spritesheet too large');
       fs.mkdirSync(targetDir, { recursive: true });
       fs.writeFileSync(spritesheetPath, buffer);
       fs.writeFileSync(petJsonPath, `${JSON.stringify({
         id,
-        displayName: pet.displayName,
-        description: pet.description,
+        displayName: targetName,
+        description: targetDesc,
+        spriteVersionNumber: targetVer,
         spritesheetPath: 'spritesheet.webp',
       }, null, 2)}\n`);
       previewCache.delete(id);
@@ -231,4 +392,4 @@ function createPetMarket({ env = process.env } = {}) {
   };
 }
 
-module.exports = { createPetMarket, petsDirectory, resolveAsarPath, readAsarHeader };
+module.exports = { createPetMarket, petsDirectory, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS };

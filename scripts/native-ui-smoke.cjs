@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     lifecycle.dispose();
     return pageIds;
   })()`);
-  assert.deepEqual(liveSettingsPages, ['connections', 'accounts', 'mcp', 'skills', 'session-import', 'storage', 'skins', 'updates', 'about']);
+  assert.deepEqual(liveSettingsPages, ['connections', 'accounts', 'mcp', 'skills', 'session-import', 'storage', 'skins', 'pets', 'updates', 'about']);
   const { NativeProtocol } = require('../src/main/native/protocol');
   const nativeThreads = ['pi', 'claude', 'dsh', 'antigravity'].map((harnessId, index) => ({ id: 'sidebar-' + index, harnessId, model: { id: 'model-' + index, provider: 'native' }, options: {} }));
   const protocol = new NativeProtocol({ threads: nativeThreads, getThread: id => nativeThreads.find(thread => thread.id === id), subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}) }, () => {});

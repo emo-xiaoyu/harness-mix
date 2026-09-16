@@ -105,6 +105,10 @@ import {
   createRendererSessionImportClient,
   type RendererSessionImportClient,
 } from "./renderer-session-import-client.js";
+import {
+  createRendererPetsClient,
+  type RendererPetsClient,
+} from "./settings/pets-client.js";
 
 export const HARNESS_INSPECT_METHOD = "codexhost/harness/inspect";
 export const HARNESS_INSTALL_METHOD = "codexhost/harness/install";
@@ -174,6 +178,7 @@ function notificationTarget(manager: RequestManagerCandidate): RequestManagerCan
 }
 
 export interface RendererModelClient extends Partial<RendererSessionImportClient>, Partial<RendererIntegrationsClient> {
+  petsClient?: RendererPetsClient;
   inspectStorage?(): Promise<import('./settings/storage-page.js').RendererStorageInspection>;
   optimizeStorage?(): Promise<{ before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }>;
   listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>>;
@@ -343,6 +348,7 @@ export function createRendererModelClient(
     ...createRendererSessionImportClient(async (method, params) =>
       manager.sendRequest(method, params),
     ),
+    petsClient: createRendererPetsClient((method, params) => manager.sendRequest(method, params)),
     async forkThread(input: ExternalThreadForkParams): Promise<ExternalThreadForkResult> {
       const params = externalThreadForkParamsSchema.parse(input);
       const result = await manager.sendRequest(THREAD_FORK_METHOD, params);

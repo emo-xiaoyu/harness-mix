@@ -796,6 +796,10 @@ export function installRendererBindingProbe(
         importHarnessSession: (input) => importSession(input),
       };
     },
+    getPetClient: () => {
+      const client = modelClientForHost("local");
+      return client?.petsClient ?? null;
+    },
     openImportedThread: (threadId, signal) =>
       openRendererThread(threadId, { hostId: "local", signal }),
     onLocaleChange() {

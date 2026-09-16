@@ -28,6 +28,7 @@ describe("Renderer settings foundation", () => {
       "Session Import",
       "Storage & verification",
       "Skins",
+      "Pets",
       "Updates",
       "About",
     ]);
@@ -39,6 +40,7 @@ describe("Renderer settings foundation", () => {
       "session-import",
       "storage",
       "palette",
+      "pets",
       "updates",
       "about",
     ]);
@@ -76,6 +78,7 @@ describe("Renderer settings foundation", () => {
       "session-import",
       "storage",
       "skins",
+      "pets",
       "updates",
       "about",
     ]);
