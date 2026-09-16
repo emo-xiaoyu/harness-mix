@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { nativeEnvironment, nativePaths, saveNativeSettings } = require('../src/main/native/config');
+const { isCodexTaskEnvironment, readLiveHostInstance } = require('../src/main/native/launcher');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-mix-config-'));
 try {
@@ -18,8 +19,37 @@ try {
   assert.equal(nativeEnvironment({ CODEXHOST_DATA_DIR: directory, CODEXHOST_PI_COMMAND: 'D:\\other\\pi.cmd' }).CODEXHOST_PI_COMMAND,
     'D:\\other\\pi.cmd', 'Explicit environment takes priority');
   for (const file of Object.values(nativePaths())) assert.ok(fs.statSync(file).isFile(), file);
+  const runtimeDirectory = path.join(directory, 'runtime');
+  fs.mkdirSync(runtimeDirectory, { recursive: true });
+  const instanceFile = path.join(runtimeDirectory, 'instance.json');
+  fs.writeFileSync(instanceFile, JSON.stringify({
+    pid: 4242,
+    beatAt: 1_000_000,
+    mode: 'native-host',
+  }));
+  assert.deepEqual(
+    readLiveHostInstance(directory, { now: 1_010_000, isPidAlive: pid => pid === 4242 }),
+    { pid: 4242, beatAt: 1_000_000, mode: 'native-host' },
+    'A live Host makes repeated npm start idempotent',
+  );
+  assert.equal(
+    readLiveHostInstance(directory, { now: 1_020_000, isPidAlive: () => true }),
+    null,
+    'A stale Host heartbeat does not block a real launch',
+  );
+  assert.equal(
+    readLiveHostInstance(directory, { now: 1_010_000, isPidAlive: () => false }),
+    null,
+    'A dead Host PID does not block a real launch',
+  );
+  assert.equal(isCodexTaskEnvironment({ CODEX_THREAD_ID: 'thread-1' }), true);
+  assert.equal(isCodexTaskEnvironment({ CODEX_SESSION_ID: 'session-1' }), true);
+  assert.equal(
+    isCodexTaskEnvironment({ CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Codex Desktop' }),
+    true,
+  );
+  assert.equal(isCodexTaskEnvironment({}), false);
   console.log('Native configuration, AppX environment recovery, credential exclusion and packaged resources passed');
 } finally {
-  fs.rmSync(path.join(directory, 'harness-mix-settings.json'), { force: true });
-  fs.rmdirSync(directory);
+  fs.rmSync(directory, { recursive: true, force: true });
 }

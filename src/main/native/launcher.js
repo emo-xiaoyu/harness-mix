@@ -13,6 +13,37 @@ const {
 } = require('./compatibility');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
+const LIVE_HOST_HEARTBEAT_MS = 15000;
+
+function isCodexTaskEnvironment(env = process.env) {
+  return Boolean(
+    env.CODEX_THREAD_ID ||
+    env.CODEX_SESSION_ID ||
+    env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === 'Codex Desktop'
+  );
+}
+
+function readLiveHostInstance(dataDir, {
+  now = Date.now(),
+  isPidAlive = pidAlive,
+  maxAgeMs = LIVE_HOST_HEARTBEAT_MS,
+} = {}) {
+  try {
+    const instance = JSON.parse(fs.readFileSync(path.join(dataDir, 'runtime', 'instance.json'), 'utf8'));
+    const age = now - Number(instance.beatAt || 0);
+    if (
+      instance.mode !== 'native-host' ||
+      !Number.isInteger(instance.pid) ||
+      instance.pid <= 0 ||
+      age < 0 ||
+      age > maxAgeMs ||
+      !isPidAlive(instance.pid)
+    ) return null;
+    return instance;
+  } catch {
+    return null;
+  }
+}
 
 function cacheCodexRuntime(resources, cache) {
   fs.mkdirSync(cache, { recursive: true });
@@ -100,9 +131,12 @@ async function freePort() {
 async function launch(args = []) {
   const root = REPO_ROOT;
   const flags = new Set(args);
-  const unknown = args.filter(arg => !['--check', '--update', '--no-update'].includes(arg));
+  const unknown = args.filter(arg => !['--check', '--update', '--no-update', '--restart'].includes(arg));
   if (unknown.length) throw new Error('Unsupported Launcher arguments');
   const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+  if (!flags.has('--check') && isCodexTaskEnvironment()) {
+    throw new Error('拒绝从 Codex 任务内部启动或重启 Harness Mix：这会终止当前 Codex Desktop 和正在执行的任务。请在 Codex 外部终端运行 Start-Codex.cmd 或 npm start。');
+  }
   if (flags.has('--update')) {
     const outcome = await runUpdateFlow({
       root, dataDir, mode: 'apply',
@@ -112,6 +146,13 @@ async function launch(args = []) {
       console.log('[Harness Mix] 更新流程完成，重新运行 npm start 生效。');
     }
     return;
+  }
+  if (!flags.has('--check') && !flags.has('--restart')) {
+    const live = readLiveHostInstance(dataDir);
+    if (live) {
+      console.log(`[Harness Mix] 已在运行（Host PID ${live.pid}）；不会重启当前 Codex Desktop。需要显式重启时使用 npm start -- --restart。`);
+      return;
+    }
   }
   const installation = await inspect();
   const compatibility = installation.version === 'unknown'
@@ -185,4 +226,10 @@ async function launch(args = []) {
   controller.on('exit', () => clearTimeout(bootTimer));
   return controller;
 }
-module.exports = { inspect, launch, cacheCodexRuntime };
+module.exports = {
+  inspect,
+  launch,
+  cacheCodexRuntime,
+  isCodexTaskEnvironment,
+  readLiveHostInstance,
+};
