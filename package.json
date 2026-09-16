@@ -1,6 +1,6 @@
 {
   "name": "@harness-mix/cli",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "license": "Apache-2.0",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
