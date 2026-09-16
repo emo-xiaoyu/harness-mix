@@ -32,6 +32,8 @@ import type { RendererIntegrationsClient } from '../renderer-integrations-client
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
 import { createStorageSettingsPage, type RendererStorageClient } from './storage-page.js';
 import { createSkinSettingsPage } from "./skin-market.js";
+import { createPetSettingsPage } from "./pet-market.js";
+import type { RendererPetsClient } from "./pets-client.js";
 
 export type {
   RendererConnectionAgentSnapshot,
@@ -81,6 +83,7 @@ export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "session-import",
   "storage",
   "skins",
+  "pets",
   "updates",
   "about",
 ] as const;
@@ -631,6 +634,7 @@ export function createDefaultRendererSettingsPages(
     Promise.reject(new Error("Imported Thread navigation is unavailable")),
   getIntegrationsClient: () => RendererIntegrationsClient | null = () => null,
   getStorageClient: () => RendererStorageClient | null = () => null,
+  getPetClient: () => RendererPetsClient | null = () => null,
 ): readonly RendererSettingsPageDefinition[] {
   return Object.freeze([
     createConnectionsSettingsPage(messages, getDiagnostics),
@@ -640,6 +644,7 @@ export function createDefaultRendererSettingsPages(
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
     createStorageSettingsPage(messages, getStorageClient),
     createSkinSettingsPage(messages),
+    createPetSettingsPage(messages, getPetClient),
     updatesPage(messages, getUpdateClient),
     aboutPage(messages, getUpdateClient),
   ]);
@@ -654,6 +659,7 @@ export function createDefaultRendererSettingsRegistry(
   openImportedThread?: RendererImportedThreadOpener,
   getIntegrationsClient?: () => RendererIntegrationsClient | null,
   getStorageClient?: () => RendererStorageClient | null,
+  getPetClient?: () => RendererPetsClient | null,
 ): RendererSettingsPageRegistry {
   return createRendererSettingsPageRegistry(
     createDefaultRendererSettingsPages(
@@ -665,9 +671,11 @@ export function createDefaultRendererSettingsRegistry(
       openImportedThread,
       getIntegrationsClient,
       getStorageClient,
+      getPetClient,
     ),
   );
 }
 
 export type { RendererCodexAccountClient } from "./accounts-page.js";
 export type { RendererStorageClient, RendererStorageInspection } from './storage-page.js';
+export type { RendererPetsClient } from "./pets-client.js";

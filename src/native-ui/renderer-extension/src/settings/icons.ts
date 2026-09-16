@@ -35,6 +35,7 @@ import Plus from "lucide/dist/esm/icons/plus.mjs";
 import Database from 'lucide/dist/esm/icons/database.mjs';
 import Palette from "lucide/dist/esm/icons/palette.mjs";
 import ShieldCheck from "lucide/dist/esm/icons/shield-check.mjs";
+import PawPrint from "lucide/dist/esm/icons/paw-print.mjs";
 import harnessMixLogoUrl from "../../../../assets/brand-harness-mix.png";
 
 export const RENDERER_SETTINGS_ICON_NAMES = [
@@ -74,6 +75,7 @@ export const RENDERER_SETTINGS_ICON_NAMES = [
   "palette",
   "shield",
   "storage",
+  "pets",
 ] as const;
 
 export type RendererSettingsIconName = (typeof RENDERER_SETTINGS_ICON_NAMES)[number];
@@ -115,6 +117,7 @@ const iconNodes = {
   palette: Palette,
   shield: ShieldCheck,
   storage: Database,
+  pets: PawPrint,
 } satisfies Record<RendererSettingsIconName, IconNode>;
 
 export function isRendererSettingsIconName(value: string): value is RendererSettingsIconName {

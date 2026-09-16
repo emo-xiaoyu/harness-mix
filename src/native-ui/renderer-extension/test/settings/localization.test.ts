@@ -83,6 +83,7 @@ describe("Renderer settings localization", () => {
       "会话导入",
       "存储与验证",
       "皮肤",
+      "桌宠",
       "更新",
       "关于",
     ]);

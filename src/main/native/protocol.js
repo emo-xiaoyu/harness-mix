@@ -442,6 +442,7 @@ class NativeProtocol {
     if (method === 'codexhost/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     // 桌宠市场：官方预载（Codex 安装包 asar 提取）与 ~/.codex/pets 安装管理
     if (method === 'codexhost/pets/catalog') return this.pets.catalog();
+    if (method === 'codexhost/pets/community') return this.pets.community(params);
     if (method === 'codexhost/pets/preview') return this.pets.preview(params);
     if (method === 'codexhost/pets/install') return this.pets.install(params);
     if (method === 'codexhost/pets/uninstall') return this.pets.uninstall(params);

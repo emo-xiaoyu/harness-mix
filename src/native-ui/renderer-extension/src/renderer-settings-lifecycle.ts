@@ -10,6 +10,7 @@ import {
   type RendererCodexAccountClient,
   type RendererUpdateClient,
   type RendererStorageClient,
+  type RendererPetsClient,
 } from "./settings/pages.js";
 import type {
   RendererSessionImportClient,
@@ -32,6 +33,7 @@ export interface RendererSettingsLifecycleOptions {
   getAccountClient?(): RendererCodexAccountClient | null;
   getSessionImportClient?(): RendererSessionImportClient | null;
   getStorageClient?(): RendererStorageClient | null;
+  getPetClient?(): RendererPetsClient | null;
   openImportedThread?: RendererImportedThreadOpener;
   onLocaleChange?(locale: RendererSettingsLocale): void;
 }
@@ -81,6 +83,7 @@ export function installRendererSettingsLifecycle(
       },
       options.getIntegrationsClient,
       options.getStorageClient,
+      options.getPetClient,
     );
     const nextShell = installRendererSettingsShell(definitions, messages, ownerWindow.document);
     const nextTrigger = installRendererSettingsHeaderTrigger({
