@@ -584,16 +584,40 @@ export function isLateConversationTarget(
   );
 }
 
+export function composerTargetResolution(
+  mountedTarget: readonly unknown[] | null,
+  currentTarget: readonly unknown[] | null,
+  sourcePhase: ComposerAgentPhase,
+  submissionPending = false,
+): "none" | "transfer" | "inspect" | "restore-draft" {
+  if (!currentTarget) return "none";
+  if (
+    mountedTarget &&
+    mountedTarget.length === currentTarget.length &&
+    mountedTarget.every((value, index) => value === currentTarget[index])
+  ) {
+    return "none";
+  }
+  if (currentTarget[0] === "default") return "restore-draft";
+  if (currentTarget[0] !== "conversation") return "none";
+  return mountedTarget?.[0] === "default" && (sourcePhase === "locked" || submissionPending)
+    ? "transfer"
+    : "inspect";
+}
+
 export function lateConversationTargetResolution(
   mountedTarget: readonly unknown[] | null,
   currentTarget: readonly unknown[] | null,
   sourcePhase: ComposerAgentPhase,
   submissionPending = false,
 ): "none" | "transfer" | "inspect" {
-  if (!isLateConversationTarget(mountedTarget, currentTarget)) return "none";
-  return mountedTarget?.[0] === "default" && (sourcePhase === "locked" || submissionPending)
-    ? "transfer"
-    : "inspect";
+  const resolution = composerTargetResolution(
+    mountedTarget,
+    currentTarget,
+    sourcePhase,
+    submissionPending,
+  );
+  return resolution === "restore-draft" ? "none" : resolution;
 }
 
 export function scopedComposerTarget(
@@ -1349,9 +1373,9 @@ export function installRendererBindingProbe(
     }
   };
 
-  const refreshMountedConversationTarget = (mounted: MountedComposer): boolean => {
+  const refreshMountedComposerTarget = (mounted: MountedComposer): boolean => {
     const currentTarget = findComposerModelTarget(mounted.composer);
-    const resolution = lateConversationTargetResolution(
+    const resolution = composerTargetResolution(
       mounted.modelTarget,
       currentTarget,
       controller.get(mounted.composer).phase,
@@ -1359,7 +1383,6 @@ export function installRendererBindingProbe(
     );
     if (resolution === "none") return false;
 
-    const previousTarget = mounted.modelTarget;
     const nextHostId = activeModelHostId() ?? mounted.hostId;
     const nextControllerTarget = controllerTarget(currentTarget, nextHostId);
     mounted.modelTarget = currentTarget;
@@ -1367,7 +1390,13 @@ export function installRendererBindingProbe(
     const rebound =
       resolution === "transfer"
         ? controller.transfer(mounted.composer, mounted.composer, nextControllerTarget)
-        : controller.rebindConversation(mounted.composer, nextControllerTarget) !== null;
+        : controller.rebindTarget(
+            mounted.composer,
+            nextControllerTarget,
+            currentTarget?.[0] === "default"
+              ? readNewThreadAgentPreference(enabledAgentSet)
+              : undefined,
+          ) !== null;
     if (!rebound) {
       mounted.ownershipStatus = "error";
       renderMounted(mounted);
@@ -1384,13 +1413,22 @@ export function installRendererBindingProbe(
       mounted.modelView = { status: "idle" };
       mounted.permissionModeView = { status: "idle" };
       mounted.threadConfiguration = undefined;
-      mounted.ownershipStatus = "loading";
+      mounted.ownershipStatus =
+        currentTarget?.[0] === "conversation" ? "loading" : "not-required";
       mounted.usage = null;
       mounted.accountCredits = null;
       mounted.usageRequestGeneration += 1;
       usageRefreshAttempts.delete(mounted.composer);
-      if (previousTarget?.[0] === "conversation") renderMounted(mounted);
-      void loadThreadOwnership(mounted);
+      renderMounted(mounted);
+      if (currentTarget?.[0] === "conversation") {
+        void loadThreadOwnership(mounted);
+      } else {
+        applyComposerAgent(mounted.composer);
+        const state = controller.get(mounted.composer);
+        if (state.agent !== "codex") void loadExternalCatalog(mounted);
+        void refreshDraftCodexUsage(mounted);
+        void refreshCommands(mounted);
+      }
     }
     sidebarAgentIcons.refresh();
     return true;
@@ -2672,7 +2710,7 @@ export function installRendererBindingProbe(
       const state = controller.get(composer);
       const hideCodexControls = controller.isSwitching(composer) || state.agent !== "codex";
       reconcileComposerNativeControls(mounted.control, hideCodexControls, hideCodexControls);
-      if (refreshTargets) refreshMountedConversationTarget(mounted);
+      if (refreshTargets) refreshMountedComposerTarget(mounted);
     }
     for (const editor of document.querySelectorAll(EDITOR_SELECTOR)) {
       const composer = composerForEditor(editor);

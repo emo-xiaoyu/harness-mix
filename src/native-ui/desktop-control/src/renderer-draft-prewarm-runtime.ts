@@ -535,10 +535,10 @@ export function installDraftPrewarmPolicyBridge(
   };
   const routedPrewarm = (parameters: unknown, options?: unknown): unknown => {
     const routed = routeThreadStart(parameters);
-    // External prewarming must not publish a second persistent sidebar thread.
-    const routedParameters = isRecord(routed) && typeof routed.model === "string" && routed.model.startsWith("codexhost/")
-      ? { ...routed, ephemeral: true }
-      : routed;
+    // A prewarmed draft is never a user-created task. Keep both external and
+    // official Codex prewarms ephemeral so switching the selected Harness does
+    // not publish an empty persistent sidebar thread.
+    const routedParameters = isRecord(routed) ? { ...routed, ephemeral: true } : routed;
     if (shouldUseBridge("thread/start", routedParameters)) {
       return routedSend("thread/start", routedParameters, options);
     }

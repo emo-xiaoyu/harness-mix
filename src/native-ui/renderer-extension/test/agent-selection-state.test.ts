@@ -385,6 +385,64 @@ describe("Renderer draft Agent controller", () => {
     });
   });
 
+  it("restores an unsubmitted new-Thread draft after visiting another conversation", async () => {
+    const composer = {};
+    const agents = controller();
+    const draftTarget = ["default", "client-new-thread:draft-a"] as const;
+    const conversationTarget = ["conversation", "existing-thread", "local"] as const;
+    const model = harnessModelRefSchema.parse({ id: "gpt-5.6-sol" });
+    const thinkingOptionId = harnessThinkingOptionIdSchema.parse("high");
+    const permissionModeId = harnessPermissionModeIdSchema.parse("full-access");
+
+    agents.mount(composer, draftTarget);
+    await agents.switchAgent(composer, "pi", {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.setExternalModel(composer, "pi", model);
+    agents.setExternalThinkingOption(composer, "pi", thinkingOptionId);
+    agents.setExternalPermissionMode(composer, "pi", permissionModeId);
+    const draftState = agents.get(composer);
+
+    expect(agents.rebindTarget(composer, conversationTarget)).toMatchObject({
+      agent: "codex",
+      phase: "draft",
+    });
+    agents.restore(composer, "codex");
+
+    expect(agents.rebindTarget(composer, draftTarget)).toBe(draftState);
+    expect(agents.get(composer)).toMatchObject({
+      agent: "pi",
+      phase: "draft",
+      piModel: model,
+      piThinkingOptionId: thinkingOptionId,
+      permissionModeByAgent: { pi: permissionModeId },
+    });
+  });
+
+  it("does not revive a submitted draft after it becomes a conversation", async () => {
+    const composer = {};
+    const agents = controller();
+    const draftTarget = ["default", "client-new-thread:submitted"] as const;
+    const conversationTarget = ["conversation", "created-thread", "local"] as const;
+
+    agents.mount(composer, draftTarget);
+    await agents.switchAgent(composer, "pi", {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.markSubmissionPending(composer);
+    agents.recordSubmission(composer);
+    expect(agents.transfer(composer, composer, conversationTarget)).toBe(true);
+    expect(agents.get(composer)).toMatchObject({ agent: "pi", phase: "locked" });
+
+    expect(agents.rebindTarget(composer, draftTarget)).toMatchObject({
+      agent: "pi",
+      phase: "draft",
+    });
+    expect(agents.get(composer).composerId).not.toBe("composer-1");
+  });
+
   it("restores a newly mounted Fork owner and ignores stale ownership generations", () => {
     const forkComposer = {};
     const replacement = {};
