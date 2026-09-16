@@ -503,6 +503,8 @@ describe("Renderer draft prewarm policy", () => {
     await bridge.sendRequest("thread/start", { cwd: "/tmp/project", model: "gpt-5" });
     await bridge.prewarmThreadStart?.({ cwd: "/tmp/project", model: "gpt-5" });
     await bridge.prewarmThreadStart?.({ ephemeral: true, model: "gpt-5" });
+    policy.select(null);
+    await bridge.prewarmThreadStart?.({ cwd: "/tmp/official", model: "gpt-5" });
 
     expect(sendRequest).toHaveBeenCalledWith("thread/start", {
       cwd: "/tmp/project",
@@ -516,6 +518,11 @@ describe("Renderer draft prewarm policy", () => {
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(2, {
       ephemeral: true,
       model: "gpt-5",
+    });
+    expect(prewarmThreadStart).toHaveBeenNthCalledWith(3, {
+      cwd: "/tmp/official",
+      model: "gpt-5",
+      ephemeral: true,
     });
   });
 

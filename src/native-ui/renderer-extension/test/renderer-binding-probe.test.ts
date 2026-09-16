@@ -19,6 +19,7 @@ import {
   lockedPermissionMode,
   permissionModeSelectionLocked,
   lateConversationTargetResolution,
+  composerTargetResolution,
   harnessAvailabilityDuringInspect,
   passiveHarnessAvailabilityAgents,
   refreshConnectionHosts,
@@ -1238,6 +1239,17 @@ describe("Renderer Composer DOM behavior", () => {
     ).toBe("inspect");
     expect(isLateConversationTarget(null, conversationTarget)).toBe(true);
     expect(lateConversationTargetResolution(null, conversationTarget, "draft")).toBe("inspect");
+  });
+
+  it("restores the exact draft target when navigation returns from a conversation", () => {
+    const draftTarget = ["default", "client-new-thread:draft-a"];
+    const conversationTarget = ["conversation", "opaque-1"];
+
+    expect(composerTargetResolution(conversationTarget, draftTarget, "locked")).toBe(
+      "restore-draft",
+    );
+    expect(composerTargetResolution(draftTarget, conversationTarget, "draft")).toBe("inspect");
+    expect(composerTargetResolution(draftTarget, draftTarget, "draft")).toBe("none");
   });
 
   it("does not transfer an unsubmitted default draft when an existing conversation opens", () => {
