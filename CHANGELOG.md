@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10 — 2026-09-16
+
+- Added a community desktop pet marketplace with browsing, installation, and localization in the native settings shell.
+- Preserved new task drafts across navigation so unsent composer text survives sidebar switches.
+- Avoided restarting already-active Codex Desktop sessions from the launcher.
+- Improved responsive skin readability across narrow layouts.
+
 ## 0.1.5 — 2026-09-13
 
 - Added graphical cross-Harness task handoff in the native Codex Desktop composer, with continue, execute-plan, independent-review, and reanalyze modes.
