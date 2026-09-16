@@ -102,7 +102,8 @@ describe("renderer skin runtime", () => {
     expect(fixture.getStyle()?.textContent).toContain('.main-surface');
     expect(fixture.getStyle()?.textContent).toContain('[data-app-shell-main-surface="default"]');
     expect(fixture.getStyle()?.textContent).toContain("[data-response-annotation-conversation]");
-    expect(fixture.getStyle()?.textContent).toContain("90%, transparent");
+    expect(fixture.getStyle()?.textContent).toContain("96%, transparent");
+    expect(fixture.getStyle()?.textContent).toContain("backdrop-filter: blur");
     expect(fixture.getStyle()?.textContent).not.toContain("background: transparent !important; border-color: transparent");
     expect(fixture.getStyle()?.textContent).toContain("--color-text-primary");
     expect(fixture.getStyle()?.textContent).toContain("--color-token-foreground");
@@ -117,7 +118,15 @@ describe("renderer skin runtime", () => {
     expect(fixture.getStyle()?.textContent).toContain("polaroid.webp");
     expect(fixture.getStyle()?.textContent).toContain("body::after");
     expect(fixture.getStyle()?.textContent).not.toContain("background-attachment: fixed");
-    expect(fixture.getStyle()?.textContent).not.toContain("backdrop-filter: blur");
+    expect(fixture.getStyle()?.textContent).toContain("--codex-titlebar-tint: transparent");
+    expect(fixture.getStyle()?.textContent).toContain("[data-tab-id]");
+    expect(fixture.getStyle()?.textContent).toContain("[data-app-shell-header-obstacle] button");
+    expect(fixture.getStyle()?.textContent).toContain("[data-app-shell-main-content-top-fade]");
+    expect(fixture.getStyle()?.textContent).toContain("[data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child");
+    expect(fixture.getStyle()?.textContent).toContain('button[aria-haspopup="menu"]:hover');
+    expect(fixture.getStyle()?.textContent).toContain("@container home-main-content");
+    expect(fixture.getStyle()?.textContent).toContain('[data-composer-placement="home"]');
+    expect(fixture.getStyle()?.textContent).toContain("--thread-content-max-width: min(72rem");
     expect(fixture.getStyle()?.textContent).toContain("hero.webp");
     expect(storage.getItem(RENDERER_SKIN_STORAGE_KEY)).toBe("miku-488137");
     expect(readRendererSkin(storage)).toBe("miku-488137");
@@ -132,5 +141,22 @@ describe("renderer skin runtime", () => {
     const storage = new MemoryStorage();
     storage.setItem(RENDERER_SKIN_STORAGE_KEY, "removed-theme");
     expect(readRendererSkin(storage)).toBe("native");
+  });
+
+  it("applies shared transparent header chrome and readable user messages to every custom skin", () => {
+    const storage = new MemoryStorage();
+    const fixture = fakeDocument();
+
+    for (const skin of RENDERER_SKINS.slice(1)) {
+      applyRendererSkin(skin.id, fixture.document, storage);
+      const css = fixture.getStyle()?.textContent ?? "";
+      expect(fixture.attributes.get(RENDERER_SKIN_ATTRIBUTE)).toBe(skin.id);
+      expect(css).toContain("--color-text-user-message:");
+      expect(css).toContain('[data-user-message-bubble] :where(');
+      expect(css).toContain('[data-markdown-text-tone="user-message"]');
+      expect(css).toContain('[data-app-shell-header-toolbar] > div:first-child {');
+      expect(css).toContain('> button[aria-haspopup="menu"][data-state="open"]');
+      expect(css).toContain("background: transparent !important;");
+    }
   });
 });

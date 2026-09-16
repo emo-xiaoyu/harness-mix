@@ -212,6 +212,36 @@ app.whenReady().then(async () => {
   assert.match(skinShowcase.logoBackground, /data:image\/webp/);
   assert.match(skinShowcase.polaroidBackground, /data:image\/webp/);
   fs.writeFileSync(path.join(out, 'skin-miku-full.png'), (await win.webContents.capturePage()).toPNG());
+  await win.setSize(1024, 716);
+  const responsiveHome = await win.webContents.executeJavaScript(`(async () => {
+    document.body.innerHTML = '<div id="root"><aside class="app-shell-left-panel"></aside><main class="main-surface" data-app-shell-main-surface="default"><div data-app-shell-main-content-top-fade="full-bleed"></div><header data-pip-obstacle="app-shell-header"><div data-testid="app-shell-header-context-menu-surface"><div data-app-shell-page-header="true"><div data-app-shell-header-toolbar="true"><div class="thread-title-surface"><div>新任务</div></div><button class="header-action" aria-label="聊天操作" aria-haspopup="menu" data-state="open">...</button></div></div></div></header><div role="main" style="container-type:size;container-name:home-main-content;width:100%;height:100%;display:flex;flex-direction:column"><section class="_Hero_smoke_2"><h1 data-feature="game-source">你想让我们在 harness-mix 中构建什么？</h1></section><section class="[--thread-content-max-width:42rem]"><div data-composer-placement="home" class="composer-surface-chrome">随心输入<table><tbody><tr><td>响应式验证</td></tr></tbody></table></div></section></div></main></div>';
+    const fixtureStyle = document.createElement('style');
+    fixtureStyle.textContent = 'html,body,#root{width:100%;height:100%;margin:0}#root{display:flex}.app-shell-left-panel{flex:0 0 240px}.main-surface{position:relative;min-width:0;flex:1}.main-surface>header{position:absolute;z-index:2;width:100%;height:44px}.main-surface>header>div{display:flex;justify-content:space-between;padding:8px 12px}._Hero_smoke_2{display:flex;flex:0 0 44%;align-items:flex-end;justify-content:center;min-block-size:260px;padding-bottom:32px}h1{font-size:32px}.\\[--thread-content-max-width\\:42rem\\]{width:var(--thread-content-max-width);max-width:100%;margin:auto}.composer-surface-chrome{padding:24px}';
+    document.head.append(fixtureStyle);
+    NativeUI.applyRendererSkin('miku-488137', document);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const hero = getComputedStyle(document.querySelector('._Hero_smoke_2'));
+    const heading = getComputedStyle(document.querySelector('[data-feature="game-source"]'));
+    const header = getComputedStyle(document.querySelector('[data-pip-obstacle="app-shell-header"]'));
+    const headerAction = getComputedStyle(document.querySelector('.header-action'));
+    const titleSurface = getComputedStyle(document.querySelector('.thread-title-surface'));
+    const topFade = getComputedStyle(document.querySelector('[data-app-shell-main-content-top-fade]'));
+    const table = getComputedStyle(document.querySelector('table'));
+    return { flexBasis:hero.flexBasis, minBlockSize:parseFloat(hero.minBlockSize), fontSize:parseFloat(heading.fontSize), headerBackground:header.backgroundColor, headerActionBackground:headerAction.backgroundColor, titleBackground:titleSurface.backgroundColor, topFadeImage:topFade.backgroundImage, topFadeOpacity:topFade.opacity, tableBackground:table.backgroundColor };
+  })()`);
+  assert.equal(responsiveHome.flexBasis, 'auto');
+  assert.ok(responsiveHome.minBlockSize <= 200, `responsive hero remained too tall: ${responsiveHome.minBlockSize}px`);
+  assert.ok(responsiveHome.fontSize <= 28, `responsive heading remained too large: ${responsiveHome.fontSize}px`);
+  assert.equal(responsiveHome.headerBackground, 'rgba(0, 0, 0, 0)');
+  assert.equal(responsiveHome.headerActionBackground, 'rgba(0, 0, 0, 0)');
+  assert.equal(responsiveHome.titleBackground, 'rgba(0, 0, 0, 0)');
+  assert.equal(responsiveHome.topFadeImage, 'none');
+  assert.equal(responsiveHome.topFadeOpacity, '0');
+  assert.notEqual(responsiveHome.tableBackground, 'rgba(0, 0, 0, 0)');
+  fs.writeFileSync(path.join(out, 'skin-responsive-home.png'), (await win.webContents.capturePage()).toPNG());
+  await win.setSize(1920, 1000);
+  const wideThreadWidth = await win.webContents.executeJavaScript(`(() => getComputedStyle(document.querySelector('[class*="thread-content-max-width"]')).getPropertyValue('--thread-content-max-width').trim())()`);
+  assert.match(wideThreadWidth, /72rem/);
   await win.setSize(1020, 716);
   const readableConversation = await win.webContents.executeJavaScript(`(async () => {
     document.body.innerHTML = '<div id="root"><aside class="app-shell-left-panel"><button aria-haspopup="menu" aria-label="Open Codex menu"><span>Codex</span></button><nav><strong>新建任务</strong><span>Pull Request</span><span>定时任务</span><span>插件</span><small>项目</small><span>snipaste-pro</span><span>harness-mix</span><span class="active" data-app-action-sidebar-thread-active="true">查找换肤界面差异原因</span></nav><footer>Harness Mix</footer></aside><main class="main-surface chat" data-app-shell-main-surface="default"><header>查找换肤界面差异原因</header><div class="chat-scroll"><article data-local-conversation-final-assistant><div data-response-annotation-conversation><small>用时 19秒</small><p>是的，准确说是修改了 Codex UI 的运行时表现层。</p><p>它会：</p><ul><li>注入 CSS、替换颜色变量和背景图。</li><li>把部分原生面板变成半透明。</li><li>增加 Logo、拍立得等纯视觉装饰。</li><li>保留原有按钮、输入框、会话和交互逻辑。</li></ul><p>它不会修改 Codex 的安装包、模型调用、账号、权限或会话归属。</p></div></article></div><section class="composer-surface-chrome"><div>随心输入</div><footer>＋　完全访问 <span>GPT-5.6 Sol　↑</span></footer></section></main></div>';
@@ -229,9 +259,9 @@ app.whenReady().then(async () => {
   assert.equal(readableConversation.radius, '18px');
   fs.writeFileSync(path.join(out, 'skin-conversation-readable.png'), (await win.webContents.capturePage()).toPNG());
   const darkSurfaceResult = await win.webContents.executeJavaScript(`(async () => {
-    document.body.innerHTML = '<div id="root"><aside class="app-shell-left-panel"><button aria-haspopup="menu" aria-label="Open Codex menu"><span>Codex</span></button><nav><strong>新对话</strong><span>Pull Request</span><span>定时任务</span><span>插件</span><small>项目</small><span class="active" data-app-action-sidebar-thread-active="true">暗色皮肤全界面适配</span></nav></aside><main class="main-surface dark-fixture" data-app-shell-main-surface="default"><header>暗色皮肤全界面适配</header><article data-response-annotation-conversation><p>正文、工具状态、评审卡和输入区都需要保持清晰。</p><section class="review-card"><div>已编辑 3 个文件</div><button class="review-action">审核</button><button class="review-row">src/settings/skin-runtime.ts</button><button class="review-row">scripts/native-ui-smoke.cjs</button></section></article><section class="composer-real" data-composer-layout="multiline"><input placeholder="随心输入"><button>完全访问</button><button>GPT-5.6 Sol</button></section></main></div>';
+    document.body.innerHTML = '<div id="root"><aside class="app-shell-left-panel"><button aria-haspopup="menu" aria-label="Open Codex menu"><span>Codex</span></button><nav><strong>新对话</strong><span>Pull Request</span><span>定时任务</span><span>插件</span><small>项目</small><span class="active" data-app-action-sidebar-thread-active="true">暗色皮肤全界面适配</span></nav></aside><main class="main-surface dark-fixture" data-app-shell-main-surface="default"><header>暗色皮肤全界面适配</header><div data-user-message-bubble="true"><div data-markdown-text-tone="user-message"><p data-markdown-han-text="true">暗色皮肤里的用户消息必须清晰可读。</p></div></div><article data-response-annotation-conversation><p>正文、工具状态、评审卡和输入区都需要保持清晰。</p><section class="review-card"><div>已编辑 3 个文件</div><button class="review-action">审核</button><button class="review-row">src/settings/skin-runtime.ts</button><button class="review-row">scripts/native-ui-smoke.cjs</button></section></article><section class="composer-real" data-composer-layout="multiline"><input placeholder="随心输入"><button>完全访问</button><button>GPT-5.6 Sol</button></section></main></div>';
     const darkFixtureStyle = document.createElement('style');
-    darkFixtureStyle.textContent = 'html,body,#root{width:100%;height:100%;margin:0}.dark-fixture{position:relative;display:block;padding:24px}.dark-fixture>header{padding:12px 0}.dark-fixture article{max-width:700px;margin:80px auto}.review-card{margin-top:24px;padding:14px;border:1px solid var(--color-token-border-default);border-radius:12px;background:color-mix(in srgb,var(--color-surface-elevated-secondary) 50%,transparent)}.review-card button{color:var(--color-text-primary)}.review-action{float:right;background:var(--color-background-primary-soft-alpha)}.review-row{display:block;width:100%;margin-top:10px;padding:10px;text-align:left;border:0;background:color-mix(in srgb,var(--color-surface) 70%,transparent)}.composer-real{position:absolute;right:24px;bottom:16px;left:24px;padding:18px;border-radius:20px;background:color-mix(in srgb,var(--color-surface-elevated-secondary) 86%,transparent)}.composer-real input{width:70%;padding:8px;color:var(--color-text-primary);background:transparent;border:0}.composer-real button{margin-left:8px;color:var(--color-text-secondary);background:transparent;border:0}';
+    darkFixtureStyle.textContent = 'html,body,#root{width:100%;height:100%;margin:0}.dark-fixture{position:relative;display:block;padding:24px}.dark-fixture>header{padding:12px 0}.dark-fixture>[data-user-message-bubble]{max-width:520px;margin:24px 0 0 auto;padding:12px 16px;border-radius:16px}.dark-fixture article{max-width:700px;margin:60px auto}.review-card{margin-top:24px;padding:14px;border:1px solid var(--color-token-border-default);border-radius:12px;background:color-mix(in srgb,var(--color-surface-elevated-secondary) 50%,transparent)}.review-card button{color:var(--color-text-primary)}.review-action{float:right;background:var(--color-background-primary-soft-alpha)}.review-row{display:block;width:100%;margin-top:10px;padding:10px;text-align:left;border:0;background:color-mix(in srgb,var(--color-surface) 70%,transparent)}.composer-real{position:absolute;right:24px;bottom:16px;left:24px;padding:18px;border-radius:20px;background:color-mix(in srgb,var(--color-surface-elevated-secondary) 86%,transparent)}.composer-real input{width:70%;padding:8px;color:var(--color-text-primary);background:transparent;border:0}.composer-real button{margin-left:8px;color:var(--color-text-secondary);background:transparent;border:0}';
     document.head.append(darkFixtureStyle);
     NativeUI.applyRendererSkin('dragonball-nimbus', document);
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -242,8 +272,10 @@ app.whenReady().then(async () => {
     const review = getComputedStyle(document.querySelector('.review-card'));
     const row = getComputedStyle(document.querySelector('.review-row'));
     const composer = getComputedStyle(document.querySelector('.composer-real'));
+    const userBubble = getComputedStyle(document.querySelector('[data-user-message-bubble]'));
+    const userText = getComputedStyle(document.querySelector('[data-markdown-text-tone="user-message"]'));
     const after = { buttons:document.querySelectorAll('button').length, inputs:document.querySelectorAll('input').length };
-    return { before, after, active:document.documentElement.getAttribute('data-harness-mix-skin'), lightReviewBackground, reviewBackground:review.backgroundColor, rowBackground:row.backgroundColor, composerBackground:composer.backgroundColor, color:review.color };
+    return { before, after, active:document.documentElement.getAttribute('data-harness-mix-skin'), lightReviewBackground, reviewBackground:review.backgroundColor, rowBackground:row.backgroundColor, composerBackground:composer.backgroundColor, color:review.color, userBubbleColor:userBubble.color, userTextColor:userText.color, userBubbleBackground:userBubble.backgroundColor };
   })()`);
   assert.deepEqual(darkSurfaceResult.after, darkSurfaceResult.before);
   assert.equal(darkSurfaceResult.active, 'genshin-night');
@@ -252,6 +284,9 @@ app.whenReady().then(async () => {
   assert.doesNotMatch(darkSurfaceResult.rowBackground, /255, 255, 255/);
   assert.doesNotMatch(darkSurfaceResult.composerBackground, /255, 255, 255/);
   assert.equal(darkSurfaceResult.color, 'rgb(240, 230, 200)');
+  assert.equal(darkSurfaceResult.userBubbleColor, 'rgb(240, 230, 200)');
+  assert.equal(darkSurfaceResult.userTextColor, 'rgb(240, 230, 200)');
+  assert.notEqual(darkSurfaceResult.userBubbleBackground, 'rgba(0, 0, 0, 0)');
   fs.writeFileSync(path.join(out, 'skin-dark-all-surfaces.png'), (await win.webContents.capturePage()).toPNG());
   win.destroy();
   console.log('PASS: real Electron native picker, graphical Harness handoff, official Account/Usage, sharded Storage metrics, live About version and all project Harness/model SVGs load');
