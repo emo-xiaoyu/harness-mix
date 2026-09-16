@@ -183,6 +183,8 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] body::after {
   return `
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   color-scheme: ${skin.dark ? "dark" : "light"};
+  --codex-titlebar-tint: transparent !important;
+  --header-tint: transparent !important;
   --color-text: ${text}; --color-text-primary: ${text}; --color-token-text-primary: ${text};
   --color-token-foreground: ${text}; --color-text-prose: ${text}; --color-text-emphasis: ${text};
   --color-text-primary-surface: ${text}; --color-text-primary-soft: ${text};
@@ -204,6 +206,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   --wb-text-primary: ${text}; --wb-text-secondary: ${secondaryText}; --wb-text-tertiary: ${tertiaryText};
   --color-control-thumb-foreground: ${text};
   --color-text-mode-toggle-inactive: ${secondaryText};
+  --color-text-user-message: ${text} !important;
   --color-surface: color-mix(in srgb, ${surface} 92%, transparent);
   --color-surface-secondary: color-mix(in srgb, ${surface} 88%, transparent);
   --color-surface-tertiary: color-mix(in srgb, ${surface} 94%, transparent);
@@ -225,6 +228,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   --color-background-secondary-soft-alpha: color-mix(in srgb, ${text} 7%, transparent);
   --color-background-secondary-soft-hover: color-mix(in srgb, ${text} 11%, transparent);
   --color-background-other-user-message: color-mix(in srgb, ${surface} 76%, transparent);
+  --color-background-user-message: color-mix(in srgb, ${surface} 92%, transparent) !important;
   --color-background-user-message-compact: color-mix(in srgb, ${surface} 88%, transparent);
   --color-border: color-mix(in srgb, ${text} 16%, transparent);
   --color-border-subtle: color-mix(in srgb, ${text} 8%, transparent);
@@ -329,19 +333,246 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
 ) {
   box-sizing: border-box;
   color: ${text} !important;
-  background: color-mix(in srgb, ${surface} 90%, transparent) !important;
+  background: color-mix(in srgb, ${surface} 96%, transparent) !important;
   border: 1px solid color-mix(in srgb, ${accent} 16%, transparent) !important;
   border-radius: 18px;
   padding: 14px 16px 12px;
   box-shadow: 0 8px 24px color-mix(in srgb, ${text} 8%, transparent) !important;
-  backdrop-filter: none !important;
+  backdrop-filter: blur(16px) saturate(120%) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  table,
+  [data-markdown-table],
+  [data-markdown-table] > div,
+  .main-surface table,
+  main table,
+  article table,
+  [data-response-annotation-conversation] table
+) {
+  background-color: color-mix(in srgb, ${surface} 95%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(120%) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  [data-markdown-table],
+  .main-surface table,
+  main table,
+  article table,
+  table
+) {
+  border: 1px solid color-mix(in srgb, ${accent} 24%, transparent) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 20px color-mix(in srgb, ${text} 8%, transparent) !important;
+  overflow: hidden !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  table th,
+  [data-markdown-table] th,
+  [data-response-annotation-conversation] th
+) {
+  background-color: color-mix(in srgb, ${surface} 98%, transparent) !important;
+  border-bottom: 2px solid color-mix(in srgb, ${accent} 28%, transparent) !important;
+  color: ${text} !important;
+  font-weight: 600 !important;
+  padding: 8px 14px !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  table td,
+  [data-markdown-table] td,
+  [data-response-annotation-conversation] td,
+  [data-response-annotation-conversation] :where(th, td)
+) {
+  border-bottom: 1px solid color-mix(in srgb, ${text} 12%, transparent) !important;
+  border-right: 1px solid color-mix(in srgb, ${text} 6%, transparent) !important;
+  color: ${text} !important;
+  padding: 8px 14px !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  table tr:last-child td,
+  [data-markdown-table] tr:last-child td
+) {
+  border-bottom: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  table tr:hover td,
+  [data-markdown-table] tr:hover td
+) {
+  background-color: color-mix(in srgb, ${accent} 10%, transparent) !important;
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.composer-surface-chrome, [data-user-message-bubble], [data-codex-approval-surface]) {
   color: ${text} !important;
-  background: color-mix(in srgb, ${surface} 82%, transparent) !important;
+  background: color-mix(in srgb, ${surface} 92%, transparent) !important;
   border-color: color-mix(in srgb, ${accent} 24%, transparent) !important;
   box-shadow: 0 8px 24px color-mix(in srgb, ${accent} 12%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(120%) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-user-message-bubble],
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-user-message-bubble] :where(
+  [data-markdown-text-tone="user-message"],
+  [data-markdown-han-text],
+  p,
+  span,
+  a,
+  code
+) {
+  color: ${text} !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  header,
+  header > div,
+  [data-pip-obstacle="app-shell-header"],
+  [data-pip-obstacle="app-shell-header"] > div,
+  [class*="_ApplicationMenuTopBar_"],
+  [class*="_FloatingHeader_"],
+  [class*="_TitleBar_"],
+  [data-testid="app-shell-header-context-menu-surface"],
+  [data-app-shell-header-toolbar],
+  [data-app-shell-tab-row],
+  [data-app-shell-application-menu-bar]
+) {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header :where(.bg-surface, .bg-surface-secondary, .bg-surface-elevated):not([data-tab-id], [data-tab-id] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] :where(.bg-surface, .bg-surface-secondary, .bg-surface-elevated):not([data-tab-id], [data-tab-id] *) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-main-content-top-fade] {
+  background: none !important;
+  background-image: none !important;
+  opacity: 0 !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   backdrop-filter: none !important;
+  color: color-mix(in srgb, ${text} 82%, ${accent}) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  text-shadow: 0 1px 2px color-mix(in srgb, ${surface} 72%, transparent) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child > div {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child button {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header [role="button"]:not([data-codexhost-settings-trigger] *) {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"] {
+  color: color-mix(in srgb, ${text} 62%, transparent) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *):hover {
+  background: color-mix(in srgb, ${text} 12%, transparent) !important;
+  background-color: color-mix(in srgb, ${text} 12%, transparent) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"]:hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"]:focus-visible {
+  color: ${text} !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *):active {
+  background: color-mix(in srgb, ${text} 18%, transparent) !important;
+  background-color: color-mix(in srgb, ${text} 18%, transparent) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"]:active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"][data-state="open"] {
+  color: ${text} !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
+  [data-app-shell-tab-controller],
+  [data-app-shell-tab-controller] [data-tab-id],
+  .\@container\/app-shell-tab,
+  [data-tab-id].group\/tab,
+  .group\/tab[data-tab-id],
+  [data-tab-id],
+  [data-app-shell-tab-capture]
+) {
+  max-width: min(680px, 55vw) !important;
+}
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-tab-id] :where([class*="max-w-"], [class*="min-w-0"]) {
+  max-width: none !important;
+}
+@media (min-width: 100rem) {
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
+    --thread-content-max-width: min(72rem, calc(100vw - 22rem));
+  }
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [class*="thread-content-max-width"] {
+    --thread-content-max-width: min(72rem, calc(100vw - 22rem)) !important;
+  }
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-local-conversation-final-assistant] {
+    max-width: min(72rem, calc(100vw - 22rem)) !important;
+  }
+}
+@container home-main-content (inline-size <= 52rem) {
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] div[role="main"]:has([data-composer-placement="home"]) [class*="_Hero_"] {
+    min-block-size: clamp(8.5rem, 28cqh, 12.5rem) !important;
+    flex-basis: auto !important;
+    padding-block: 0.75rem 1rem !important;
+  }
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] div[role="main"]:has([data-composer-placement="home"]) [data-feature="game-source"] {
+    padding-inline: 1rem;
+    font-size: clamp(1.35rem, 4cqw, 1.75rem) !important;
+    line-height: 1.22 !important;
+  }
+}
+@media (max-width: 68.75rem), (max-height: 47.5rem) {
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] div[role="main"]:has([data-composer-placement="home"]) [class*="_Hero_"] {
+    min-block-size: clamp(8.5rem, 28vh, 12.5rem) !important;
+    flex-basis: auto !important;
+    padding-block: 0.75rem 1rem !important;
+  }
+  html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] div[role="main"]:has([data-composer-placement="home"]) [data-feature="game-source"] {
+    padding-inline: 1rem;
+    font-size: clamp(1.35rem, 3.2vw, 1.75rem) !important;
+    line-height: 1.22 !important;
+  }
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-action-sidebar-thread-active="true"] {
   background: linear-gradient(90deg, color-mix(in srgb, ${accent} 22%, transparent), color-mix(in srgb, ${secondary} 16%, transparent)) !important;
