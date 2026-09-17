@@ -12,6 +12,9 @@ const path = require('path');
 const PET_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SPRITESHEET_PATTERN = /^([a-z0-9]+(?:-[a-z0-9]+)*)-spritesheet-v\d+-[0-9a-f]+\.webp$/;
 const MAX_SPRITESHEET_BYTES = 16 * 1024 * 1024;
+const WEBP_MIN_BYTES = 12; // RIFF(4) + size(4) + WEBP(4)
+const TEMP_DIR_MAX_AGE_MS = 10 * 60 * 1000; // 超过该年龄的 .tmp-*/.bak-* 视为崩溃残留
+const RENAME_RETRY_DELAYS_MS = [0, 80, 160, 320, 640]; // Windows 上目录被占用时 rename 可能 EPERM/EBUSY，做有限重试
 
 function titleCase(id) {
   if (id === 'bsod') return 'BSOD';
@@ -22,15 +25,15 @@ function petsDirectory(env = process.env) {
   return env.HARNESS_MIX_PETS_DIR || path.join(os.homedir(), '.codex', 'pets');
 }
 
-// CODEXHOST_STOCK_CODEX_PATH 指向安装包内的 codex CLI（win: <root>/app/resources/codex.exe，
+// HARNESSMIX_STOCK_CODEX_PATH 指向安装包内的 codex CLI（win: <root>/app/resources/codex.exe，
 // mac: <root>/Contents/Resources/codex），app.asar 与其同目录。Host 进程由 Shim 启动时该变量已注入；
 // 缺失时按平台探测（Windows 走 AppX 查询，macOS 检查标准 .app 路径），结果进程内缓存。
 let resolvedAsarPath;
 function resolveAsarPath(env = process.env) {
   if (resolvedAsarPath !== undefined) return resolvedAsarPath;
   const candidates = [];
-  if (typeof env.CODEXHOST_STOCK_CODEX_PATH === 'string' && env.CODEXHOST_STOCK_CODEX_PATH) {
-    candidates.push(path.join(path.dirname(env.CODEXHOST_STOCK_CODEX_PATH), 'app.asar'));
+  if (typeof env.HARNESSMIX_STOCK_CODEX_PATH === 'string' && env.HARNESSMIX_STOCK_CODEX_PATH) {
+    candidates.push(path.join(path.dirname(env.HARNESSMIX_STOCK_CODEX_PATH), 'app.asar'));
   }
   if (typeof env.HARNESS_MIX_DESKTOP_APP === 'string' && env.HARNESS_MIX_DESKTOP_APP) {
     candidates.push(path.join(env.HARNESS_MIX_DESKTOP_APP, 'Contents', 'Resources', 'app.asar'));
@@ -176,9 +179,81 @@ async function fetchWithProxy(url, options = {}, env = process.env) {
   return fetch(url, opts);
 }
 
+// WebP 容器魔数：bytes 0-3 = 'RIFF'，bytes 8-11 = 'WEBP'
+function isWebpBuffer(buffer) {
+  return Buffer.isBuffer(buffer)
+    && buffer.length >= WEBP_MIN_BYTES
+    && buffer.toString('latin1', 0, 4) === 'RIFF'
+    && buffer.toString('latin1', 8, 12) === 'WEBP';
+}
+
+// pet.json 最小必需字段：id（与目录一致）、displayName、spriteVersionNumber、安全的 spritesheetPath
+function validatePetMetadata(meta, expectedId) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) throw new Error('pet.json metadata must be an object');
+  if (meta.id !== expectedId || !PET_ID_PATTERN.test(String(meta.id))) throw new Error(`pet.json id mismatch for "${expectedId}"`);
+  if (typeof meta.displayName !== 'string' || !meta.displayName.trim()) throw new Error('pet.json requires a non-empty displayName');
+  if (meta.description !== undefined && typeof meta.description !== 'string') throw new Error('pet.json description must be a string');
+  if (!Number.isInteger(meta.spriteVersionNumber) || meta.spriteVersionNumber < 1) throw new Error('pet.json requires a positive integer spriteVersionNumber');
+  const sheet = meta.spritesheetPath;
+  if (typeof sheet !== 'string' || !sheet || sheet.includes('..') || path.isAbsolute(sheet) || sheet.includes('/') || sheet.includes('\\')) {
+    throw new Error('pet.json spritesheetPath must be a plain file name');
+  }
+  return meta;
+}
+
+// 安装目录必须始终解析在 pets 根目录内（PET_ID_PATTERN 已拒绝 .. / 斜杠 / 绝对路径，这里做纵深防御）
+function resolvePetDir(root, id) {
+  const targetDir = path.join(root, id);
+  const relative = path.relative(root, targetDir);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Invalid pet directory');
+  return targetDir;
+}
+
+// 清理崩溃残留的 .tmp-* / .bak-* 目录（只动超过 maxAgeMs 的，避免误删其他进程正在进行的安装）
+function sweepStaleArtifacts(root, { maxAgeMs = TEMP_DIR_MAX_AGE_MS, now = Date.now() } = {}) {
+  let entries = [];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!entry.name.startsWith('.tmp-') && !entry.name.startsWith('.bak-')) continue;
+    const full = path.join(root, entry.name);
+    try {
+      if (now - fs.statSync(full).mtimeMs < maxAgeMs) continue;
+      fs.rmSync(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch { /* best effort：清理失败不影响主流程 */ }
+  }
+}
+
+async function renameWithRetry(from, to) {
+  let lastError;
+  for (const delay of RENAME_RETRY_DELAYS_MS) {
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!err || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+    }
+  }
+  throw lastError;
+}
+
 function createPetMarket({ env = process.env } = {}) {
   const headerCache = new Map(); // asarPath -> { mtimeMs, header }
   const previewCache = new Map(); // cacheKey -> { mime, dataBase64 }
+  const pendingOperations = new Map(); // pet id -> 'install' | 'uninstall'
+
+  // 同一 pet 的并发安装/卸载互斥（Host 端兜底，renderer 另有按钮禁用）
+  function claimOperation(id, op) {
+    const running = pendingOperations.get(id);
+    if (running) throw new Error(`Cannot ${op} pet ${id}: ${running} already in progress`);
+    pendingOperations.set(id, op);
+  }
+
+  function releaseOperation(id) {
+    pendingOperations.delete(id);
+  }
 
   function asarHeader() {
     const asarPath = resolveAsarPath(env);
@@ -330,66 +405,130 @@ function createPetMarket({ env = process.env } = {}) {
 
     async install({ id, displayName, description, spritesheetUrl, spriteVersionNumber } = {}) {
       if (!PET_ID_PATTERN.test(String(id || ''))) throw new Error('Invalid pet id');
-      const targetDir = path.join(petsDirectory(env), id);
+      const root = petsDirectory(env);
+      const targetDir = resolvePetDir(root, id);
       const petJsonPath = path.join(targetDir, 'pet.json');
       const spritesheetPath = path.join(targetDir, 'spritesheet.webp');
-      if (fs.existsSync(petJsonPath) && fs.existsSync(spritesheetPath)) {
-        return { id, path: targetDir, installed: true, alreadyInstalled: true };
-      }
-
-      const curated = CURATED_COMMUNITY_PETS.find(p => p.id === id);
-      const targetUrl = spritesheetUrl || curated?.spritesheetUrl;
-      const targetName = displayName || curated?.displayName || titleCase(id);
-      const targetDesc = description !== undefined ? description : (curated?.description || '');
-      const targetVer = spriteVersionNumber || curated?.spriteVersionNumber || 1;
-
-      let buffer;
-      if (targetUrl) {
-        const res = await fetchWithProxy(targetUrl, { signal: AbortSignal.timeout(30000) }, env);
-        if (!res.ok) throw new Error(`Download failed (${res.status})`);
-        const arrayBuf = await res.arrayBuffer();
-        buffer = Buffer.from(arrayBuf);
-      } else {
-        const official = officialPets();
-        const pet = official.pets.find(entry => entry.id === id);
-        if (!pet) throw new Error(official.asarPath ? `桌宠 ${id} 不在官方预载目录中` : '未找到 Codex Desktop 安装，无法获取官方桌宠');
-        const fd = fs.openSync(official.asarPath, 'r');
-        try {
-          buffer = Buffer.alloc(pet.spritesheet.size);
-          const position = official.header.blobBase + Number(pet.spritesheet.offset);
-          if (fs.readSync(fd, buffer, 0, pet.spritesheet.size, position) !== pet.spritesheet.size) {
-            throw new Error('Spritesheet truncated');
-          }
-        } finally {
-          fs.closeSync(fd);
+      claimOperation(id, 'install');
+      try {
+        if (fs.existsSync(petJsonPath) && fs.existsSync(spritesheetPath)) {
+          return { id, path: targetDir, installed: true, alreadyInstalled: true };
         }
-      }
 
-      if (buffer.length > MAX_SPRITESHEET_BYTES) throw new Error('Spritesheet too large');
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.writeFileSync(spritesheetPath, buffer);
-      fs.writeFileSync(petJsonPath, `${JSON.stringify({
-        id,
-        displayName: targetName,
-        description: targetDesc,
-        spriteVersionNumber: targetVer,
-        spritesheetPath: 'spritesheet.webp',
-      }, null, 2)}\n`);
-      previewCache.delete(id);
-      return { id, path: targetDir, installed: true, alreadyInstalled: false };
+        const curated = CURATED_COMMUNITY_PETS.find(p => p.id === id);
+        const targetUrl = spritesheetUrl || curated?.spritesheetUrl;
+        // 先构造并校验 pet.json 元数据，字段不合法直接拒绝，不产生任何文件
+        const metadata = validatePetMetadata({
+          id,
+          displayName: displayName || curated?.displayName || titleCase(id),
+          description: description !== undefined ? description : (curated?.description || ''),
+          spriteVersionNumber: spriteVersionNumber || curated?.spriteVersionNumber || 1,
+          spritesheetPath: 'spritesheet.webp',
+        }, id);
+
+        // 1) 获取精灵图字节：社区走 HTTPS 下载，官方从 app.asar 按需提取
+        let buffer;
+        if (targetUrl) {
+          const res = await fetchWithProxy(targetUrl, { signal: AbortSignal.timeout(30000) }, env);
+          if (!res.ok) throw new Error(`Download failed (${res.status})`);
+          const lengthHeader = res.headers.get('content-length');
+          const declaredLength = lengthHeader !== null && /^\d+$/.test(lengthHeader.trim()) ? Number(lengthHeader) : null;
+          if (declaredLength !== null && declaredLength > MAX_SPRITESHEET_BYTES) {
+            try { await res.body?.cancel(); } catch { /* 中断下载失败可忽略 */ }
+            throw new Error(`Spritesheet too large (${declaredLength} bytes)`);
+          }
+          buffer = Buffer.from(await res.arrayBuffer());
+          if (declaredLength !== null && buffer.length !== declaredLength) {
+            throw new Error(`Download incomplete (${buffer.length}/${declaredLength} bytes)`);
+          }
+        } else {
+          const official = officialPets();
+          const pet = official.pets.find(entry => entry.id === id);
+          if (!pet) throw new Error(official.asarPath ? `桌宠 ${id} 不在官方预载目录中` : '未找到 Codex Desktop 安装，无法获取官方桌宠');
+          const fd = fs.openSync(official.asarPath, 'r');
+          try {
+            buffer = Buffer.alloc(pet.spritesheet.size);
+            const position = official.header.blobBase + Number(pet.spritesheet.offset);
+            if (fs.readSync(fd, buffer, 0, pet.spritesheet.size, position) !== pet.spritesheet.size) {
+              throw new Error('Spritesheet truncated');
+            }
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+
+        // 2) 资源校验：大小上限 + WebP 签名（RIFF....WEBP）
+        if (buffer.length > MAX_SPRITESHEET_BYTES) throw new Error('Spritesheet too large');
+        if (!isWebpBuffer(buffer)) throw new Error('Invalid spritesheet: missing RIFF/WEBP signature');
+
+        // 3) 写入 pets 根目录下的同级临时目录（同盘，保证 rename 可用）
+        fs.mkdirSync(root, { recursive: true });
+        sweepStaleArtifacts(root);
+        const token = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        const stagingDir = path.join(root, `.tmp-${id}-${token}`);
+        fs.mkdirSync(stagingDir, { recursive: true });
+        try {
+          fs.writeFileSync(path.join(stagingDir, 'spritesheet.webp'), buffer);
+          fs.writeFileSync(path.join(stagingDir, 'pet.json'), `${JSON.stringify(metadata, null, 2)}\n`);
+
+          // 4) 回读校验临时目录：pet.json 可解析且字段齐全，精灵图大小/签名与下载内容一致
+          const writtenMeta = JSON.parse(fs.readFileSync(path.join(stagingDir, 'pet.json'), 'utf8'));
+          validatePetMetadata(writtenMeta, id);
+          const writtenSheet = fs.readFileSync(path.join(stagingDir, 'spritesheet.webp'));
+          if (writtenSheet.length !== buffer.length || !isWebpBuffer(writtenSheet)) {
+            throw new Error('Staged spritesheet verification failed');
+          }
+
+          // 5) 原子切换：旧目录先移为备份，再 rename 临时目录为正式目录；失败回滚旧版本
+          const backupDir = fs.existsSync(targetDir) ? path.join(root, `.bak-${id}-${token}`) : null;
+          try {
+            if (backupDir) await renameWithRetry(targetDir, backupDir);
+            try {
+              await renameWithRetry(stagingDir, targetDir);
+            } catch (swapError) {
+              if (backupDir && fs.existsSync(backupDir) && !fs.existsSync(targetDir)) {
+                try {
+                  await renameWithRetry(backupDir, targetDir);
+                } catch (rollbackError) {
+                  throw new Error(`Install swap failed (${swapError.message}); rollback also failed (${rollbackError.message})`);
+                }
+              }
+              throw swapError;
+            }
+          } finally {
+            if (backupDir) {
+              try { fs.rmSync(backupDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* 旧版本清理失败不影响安装结果 */ }
+            }
+          }
+        } catch (err) {
+          // 任何一步失败都清理临时目录；正式目录只在全部校验通过后才被替换
+          try { fs.rmSync(stagingDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* best effort */ }
+          throw err;
+        }
+        previewCache.delete(id);
+        return { id, path: targetDir, installed: true, alreadyInstalled: false };
+      } finally {
+        releaseOperation(id);
+      }
     },
 
     uninstall({ id } = {}) {
       if (!PET_ID_PATTERN.test(String(id || ''))) throw new Error('Invalid pet id');
       const root = petsDirectory(env);
-      const targetDir = path.join(root, id);
-      if (path.relative(root, targetDir).startsWith('..')) throw new Error('Invalid pet directory');
-      if (!fs.existsSync(targetDir)) return { id, removed: false };
-      fs.rmSync(targetDir, { recursive: true, force: true });
-      previewCache.delete(id);
-      return { id, removed: true };
+      const targetDir = resolvePetDir(root, id);
+      claimOperation(id, 'uninstall');
+      try {
+        sweepStaleArtifacts(root);
+        if (!fs.existsSync(targetDir)) return { id, removed: false };
+        fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        if (fs.existsSync(targetDir)) throw new Error(`Failed to remove pet directory: ${targetDir}`);
+        previewCache.delete(id);
+        return { id, removed: true };
+      } finally {
+        releaseOperation(id);
+      }
     },
   };
 }
 
-module.exports = { createPetMarket, petsDirectory, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS };
+module.exports = { createPetMarket, petsDirectory, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS, isWebpBuffer, validatePetMetadata };
