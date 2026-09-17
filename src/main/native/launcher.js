@@ -6,7 +6,7 @@ const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const { nativePaths, nativeEnvironment, saveNativeSettings } = require('./config');
 const { runUpdateFlow, reexecLauncher } = require('./updater');
 const { markBootOk, pidAlive } = require('./update-state');
-const { inspectPosix, assertDesktopStopped, migrateLegacyDataDirectory } = require('./platform');
+const { inspectPosix, assertDesktopStopped } = require('./platform');
 const {
   evaluateDesktopCompatibility,
   enforceDesktopCompatibility,
@@ -182,14 +182,12 @@ async function launch(args = []) {
     console.warn(`[Harness Mix] Codex Desktop ${installation.version} compatibility is ${compatibility.state}; protocol checks continue, but full restarted Desktop acceptance is not recorded.`);
   }
   const env = nativeEnvironment();
-  // Retire the previous runtime first: it still holds the data directory open and
-  // would otherwise write over the sessions and accounts being relocated. Only
-  // then relocate a pre-rename directory and record the executable locations.
+  // Retire the previous runtime first: it still holds the data directory open
+  // and would otherwise write over live sessions and accounts.
   console.log('[Harness Mix] Restarting Codex Desktop: official Codex passthrough + Harness Mix routes.');
   stopDesktopProcesses(installation);
   await new Promise(resolve => setTimeout(resolve, 1000));
   sweepLeftovers(root, dataDir);
-  migrateLegacyDataDirectory({ log: message => console.log(message) });
   saveNativeSettings(env);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'node-path.txt'), process.execPath);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'stock-path.txt'), installation.stock);
