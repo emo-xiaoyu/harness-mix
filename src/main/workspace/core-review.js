@@ -1,5 +1,36 @@
 const { diff } = require('./diff');
 
+// 本轮真实触碰的文件路径集合（相对 cwd、小写、正斜杠）：来自文件编辑类工具的
+// 结构化 path 与原生 file_change 条目。协作 Lead 回合合并其子线程的触碰路径，
+// 让团队卡片展示的是整个团队而非其他会话的改动。
+function touchedPaths(runtime, thread, message) {
+  const cwd = String(thread.cwd || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const turns = [message.coreTurnId];
+  for (const child of runtime.threads ?? []) {
+    if (child.parentThreadId !== thread.id) continue;
+    for (const m of child.messages ?? []) if (m.coreTurnId) turns.push(m.coreTurnId);
+  }
+  const touched = new Set();
+  const add = value => {
+    if (typeof value !== 'string' || !value) return;
+    let p = value.replace(/\\/g, '/');
+    if (/^[a-z]:\//i.test(p)) {
+      const lower = p.toLowerCase();
+      if (!cwd || !lower.startsWith(cwd + '/')) return;
+      p = p.slice(cwd.length + 1);
+    }
+    p = p.replace(/^\.\//, '');
+    if (p) touched.add(p.toLowerCase());
+  };
+  for (const turnId of turns) {
+    for (const item of runtime.core.getItemsForTurn(turnId)) {
+      if (item.type === 'file_change') add(item.path);
+      else if (item.type === 'tool_call') add(item.path);
+    }
+  }
+  return touched;
+}
+
 // Snapshot acquisition/undo stay in Workspace. Core stores their presentation.
 async function projectReview(runtime, thread, message, record) {
   const core = runtime.core;
@@ -17,6 +48,12 @@ async function projectReview(runtime, thread, message, record) {
     const nativeItems = core.getItemsForTurn(message.coreTurnId).filter(item => item.type === 'file_change' && item.source === 'native');
     const nativePaths = new Set(nativeItems.map(item => item.path));
     changes = changes.filter(change => nativePaths.has(change.path));
+  } else if (!hasNativePatch && record.concurrent) {
+    // 无原生 patch 的 Harness（如 Pi）：并发同目录时用本轮工具触碰路径收窄全量快照，
+    // 避免同项目其他会话的改动出现在本回合卡片里。本轮没有任何可归因路径时
+    // （纯 shell 会话等）保留全量快照，不虚报归属。
+    const touched = touchedPaths(runtime, thread, message);
+    if (touched.size) changes = changes.filter(change => touched.has(change.path.toLowerCase()));
   }
 
   core.dispatch({ threadId: thread.id, turnId: message.coreTurnId, type: 'files.updated', payload: {

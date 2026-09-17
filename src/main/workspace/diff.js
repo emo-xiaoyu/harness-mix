@@ -1,6 +1,10 @@
 // Bounded line LCS; large inputs use a content-exact coarse replacement.
+// Line comparison ignores CR/LF differences: a whole-file line-ending flip
+// (checkout/stash with autocrlf, editor re-save) is not a content edit and
+// must not surface as a full-file +N/-N phantom change.
+const eolSafe = s => s.replace(/\r\n$/, '\n');
 function diff(before = '', after = '') {
-  const lines = s => s ? s.match(/[^\n]*\n|[^\n]+$/g) ?? [] : [];
+  const lines = s => s ? (s.match(/[^\n]*\n|[^\n]+$/g) ?? []).map(eolSafe) : [];
   const a = lines(before), b = lines(after), rows = [];
   let old = 1, next = 1;
   const add = (kind, text) => rows.push({ kind, text: text.replace(/\r?\n$/, ''), old: kind === 'add' ? null : old++, next: kind === 'remove' ? null : next++ });

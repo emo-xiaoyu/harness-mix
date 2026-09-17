@@ -26,6 +26,15 @@ function sanitizeName(title) {
   return String(title || "").replace(/["&|<>^%]/g, "").trim().slice(0, 40) || "Harness Mix 任务";
 }
 
+// 文件编辑类工具的目标路径（结构化元数据）：Host 用它把全工作区快照收窄为
+// 「本轮真实触碰的文件」，让并发同目录的会话各自只显示自己的改动。
+const FILE_EDIT_TOOLS = new Set(["edit", "write", "multiedit", "multi_edit", "apply_patch"]);
+function editTarget(event) {
+  const tool = String(event.toolName || "").toLowerCase();
+  const target = event.args && typeof event.args.path === "string" ? event.args.path : null;
+  return FILE_EDIT_TOOLS.has(tool) && target ? { path: target } : {};
+}
+
 /** 工具结果里的图片块 → 统一 artifact 事件（各 Harness 返回产物在桌面层对齐呈现；超大图片不入会话存档） */
 function imageArtifacts(content, toolCallId) {
   if (!Array.isArray(content)) return [];
@@ -286,12 +295,12 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
         return null;
       }
       case "tool_execution_start":
-        return { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: "running", detail: firstLine(event.args ? Object.values(event.args)[0] : ""), input: toolText(event.args?.command ?? JSON.stringify(event.args ?? {}, null, 2)) };
+        return { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: "running", detail: firstLine(event.args ? Object.values(event.args)[0] : ""), input: toolText(event.args?.command ?? JSON.stringify(event.args ?? {}, null, 2)), ...editTarget(event) };
       case "tool_execution_update":
-        return { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: "running", detail: summarizeContent(event.partialResult?.content), output: toolText(event.partialResult?.content) };
+        return { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: "running", detail: summarizeContent(event.partialResult?.content), output: toolText(event.partialResult?.content), ...editTarget(event) };
       case "tool_execution_end":
         return [
-          { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: event.isError ? "error" : "done", detail: summarizeContent(event.result?.content), output: toolText(event.result?.content) },
+          { kind: "tool", toolCallId: event.toolCallId, title: event.toolName || "工具", state: event.isError ? "error" : "done", detail: summarizeContent(event.result?.content), output: toolText(event.result?.content), ...editTarget(event) },
           ...imageArtifacts(event.result?.content, event.toolCallId),
         ];
       case "extension_ui_request": {

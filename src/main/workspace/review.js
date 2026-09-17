@@ -40,6 +40,8 @@ class ReviewStore {
       if ((!before && previousNames.has(file)) || (!next && currentNames.has(file))) continue;
       if (before?.hash === next?.hash) continue;
       const delta = diff(before?.text, next?.text);
+      // 仅行尾符/编码差异不产生真实增删行，不列为变更（防止全文件幻影 diff）
+      if (!delta.added && !delta.removed) continue;
       record.changes.push({ path: file.replace(/\\/g, '/'), before: before ?? null, after: next ?? null, added: delta.added, removed: delta.removed, coarse: delta.coarse });
     }
     record.skipped = record.baseline.skipped.length + after.skipped.length;

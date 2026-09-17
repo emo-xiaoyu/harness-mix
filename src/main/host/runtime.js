@@ -1149,6 +1149,11 @@ class HostRuntime {
     event = { ...event, timestamp: event.timestamp ?? Date.now() };
     const { settled, ignored } = this.execution.apply(thread, event);
     if (ignored) return;
+    // 文件编辑落盘后即时刷新审查快照（含协作 Lead 的聚合卡片），不等 3s 轮询
+    if ((event.kind === 'tool' && event.state !== 'running' && typeof event.path === 'string' && event.path) || event.kind === 'file-change') {
+      this.reviewController.nudge(thread.id);
+      if (thread.parentThreadId) this.reviewController.nudge(thread.parentThreadId);
+    }
     if (event.kind === 'session') {
       if (event.nativeSessionId) thread.nativeSessionId = event.nativeSessionId;
       if (event.model) thread.model = event.model;

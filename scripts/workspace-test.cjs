@@ -49,6 +49,15 @@ const { HostRuntime } = require('../src/main/host/runtime');
   await fs.symlink(path.join(directory, 'outside'), path.join(root, 'link'), 'junction');
   await assert.rejects(resolveFile(root, 'link/file.txt'), /不跟随/);
   const empty = diff('', ''); assert.equal(empty.rows.length, 0);
+  // 行尾符幻影：LF 基线 vs CRLF 当前内容（逐行相同）不产生变更，也不进入审查记录
+  const eol = diff('alpha\nbravo\n', 'alpha\r\nbravo\r\n');
+  assert.equal(eol.added, 0); assert.equal(eol.removed, 0);
+  assert.ok(diff('alpha\n', 'alpha\r\nbravo\r\n').added === 1, '真实新增行不受行尾归一化影响');
+  const eolStore = new ReviewStore(path.join(directory, 'eol')), eolId = await eolStore.begin(root);
+  await fs.writeFile(path.join(root, 'dirty.js'), 'user preexisting change\r\nold line\r\n');
+  const eolPreview = await eolStore.preview(eolId);
+  assert.ok(!eolPreview.changes.some(c => c.path === 'dirty.js'), 'CRLF-only flip is not a change');
+  await fs.writeFile(path.join(root, 'dirty.js'), 'user preexisting change\nold line\n');
   const rt = new HostRuntime({ observer: new ParityObserver(), dataDirectory: path.join(directory, 'runtime') });
   const updates = [];
   rt.subscribe(e => { if (e.type === 'turn/diff/updated') updates.push(e); });

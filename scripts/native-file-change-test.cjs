@@ -12,8 +12,9 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
   const rt = new HostRuntime({ dataDirectory: directory });
   await rt.store.load();
   let emit;
+  const emitters = new Map();
   rt.adapters.set('test', { manifest: { id: 'test', name: 'Test', capabilities: {} },
-    async open(input) { emit = input.emit; return {}; }, async send() {}, async close() {} });
+    async open(input) { emit = input.emit; emitters.set(input.thread.id, input.emit); return {}; }, async send() {}, async close() {} });
   rt.status.test = { available: true };
   const apply = events => { for (const event of [events].flat().filter(Boolean)) emit(event); };
   try {
@@ -89,6 +90,23 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
     assert.throws(() => canonicalChanges(root, [{ path: '../escape.txt' }]), /outside/);
     await rt.undoFile(thread.id, message.id, 'a.txt');
     assert.equal(await fs.readFile(path.join(root, 'a.txt'), 'utf8'), 'original\n');
+    // 并发同目录、无原生 patch 的 Harness：各回合审查按工具触碰路径归属，
+    // 另一个会话的改动不混入本回合卡片（原生 Codex 的每会话独立 diff 行为）。
+    const w1 = await rt.createThread({ harnessId: 'test', cwd: root });
+    const w2 = await rt.createThread({ harnessId: 'test', cwd: root });
+    await rt.send(w1.id, 'task one');
+    await rt.send(w2.id, 'task two');
+    const m1 = w1.messages.at(-1), m2 = w2.messages.at(-1);
+    assert.equal(m1.concurrent, true); assert.equal(m2.concurrent, true);
+    emitters.get(w1.id)({ kind: 'tool', toolCallId: 'w1-edit', title: 'edit', state: 'done', path: path.join(root, 'w1.txt') });
+    emitters.get(w2.id)({ kind: 'tool', toolCallId: 'w2-edit', title: 'edit', state: 'done', path: path.join(root, 'w2.txt') });
+    await fs.writeFile(path.join(root, 'w1.txt'), 'one\n');
+    await fs.writeFile(path.join(root, 'w2.txt'), 'two\n');
+    emitters.get(w1.id)({ kind: 'completed', finalAnswer: true });
+    emitters.get(w2.id)({ kind: 'completed', finalAnswer: true });
+    for (let i = 0; i < 200 && (w1.reviewPending || w2.reviewPending); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(m1.review.files.map(file => file.path), ['w1.txt'], 'w1 只归属本轮触碰的文件');
+    assert.deepEqual(m2.review.files.map(file => file.path), ['w2.txt'], 'w2 只归属本轮触碰的文件');
     console.log('native-file-change: native adapters -> Core -> review, repeated edits, snapshot fallback, undo, late events passed');
   } finally { await rt.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

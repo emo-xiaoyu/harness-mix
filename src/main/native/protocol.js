@@ -273,6 +273,7 @@ class NativeProtocol {
     this.queueNotifications = new Map(); // response-first queue notifications, coalesced per thread
     this.queueStarts = new Set();   // queued submission ids currently being accepted by a native harness
     this.closed = false;
+    this.turnDiffs = new Map(); // `${threadId}\0${turnId}` -> last pushed diff text (dedupe)
     this.unsubscribe = runtime.core.subscribe(({ event, projected }) => this.onCore(event, projected));
     // Host 侧新建的线程（协作子任务等）也要通知 Desktop 侧栏，与 thread/start 同一契约
     this.unsubscribeRuntime = runtime.subscribe(event => {
@@ -991,7 +992,16 @@ class NativeProtocol {
     if (event.type === 'usage.updated') this.emit({ method: 'harnessmix/thread/usage/updated', params: { threadId, usage: projectUsage(projected.thread?.usage) } });
     if (projected.items) {
       for (const file of projected.items) this.onCore({ ...event, type: 'item.updated' }, { item: file });
-      notify('turn/diff/updated', { diff: projected.items.map(i => projectItem(i)?.changes?.map(c => c.diff).filter(Boolean).join('\n')).filter(Boolean).join('\n') });
+      // 去重：内容未变（含初始空态的 3s 轮询）不重复推送，避免刷屏与页脚抖动；
+      // 变化被完全还原时仍需推送一次空 diff 让 Desktop 清空页脚。
+      const diffText = projected.items.map(i => projectItem(i)?.changes?.map(c => c.diff).filter(Boolean).join('\n')).filter(Boolean).join('\n');
+      const diffKey = `${threadId}\0${turnId}`;
+      const lastDiff = this.turnDiffs.get(diffKey);
+      if (diffText !== lastDiff && (diffText || lastDiff !== undefined)) {
+        if (this.turnDiffs.size > 200) this.turnDiffs.delete(this.turnDiffs.keys().next().value);
+        this.turnDiffs.set(diffKey, diffText);
+        notify('turn/diff/updated', { diff: diffText });
+      }
     }
     if (event.type === 'plan.updated' && item) notify('turn/plan/updated', { explanation: null, plan: (item.entries || []).map(e => ({ step: e.text || e.title || e.step, status: e.status === 'done' || e.status === 'completed' ? 'completed' : e.status === 'in_progress' ? 'inProgress' : 'pending' })) });
     if (event.type === 'turn.started') {

@@ -174,6 +174,7 @@ class EventNormalizer {
     }
     const patch = {};
     if (legacy.collaboration) patch.collaboration = legacy.collaboration;
+    if (typeof legacy.path === 'string' && legacy.path) patch.path = legacy.path;
     for (const k of ['detail', 'input', 'output']) {
       if (typeof legacy[k] === 'string') patch[k] = legacy[k];
       else if (legacy[k] != null) patch[k] = JSON.stringify(legacy[k]);

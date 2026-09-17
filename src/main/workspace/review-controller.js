@@ -15,7 +15,7 @@ class ReviewController {
     if (this.settlements.has(thread.id)) return;
     this.settlements.add(thread.id);
     const monitor = this.reviewMonitors.get(thread.id);
-    if (monitor) { monitor.closed = true; clearInterval(monitor.timer); this.reviewMonitors.delete(thread.id); }
+    if (monitor) { monitor.closed = true; clearInterval(monitor.timer); clearTimeout(monitor.nudgeTimer); this.reviewMonitors.delete(thread.id); }
     thread.reviewPending = true;
     try {
       if (message?.reviewId) {
@@ -59,7 +59,7 @@ class ReviewController {
   // The UI subscribes to a turn-scoped event; workspace snapshots stay in Main.
   startReviewUpdates(thread, message) {
     if (!message.reviewId || this.reviewMonitors.has(thread.id)) return;
-    const monitor = { busy: false, closed: false };
+    const monitor = { busy: false, closed: false, nudgeTimer: null };
     const tick = async () => {
       if (monitor.closed || monitor.busy || !message.streaming) return;
       monitor.busy = true;
@@ -77,10 +77,23 @@ class ReviewController {
         if (!monitor.closed) for (const listener of this.listeners) listener({ type: 'turn/diff/updated', threadId: thread.id, turnId: message.id, error: e.message });
       } finally { monitor.busy = false; }
     };
+    monitor.tick = tick;
     monitor.timer = setInterval(() => void tick(), 3000);
     monitor.timer.unref?.();
     this.reviewMonitors.set(thread.id, monitor);
     void tick();
+  }
+
+  // 文件编辑工具落盘后立刻刷新一次（去抖 250ms），不再等 3s 轮询；
+  // 快照仍是唯一事实来源，这里只是提前触发。
+  nudge(threadId) {
+    const monitor = this.reviewMonitors.get(threadId);
+    if (!monitor || monitor.closed || monitor.nudgeTimer) return;
+    monitor.nudgeTimer = setTimeout(() => {
+      monitor.nudgeTimer = null;
+      if (!monitor.closed) void monitor.tick?.();
+    }, 250);
+    monitor.nudgeTimer.unref?.();
   }
 
   emitReviewUpdate(thread, message, review) {
