@@ -1,4 +1,4 @@
-// 失败回合错误分类（借鉴 codeg 的失败分类 UX）：
+// 失败回合错误分类：
 // 诚实优先——适配器从原生结构化错误显式给出 errorKind / codexErrorInfo 时直接使用；
 // 否则按 HTTP 状态码与消息特征归类；都不中则 'unknown'，绝不虚构原因。
 const ERROR_KINDS = ['network', 'auth', 'quota', 'refused', 'server', 'unknown'];

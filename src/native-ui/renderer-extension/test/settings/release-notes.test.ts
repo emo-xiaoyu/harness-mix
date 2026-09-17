@@ -64,7 +64,7 @@ describe("Release notes Markdown", () => {
   it("renders the current GitHub Release subset as structured elements", () => {
     const root = render(
       [
-        "codexhost 是一个将 Pi 和 Claude Code 接入 Codex Desktop 的跨平台 Host。",
+        "harnessmix 是一个将 Pi 和 Claude Code 接入 Codex Desktop 的跨平台 Host。",
         "",
         "## 本次发布",
         "",
@@ -76,8 +76,8 @@ describe("Release notes Markdown", () => {
         "### npm",
         "",
         "```bash",
-        "npm install -g @codexhost/cli",
-        "codexhost",
+        "npm install -g @harnessmix/cli",
+        "harnessmix",
         "```",
       ].join("\n"),
     );
@@ -94,13 +94,13 @@ describe("Release notes Markdown", () => {
     expect(visibleText(root)).toContain("本次发布");
     expect(visibleText(root)).not.toContain("##");
     expect(visibleText(root)).not.toContain("- 新增");
-    expect(visibleText(root)).toContain("npm install -g @codexhost/cli");
+    expect(visibleText(root)).toContain("npm install -g @harnessmix/cli");
 
     const list = descendants(root).find((element) => element.tagName === "ul");
     expect(list?.children).toHaveLength(2);
     const code = descendants(root).find((element) => element.tagName === "code");
     expect(code?.className).toBe("language-bash");
-    expect(code?.textContent).toBe("npm install -g @codexhost/cli\ncodexhost");
+    expect(code?.textContent).toBe("npm install -g @harnessmix/cli\nharnessmix");
   });
 
   it("preserves authored line breaks within bilingual paragraphs", () => {
@@ -119,22 +119,22 @@ describe("Release notes Markdown", () => {
   it("renders inline code, emphasis, links, and ordered lists", () => {
     const root = render(
       [
-        "Use `codexhost` and **restart** after install.",
+        "Use `harnessmix` and **restart** after install.",
         "",
         "1. Download the package",
-        "2. Open [Releases](https://github.com/BytePioneer-AI/codex-host/releases)",
+        "2. Open [Releases](https://github.com/emo-xiaoyu/harness-mix/releases)",
       ].join("\n"),
     );
 
     expect(root.children.map((child) => (child as FakeElement).tagName)).toEqual(["p", "ol"]);
     const code = descendants(root).find((element) => element.tagName === "code");
-    expect(code?.textContent).toBe("codexhost");
+    expect(code?.textContent).toBe("harnessmix");
     const strong = descendants(root).find((element) => element.tagName === "strong");
     expect(strong?.textContent).toBe("restart");
     const link = descendants(root).find((element) => element.tagName === "a");
     expect(link?.textContent).toBe("Releases");
     expect(link?.attributes.get("href")).toBe(
-      "https://github.com/BytePioneer-AI/codex-host/releases",
+      "https://github.com/emo-xiaoyu/harness-mix/releases",
     );
     expect(link?.attributes.get("target")).toBe("_blank");
     expect(link?.attributes.get("rel")).toBe("noopener noreferrer");
