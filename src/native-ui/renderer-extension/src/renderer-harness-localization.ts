@@ -1,4 +1,4 @@
-import type { HarnessCommandDescriptor, HarnessPermissionMode } from "@codexhost/shared-contracts";
+import type { HarnessCommandDescriptor, HarnessPermissionMode } from "@harnessmix/shared-contracts";
 
 import type { RendererSettingsLocale } from "./settings/localization.js";
 

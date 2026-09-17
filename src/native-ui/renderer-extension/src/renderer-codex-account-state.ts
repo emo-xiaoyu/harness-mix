@@ -1,4 +1,4 @@
-import type { CodexAccountSummary } from "@codexhost/shared-contracts";
+import type { CodexAccountSummary } from "@harnessmix/shared-contracts";
 import type { RendererModelClient } from "./renderer-model-client.js";
 
 export function resolveCodexAccountSelection(

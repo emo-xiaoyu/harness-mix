@@ -9,7 +9,7 @@ import {
   type HarnessSessionListResult,
   type HarnessSessionImportParams,
   type HarnessSessionImportResult,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 export interface RendererSessionImportClient {
   listSessionImportSources(): Promise<HarnessSessionImportSourcesResult>;
@@ -42,13 +42,13 @@ export function createRendererSessionImportClient(
   return {
     async listSessionImportSources() {
       return harnessSessionImportSourcesResultSchema.parse(
-        await request("codexhost/harness/session-import/sources", {}),
+        await request("harnessmix/harness/session-import/sources", {}),
       );
     },
     async listHarnessSessions(input) {
       const params = harnessSessionListParamsSchema.parse(input);
       return harnessSessionListResultSchema.parse(
-        await request("codexhost/harness/session-import/list", params),
+        await request("harnessmix/harness/session-import/list", params),
       );
     },
     async importHarnessSession(input) {
@@ -56,7 +56,7 @@ export function createRendererSessionImportClient(
       const key = JSON.stringify([params.harnessId, params.nativeSessionId]);
       const existing = pending.get(key);
       if (existing) return existing;
-      const operation = request("codexhost/harness/session-import/import", params)
+      const operation = request("harnessmix/harness/session-import/import", params)
         .then((value) => harnessSessionImportResultSchema.parse(value))
         .finally(() => {
           if (pending.get(key) === operation) pending.delete(key);

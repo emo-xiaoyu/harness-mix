@@ -214,7 +214,7 @@ function appendInline(document: ReleaseNotesDocument, parent: HTMLElement, text:
 
 function isSafeLink(href: string): boolean {
   try {
-    const url = new URL(href, "https://codexhost.invalid");
+    const url = new URL(href, "https://harnessmix.invalid");
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;

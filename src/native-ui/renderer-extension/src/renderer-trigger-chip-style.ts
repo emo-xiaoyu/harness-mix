@@ -14,8 +14,8 @@
  * cannot express, while each control still sets its own inline
  * height/padding/font-size to size itself.
  */
-const STYLE_ATTRIBUTE = "data-codexhost-trigger-chip-style";
-export const TRIGGER_CHIP_CLASS = "codexhost-trigger-chip";
+const STYLE_ATTRIBUTE = "data-harnessmix-trigger-chip-style";
+export const TRIGGER_CHIP_CLASS = "harnessmix-trigger-chip";
 
 export function ensureRendererTriggerChipStyle(ownerDocument: Document): void {
   if (ownerDocument.querySelector(`style[${STYLE_ATTRIBUTE}]`)) return;

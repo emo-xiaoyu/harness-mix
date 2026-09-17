@@ -1,7 +1,7 @@
 import {
   harnessCommandDescriptorSchema,
   type HarnessCommandDescriptor,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { routeRendererHarnessCommandSelection } from "../src/renderer-harness-command-claim.js";

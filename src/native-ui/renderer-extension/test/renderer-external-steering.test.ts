@@ -16,7 +16,7 @@ function fixture(owner: "external" | "codex" = "external") {
   const rpc = vi.fn(
     async (method: unknown, params: unknown, options?: unknown): Promise<unknown> => {
       void options;
-      if (method === "codexhost/thread/ownership/list") {
+      if (method === "harnessmix/thread/ownership/list") {
         return {
           threads: [
             { threadId: "thread", owner, ...(owner === "external" ? { harnessId: "pi" } : {}) },
@@ -235,7 +235,7 @@ describe("external direction changes use normal Desktop start presentation", () 
     f.dispose();
     waiting.resolve(undefined);
     await expect(result).rejects.toThrow("disposed");
-    expect(f.rpc.mock.calls.map(([method]) => method)).toEqual(["codexhost/thread/ownership/list"]);
+    expect(f.rpc.mock.calls.map(([method]) => method)).toEqual(["harnessmix/thread/ownership/list"]);
   });
 
   it("resumes automatically paused queue messages without unpausing older paused entries", async () => {
@@ -268,7 +268,7 @@ describe("external direction changes use normal Desktop start presentation", () 
     await expect(f.manager.steerTurn(...f.args)).rejects.toThrow("ownership unavailable");
     expect(f.originalSteer).not.toHaveBeenCalled();
     f.rpc.mockImplementation(async (method) => {
-      if (method === "codexhost/thread/ownership/list")
+      if (method === "harnessmix/thread/ownership/list")
         return { threads: [{ threadId: "thread", owner: "external", harnessId: "pi" }] };
       throw new Error("cancel failed");
     });

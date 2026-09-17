@@ -4,7 +4,7 @@ import {
   harnessCommandDescriptorSchema,
   threadCommandExecuteParamsSchema,
   threadCommandExecuteResultSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 describe("Harness Command runtime contracts", () => {
   it("round-trips strict text command input", () => {

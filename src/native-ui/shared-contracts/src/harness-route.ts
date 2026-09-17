@@ -4,7 +4,7 @@ import { harnessModelRefSchema, harnessThinkingOptionIdSchema } from "./harness-
 import { harnessPermissionModeIdSchema } from "./harness-permission-modes.js";
 import { harnessPluginIdSchema } from "./harness-plugins.js";
 
-export const HARNESS_PLUGIN_ROUTE_PREFIX = "codexhost/plugin-v1@";
+export const HARNESS_PLUGIN_ROUTE_PREFIX = "harnessmix/plugin-v1@";
 const MAX_ROUTE_LENGTH = 4096;
 
 export const harnessPluginRouteSchema = z

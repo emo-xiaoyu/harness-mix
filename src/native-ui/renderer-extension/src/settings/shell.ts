@@ -14,9 +14,9 @@ import {
   DEFAULT_RENDERER_SETTINGS_MESSAGES,
   type RendererSettingsMessages,
 } from "./localization.js";
-import { CODEXHOST_GITHUB_REPOSITORY_URL, createDefaultRendererSettingsRegistry } from "./pages.js";
+import { HARNESSMIX_GITHUB_REPOSITORY_URL, createDefaultRendererSettingsRegistry } from "./pages.js";
 
-export const SETTINGS_SHELL_ATTRIBUTE = "data-codexhost-settings-shell";
+export const SETTINGS_SHELL_ATTRIBUTE = "data-harnessmix-settings-shell";
 export const RENDERER_SETTINGS_COLOR_SCHEME = "inherit";
 
 export interface RendererSettingsShell {
@@ -33,7 +33,7 @@ export interface RendererSettingsShell {
 
 declare global {
   interface Window {
-    __codexhostSettingsShellV1?: RendererSettingsShell;
+    __harnessmixSettingsShellV1?: RendererSettingsShell;
   }
 }
 
@@ -61,7 +61,7 @@ export function mountRendererSettingsShell(
   const resolvedRegistry = registry ?? createDefaultRendererSettingsRegistry(messages);
   if (!ownerDocument.body) throw new Error("Renderer document body is unavailable");
   if (ownerDocument.querySelector(`[${SETTINGS_SHELL_ATTRIBUTE}]`)) {
-    throw new Error("A codexhost settings shell is already mounted");
+    throw new Error("A harnessmix settings shell is already mounted");
   }
 
   const root = ownerDocument.createElement("div");
@@ -73,7 +73,7 @@ export function mountRendererSettingsShell(
   style.textContent = `${settingsCss}\n${accountsCss}\n${skinMarketCss}\n${petMarketCss}`;
 
   const dialog = ownerDocument.createElement("dialog");
-  dialog.className = "codexhost-settings-dialog";
+  dialog.className = "harnessmix-settings-dialog";
   const frame = ownerDocument.createElement("div");
   frame.className = "settings-frame";
 
@@ -91,7 +91,7 @@ export function mountRendererSettingsShell(
   brandName.textContent = "Harness Mix";
   const brandTitle = ownerDocument.createElement("span");
   brandTitle.className = "settings-brand__title";
-  brandTitle.id = "codexhost-settings-dialog-title";
+  brandTitle.id = "harnessmix-settings-dialog-title";
   brandTitle.textContent = messages.title;
   brandCopy.append(brandName, brandTitle);
   brand.append(brandMark, brandCopy);
@@ -205,7 +205,7 @@ export function mountRendererSettingsShell(
   }
   const starLink = ownerDocument.createElement("a");
   starLink.className = "settings-nav-button settings-nav-star-link";
-  starLink.href = CODEXHOST_GITHUB_REPOSITORY_URL;
+  starLink.href = HARNESSMIX_GITHUB_REPOSITORY_URL;
   starLink.target = "_blank";
   starLink.rel = "noopener noreferrer";
   starLink.setAttribute("aria-label", messages.starOnGitHub);
@@ -314,17 +314,17 @@ export function installRendererSettingsShell(
     : createDefaultRendererSettingsRegistry(messages);
   const ownerWindow = ownerDocument.defaultView ?? (typeof window !== "undefined" ? window : undefined);
   if (ownerWindow) {
-    ownerWindow.__codexhostSettingsShellV1?.dispose();
+    ownerWindow.__harnessmixSettingsShellV1?.dispose();
   }
   const shell = mountRendererSettingsShell(registry, ownerDocument, messages);
   if (ownerWindow) {
-    ownerWindow.__codexhostSettingsShellV1 = shell;
+    ownerWindow.__harnessmixSettingsShellV1 = shell;
   }
   const dispose = shell.dispose.bind(shell);
   shell.dispose = () => {
     dispose();
-    if (ownerWindow && ownerWindow.__codexhostSettingsShellV1 === shell) {
-      delete ownerWindow.__codexhostSettingsShellV1;
+    if (ownerWindow && ownerWindow.__harnessmixSettingsShellV1 === shell) {
+      delete ownerWindow.__harnessmixSettingsShellV1;
     }
   };
   return shell;

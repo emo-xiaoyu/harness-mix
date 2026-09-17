@@ -15,7 +15,7 @@ function includesThread(thread, query = {}, threads = []) {
   if (query.isPinned === true && !thread.isPinned) return false;
   if (query.isPinned === false && thread.isPinned) return false;
   if (query.cwd != null && !(Array.isArray(query.cwd) ? query.cwd : [query.cwd]).includes(thread.cwd)) return false;
-  if (query.modelProviders?.length && !query.modelProviders.includes('codexhost')) return false;
+  if (query.modelProviders?.length && !query.modelProviders.includes('harnessmix')) return false;
   if (query.sourceKinds?.length && !query.sourceKinds.includes('vscode')) return false;
   if (query.searchTerm && !(thread.title || '').toLowerCase().includes(query.searchTerm.toLowerCase())) return false;
   return true;

@@ -3,7 +3,7 @@ import type {
   HarnessSessionImportCandidate,
   HarnessSessionImportSourcesResult,
   HostThreadId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   RendererSessionImportUnavailableError,

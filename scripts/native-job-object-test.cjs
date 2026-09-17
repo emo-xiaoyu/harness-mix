@@ -54,7 +54,7 @@ const alive = pid => {
       ...process.env,
       HARNESS_MIX_HOST_SCRIPT: fixture,
       HARNESS_MIX_NODE_PATH: process.execPath,
-      CODEXHOST_STOCK_CODEX_PATH: process.execPath,
+      HARNESSMIX_STOCK_CODEX_PATH: process.execPath,
       FAKE_HOST_PIDS: pidFile,
     },
     stdio: ['ignore', 'ignore', 'pipe'],

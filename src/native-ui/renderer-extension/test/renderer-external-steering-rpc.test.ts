@@ -9,7 +9,7 @@ class RpcTarget {}
 class Manager extends RpcTarget {
   readonly #identity = "local";
   readonly requests = vi.fn(async (method: unknown) => {
-    if (method === "codexhost/thread/ownership/list") {
+    if (method === "harnessmix/thread/ownership/list") {
       return {
         threads: [
           {
@@ -120,7 +120,7 @@ describe("Desktop RpcTarget method visibility", () => {
       });
       expect(manager.presented).toHaveLength(1);
       expect(manager.requests.mock.calls.map(([method]) => method)).toEqual([
-        "codexhost/thread/ownership/list",
+        "harnessmix/thread/ownership/list",
         "turn/steer",
       ]);
     } finally {

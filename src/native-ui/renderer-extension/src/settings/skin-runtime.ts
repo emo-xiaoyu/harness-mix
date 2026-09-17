@@ -469,12 +469,12 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [da
   font-size: inherit !important;
   font-weight: inherit !important;
 }
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *),
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *),
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *),
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *),
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *),
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header [role="button"]:not([data-codexhost-settings-trigger] *) {
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-harnessmix-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-harnessmix-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-harnessmix-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-harnessmix-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-harnessmix-settings-trigger] *),
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header [role="button"]:not([data-harnessmix-settings-trigger] *) {
   background: transparent !important;
   background-color: transparent !important;
   border-color: transparent !important;
@@ -489,11 +489,11 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [da
   filter: none !important;
   outline: none !important;
 }
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *):hover,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *):hover,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *):hover,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *):hover,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *):hover {
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-harnessmix-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-harnessmix-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-harnessmix-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-harnessmix-settings-trigger] *):hover,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-harnessmix-settings-trigger] *):hover {
   background: color-mix(in srgb, ${text} 12%, transparent) !important;
   background-color: color-mix(in srgb, ${text} 12%, transparent) !important;
 }
@@ -507,11 +507,11 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [da
   filter: none !important;
   outline: none !important;
 }
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-codexhost-settings-trigger] *):active,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-codexhost-settings-trigger] *):active,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-codexhost-settings-trigger] *):active,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-codexhost-settings-trigger] *):active,
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-codexhost-settings-trigger] *):active {
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] header button:not([data-harnessmix-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-header"] button:not([data-harnessmix-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-obstacle] button:not([data-harnessmix-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-testid="app-shell-header-context-menu-surface"] button:not([data-harnessmix-settings-trigger] *):active,
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-header-toolbar] button:not([data-harnessmix-settings-trigger] *):active {
   background: color-mix(in srgb, ${text} 18%, transparent) !important;
   background-color: color-mix(in srgb, ${text} 18%, transparent) !important;
 }
@@ -578,7 +578,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-action-sidebar-thread-ac
   background: linear-gradient(90deg, color-mix(in srgb, ${accent} 22%, transparent), color-mix(in srgb, ${secondary} 16%, transparent)) !important;
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.border-border, .border-sidebar-border) { border-color: color-mix(in srgb, ${text} 14%, transparent) !important; }
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-codexhost-settings-shell] {
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-harnessmix-settings-shell] {
   --settings-bg: color-mix(in srgb, ${surface} 90%, transparent);
   --settings-sidebar: color-mix(in srgb, ${surface} 86%, ${secondary});
   --settings-panel: color-mix(in srgb, ${surface} 90%, transparent);

@@ -53,11 +53,11 @@ const RECOVERY_RETRY_MAX_MS = 300_000;
 const startupTraceStartedAt = Date.now();
 
 function startupTrace(stage: string, detail?: unknown): void {
-  if (process.env.CODEXHOST_STARTUP_TRACE !== "1") return;
+  if (process.env.HARNESSMIX_STARTUP_TRACE !== "1") return;
   const suffix =
     detail === undefined ? "" : `: ${detail instanceof Error ? detail.message : String(detail)}`;
   console.error(
-    `[codexhost startup +${Date.now() - startupTraceStartedAt}ms] controller: ${stage}${suffix}`,
+    `[harnessmix startup +${Date.now() - startupTraceStartedAt}ms] controller: ${stage}${suffix}`,
   );
 }
 
@@ -220,7 +220,7 @@ export async function runDesktopController(
   signal: AbortSignal,
   dependencies: DesktopControllerDependencies = defaultDependencies,
 ): Promise<void> {
-  const configuration = `Object.defineProperty(window, "__codexhostProductionConfigV1", { configurable: true, value: { defaultAgent: ${JSON.stringify(options.defaultAgent)} } });`;
+  const configuration = `Object.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: ${JSON.stringify(options.defaultAgent)} } });`;
   const now = dependencies.now ?? Date.now;
   let session: RendererCdpControlSession | undefined;
   let nextRecoveryAt = 0;

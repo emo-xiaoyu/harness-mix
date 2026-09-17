@@ -1,4 +1,4 @@
-import type { AccountCreditsSnapshot } from "@codexhost/shared-contracts";
+import type { AccountCreditsSnapshot } from "@harnessmix/shared-contracts";
 
 import type { RendererSettingsLocale } from "./settings/localization.js";
 
@@ -144,7 +144,7 @@ function remainingPercent(usedPercent: number): number {
 
 function renderCreditsBar(usagePercent: number, color: string): HTMLDivElement {
   const track = document.createElement("div");
-  track.dataset.codexhostCreditsBar = "";
+  track.dataset.harnessmixCreditsBar = "";
   track.style.height = "6px";
   track.style.borderRadius = "9999px";
   track.style.background = "color-mix(in srgb, currentColor 12%, transparent)";
@@ -352,7 +352,7 @@ export function mountRendererCreditsControl(composerId: string): RendererCredits
   ensureRendererTriggerChipStyle(document);
 
   const root = document.createElement("div");
-  root.dataset.codexhostCreditsControl = composerId;
+  root.dataset.harnessmixCreditsControl = composerId;
   root.className = "relative min-w-0";
   root.style.display = "none";
   root.style.alignItems = "center";
@@ -384,12 +384,12 @@ export function mountRendererCreditsControl(composerId: string): RendererCredits
   trigger.style.letterSpacing = "0";
 
   const ringSlot = document.createElement("span");
-  ringSlot.dataset.codexhostCreditsRing = "";
+  ringSlot.dataset.harnessmixCreditsRing = "";
   ringSlot.style.display = "inline-flex";
   ringSlot.style.flex = "0 0 auto";
 
   const label = document.createElement("span");
-  label.dataset.codexhostCreditsLabel = "";
+  label.dataset.harnessmixCreditsLabel = "";
   label.style.display = "inline-block";
   label.style.maxWidth = "100%";
   label.style.overflow = "hidden";
@@ -500,8 +500,8 @@ export function renderRendererCreditsControl(
   const percent = formatRendererCreditsPercent(remaining);
   const title = `${creditsPeriodLabel(accountCredits.periodType)} ${percent}`;
   const tone = rendererCreditsTone(accountCredits.usedPercent);
-  const ringSlot = control.trigger.querySelector<HTMLElement>("[data-codexhost-credits-ring]");
-  const label = control.trigger.querySelector<HTMLElement>("[data-codexhost-credits-label]");
+  const ringSlot = control.trigger.querySelector<HTMLElement>("[data-harnessmix-credits-ring]");
+  const label = control.trigger.querySelector<HTMLElement>("[data-harnessmix-credits-label]");
   if (ringSlot) {
     ringSlot.replaceChildren(
       createRendererUsageRing(remaining, {

@@ -76,10 +76,10 @@ const ELECTRON_MODULE_EXPRESSION = `(() => {
 })()`;
 
 const CONNECT_APP_HOST_CHANNEL = "codex_desktop:connect-app-host";
-const POLICY_STATE_SYMBOL = "codexhost.main-process-title-policy.v1";
-const SERVICE_OWNER_SYMBOL = "codexhost.main-process-title-policy.owner.v1";
+const POLICY_STATE_SYMBOL = "harnessmix.main-process-title-policy.v1";
+const SERVICE_OWNER_SYMBOL = "harnessmix.main-process-title-policy.owner.v1";
 const RENDERER_READY_EXPRESSION =
-  "(() => { Object.defineProperty(window, '__codexhostMainProcessTitlePolicyV1', { configurable: true, value: { state: 'ready' } }); return 'ready'; })()";
+  "(() => { Object.defineProperty(window, '__harnessmixMainProcessTitlePolicyV1', { configurable: true, value: { state: 'ready' } }); return 'ready'; })()";
 
 const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
   const mainModule = process.mainModule;
@@ -150,7 +150,7 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
     let selection = null;
     try {
       selection = await owner.executeJavaScript(
-        "window.__codexhostRendererBindingProbeV1?.lockedSelection() ?? null",
+        "window.__harnessmixRendererBindingProbeV1?.lockedSelection() ?? null",
         true,
       );
     } catch {}
@@ -175,7 +175,7 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
     let selection = null;
     try {
       selection = await owner.executeJavaScript(
-        "window.__codexhostRendererBindingProbeV1?.lockedSelection() ?? null",
+        "window.__harnessmixRendererBindingProbeV1?.lockedSelection() ?? null",
         true,
       );
     } catch {}

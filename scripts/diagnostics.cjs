@@ -29,7 +29,7 @@ const tail = (file, lines = 200) => {
 const write = (name, content) => fs.writeFileSync(path.join(stage, name), String(content));
 
 const env = nativeEnvironment();
-const data = env.CODEXHOST_DATA_DIR;
+const data = env.HARNESSMIX_DATA_DIR;
 write('versions.json', JSON.stringify({
   'harness-mix': pkg.version,
   node: process.version,

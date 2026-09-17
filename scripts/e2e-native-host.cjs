@@ -12,12 +12,12 @@ async function main() {
   assert.ok(stock && fs.existsSync(stock), 'Official Codex executable must exist');
   const directory = path.resolve('output/native-host', `run-${Date.now()}`);
   fs.mkdirSync(directory, { recursive: true });
-  const env = nativeEnvironment({ ...process.env, CODEXHOST_DATA_DIR: path.join(directory, 'data') });
+  const env = nativeEnvironment({ ...process.env, HARNESSMIX_DATA_DIR: path.join(directory, 'data') });
   Object.assign(env, {
-    CODEXHOST_STOCK_CODEX_PATH: stock,
-    CODEXHOST_HOST_NODE_PATH: process.execPath,
-    CODEXHOST_HOST_RUNTIME_PATH: paths.wrapper,
-    CODEXHOST_DEFAULT_AGENT: 'codex',
+    HARNESSMIX_STOCK_CODEX_PATH: stock,
+    HARNESSMIX_HOST_NODE_PATH: process.execPath,
+    HARNESSMIX_HOST_RUNTIME_PATH: paths.wrapper,
+    HARNESSMIX_DEFAULT_AGENT: 'codex',
   });
   const events = [];
   const diagnostics = [];
@@ -44,11 +44,11 @@ async function main() {
     assert.deepEqual(ownership.codex, { mode: 'official-passthrough', managedRoute: 'codex-harness' });
     report.checks.push('Harness Mix HostRuntime and ProtocolCore own external execution');
     report.checks.push('official Codex route is separate from the managed Codex worker');
-    const plugins = await request('codexhost/harness/plugins/list', {});
+    const plugins = await request('harnessmix/harness/plugins/list', {});
     assert.ok(plugins.plugins.some(plugin => (plugin.id || plugin.manifest?.id) === 'pi'), 'Pi plugin registered');
     report.checks.push('external harness plugins registered');
     for (const harnessId of ['pi', 'claude-code', 'deepseek-harness']) {
-      const inspection = await request('codexhost/harness/inspect', { harnessId, cwd: directory });
+      const inspection = await request('harnessmix/harness/inspect', { harnessId, cwd: directory });
       report[harnessId] = inspection;
       console.log(`${harnessId}: ${inspection.status}; models=${inspection.catalog?.models?.length || 0}${inspection.error ? `; ${inspection.error.message}` : ''}`);
       assert.equal(inspection.status, 'ready', `${harnessId} must be ready`);
@@ -56,12 +56,12 @@ async function main() {
     const officialModels = await request('model/list', {});
     assert.ok(Array.isArray(officialModels.data), 'Official model/list passes through');
     report.checks.push('official model/list passthrough');
-    const codexAccounts = await request('codexhost/account/refresh', {});
+    const codexAccounts = await request('harnessmix/account/refresh', {});
     const officialAccount = codexAccounts.accounts?.find(account => account.management === 'native');
     assert.ok(officialAccount, 'Official Codex account is projected into Account management');
     assert.equal(officialAccount.authenticated, true, 'Current official Codex login is detected');
     assert.ok(officialAccount.email, 'Current ChatGPT account identity is available from account/read');
-    const officialAccountUsage = await request('codexhost/account/usage/inspect', { accountId: officialAccount.accountId });
+    const officialAccountUsage = await request('harnessmix/account/usage/inspect', { accountId: officialAccount.accountId });
     assert.ok(officialAccountUsage.accountCredits, 'Official Codex rate limits are projected');
     report.account = {
       authenticated: officialAccount.authenticated,
@@ -94,7 +94,7 @@ async function main() {
       report.checks.push('real official Codex thread/turn passthrough');
     }
     // Real Host + stock-server section catalog, with test threads isolated in output/.
-    const sidebarThread = await request('thread/start', { cwd: directory, model: 'codexhost/pi-native' });
+    const sidebarThread = await request('thread/start', { cwd: directory, model: 'harnessmix/pi-native' });
     const sidebarId = sidebarThread.thread.id;
     assert.equal(sidebarThread.thread.sessionId, sidebarId);
     const descendants = await request('thread/list', { ancestorThreadId: sidebarId, sourceKinds: ['subAgentThreadSpawn'] });
@@ -109,14 +109,14 @@ async function main() {
     await request('thread/section/move', { threadId: sidebarId, sectionId: null });
     assert.equal((await inSection()).length, 0, 'Unpin stays removed on the next list query');
     const resumed = await request('thread/resume', { threadId: sidebarId });
-    assert.equal(resumed.model, 'codexhost/pi-native');
-    const inspected = await request('codexhost/thread/inspect', { threadId: sidebarId });
+    assert.equal(resumed.model, 'harnessmix/pi-native');
+    const inspected = await request('harnessmix/thread/inspect', { threadId: sidebarId });
     assert.equal(inspected.harnessId, 'pi');
     assert.equal(inspected.transportModelId, resumed.model);
     report.checks.push('external identity, no self-descendants, pin/unpin and resume ownership');
     if (process.argv.includes('--live')) {
       const harnessId = process.argv.find(arg => arg.startsWith('--harness='))?.split('=')[1] || 'pi';
-      const started = await request('thread/start', { cwd: directory, model: `codexhost/${harnessId}-native` });
+      const started = await request('thread/start', { cwd: directory, model: `harnessmix/${harnessId}-native` });
       assert.ok(started.thread?.id, 'Native external thread created');
       const threadId = started.thread.id;
       const turn = await request('turn/start', {

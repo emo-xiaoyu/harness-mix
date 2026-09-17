@@ -10,11 +10,11 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: '@codexhost/shared-contracts/version',
+        find: '@harnessmix/shared-contracts/version',
         replacement: path.join(root, 'src/native-ui/shared-contracts/src/version.ts'),
       },
       {
-        find: '@codexhost/shared-contracts',
+        find: '@harnessmix/shared-contracts',
         replacement: path.join(root, 'src/native-ui/shared-contracts/src/index.ts'),
       },
     ],

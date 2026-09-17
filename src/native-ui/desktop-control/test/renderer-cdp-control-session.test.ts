@@ -66,7 +66,7 @@ describe("Renderer CDP Control Session", () => {
 
   it("registers future-document injection before evaluating the current document", async () => {
     const client = rendererClient();
-    const source = "globalThis.__codexhostInstalled = true";
+    const source = "globalThis.__harnessmixInstalled = true";
     const session = await createRendererCdpControlSession({
       rendererCdpEndpoint: "http://127.0.0.1:43123",
       rendererSource: source,

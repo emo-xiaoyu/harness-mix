@@ -15,7 +15,7 @@ app.whenReady().then(async () => {
       resolveDir: process.cwd(),
     },
     bundle: true,
-    alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') },
+    alias: { '@harnessmix/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') },
     platform: 'browser',
     format: 'iife',
     globalName: 'AccountUI',

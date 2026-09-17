@@ -4,7 +4,7 @@ import {
   type RendererSettingsMessages,
 } from "./localization.js";
 
-export const SETTINGS_TRIGGER_ATTRIBUTE = "data-codexhost-settings-trigger";
+export const SETTINGS_TRIGGER_ATTRIBUTE = "data-harnessmix-settings-trigger";
 export const SETTINGS_HEADER_SURFACE_SELECTOR =
   '[data-testid="app-shell-header-context-menu-surface"]';
 const SETTINGS_APPLICATION_HEADER_SELECTOR = 'header[data-pip-obstacle="app-shell-header"]';

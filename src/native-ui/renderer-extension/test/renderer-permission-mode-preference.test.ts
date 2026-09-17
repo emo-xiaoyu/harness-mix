@@ -1,7 +1,7 @@
 import {
   harnessPermissionModeCatalogSchema,
   harnessPermissionModeIdSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it } from "vitest";
 
 import {

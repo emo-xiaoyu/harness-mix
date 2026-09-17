@@ -416,7 +416,7 @@ describe("Renderer draft prewarm policy", () => {
     installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
       discardAllPrewarmedThreads,
     });
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as { clear(): Promise<void> };
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { clear(): Promise<void> };
 
     await policy.clear();
 
@@ -430,7 +430,7 @@ describe("Renderer draft prewarm policy", () => {
     let announcedPolicy: unknown;
     const target: DraftPrewarmPolicyTarget = {
       dispatchEvent: vi.fn(() => {
-        announcedPolicy = target.__codexhostDraftPrewarmPolicyV1;
+        announcedPolicy = target.__harnessmixDraftPrewarmPolicyV1;
         return true;
       }),
     };
@@ -439,7 +439,7 @@ describe("Renderer draft prewarm policy", () => {
       discardAllPrewarmedThreads: vi.fn(),
     });
 
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as {
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as {
       requestTarget(): RendererHostRequestManager;
     };
     expect(announcedPolicy).toBe(policy);
@@ -462,11 +462,11 @@ describe("Renderer draft prewarm policy", () => {
       target,
       prewarmedThreadManager,
     );
-    const first = target.__codexhostDraftPrewarmPolicyV1 as {
+    const first = target.__harnessmixDraftPrewarmPolicyV1 as {
       hostId: string;
       select(model: string | null): boolean;
     };
-    first.select("codexhost/claude-code-native");
+    first.select("harnessmix/claude-code-native");
 
     installDraftPrewarmPolicyBridge(
       manager,
@@ -476,11 +476,11 @@ describe("Renderer draft prewarm policy", () => {
       prewarmedThreadManager,
     );
 
-    expect(target.__codexhostDraftPrewarmPolicyV1).toBe(first);
+    expect(target.__harnessmixDraftPrewarmPolicyV1).toBe(first);
     expect(first.hostId).toBe("remote-ssh-discovered:mac");
     void bridge.sendRequest("thread/start", { model: "gpt-5" });
     expect(sendRequest).toHaveBeenCalledWith("thread/start", {
-      model: "codexhost/claude-code-native",
+      model: "harnessmix/claude-code-native",
     });
   });
 
@@ -495,11 +495,11 @@ describe("Renderer draft prewarm policy", () => {
     installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
       discardAllPrewarmedThreads: vi.fn(),
     });
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as {
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as {
       select(model: string | null): boolean;
     };
 
-    policy.select("codexhost/pi-native");
+    policy.select("harnessmix/pi-native");
     await bridge.sendRequest("thread/start", { cwd: "/tmp/project", model: "gpt-5" });
     await bridge.prewarmThreadStart?.({ cwd: "/tmp/project", model: "gpt-5" });
     await bridge.prewarmThreadStart?.({ ephemeral: true, model: "gpt-5" });
@@ -508,11 +508,11 @@ describe("Renderer draft prewarm policy", () => {
 
     expect(sendRequest).toHaveBeenCalledWith("thread/start", {
       cwd: "/tmp/project",
-      model: "codexhost/pi-native",
+      model: "harnessmix/pi-native",
     });
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(1, {
       cwd: "/tmp/project",
-      model: "codexhost/pi-native",
+      model: "harnessmix/pi-native",
       ephemeral: true,
     });
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(2, {
@@ -534,7 +534,7 @@ describe("Renderer draft prewarm policy", () => {
     installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
       discardAllPrewarmedThreads: vi.fn(),
     });
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as {
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as {
       selectAccount(accountId: string | null): boolean;
     };
 
@@ -545,7 +545,7 @@ describe("Renderer draft prewarm policy", () => {
     expect(sendRequest).toHaveBeenNthCalledWith(1, "thread/start", {
       cwd: "/tmp/project",
       model: "gpt-5",
-      __codexhostAccountId: "reviewer",
+      __harnessmixAccountId: "reviewer",
     });
     expect(sendRequest).toHaveBeenNthCalledWith(2, "thread/start", {
       cwd: "/tmp/next",
@@ -565,7 +565,7 @@ describe("Renderer draft prewarm policy", () => {
       discardAllPrewarmedThreads: vi.fn(),
     });
 
-    const inspectPromise = bridge.sendRequest("codexhost/harness/inspect", {
+    const inspectPromise = bridge.sendRequest("harnessmix/harness/inspect", {
       harnessId: "claude-code",
     }) as Promise<unknown>;
     const spawnParameters = directSend.mock.calls[0]?.[1] as {
@@ -582,7 +582,7 @@ describe("Renderer draft prewarm policy", () => {
         encodedCommandBytes.charCodeAt(index) | (encodedCommandBytes.charCodeAt(index + 1) << 8),
       );
     }
-    expect(decodedCommand).toContain("--codexhost-remote-control-bridge");
+    expect(decodedCommand).toContain("--harnessmix-remote-control-bridge");
     expect(decodedCommand).toContain("remote-control-bridge-v1.json");
     expect(directSend).toHaveBeenCalledWith(
       "process/spawn",
@@ -595,11 +595,11 @@ describe("Renderer draft prewarm policy", () => {
         timeoutMs: null,
       }),
     );
-    expect(directSend).not.toHaveBeenCalledWith("codexhost/harness/inspect", expect.anything());
+    expect(directSend).not.toHaveBeenCalledWith("harnessmix/harness/inspect", expect.anything());
     const processHandle = spawnParameters.processHandle;
 
     emitRemoteBridgeOutput(notifications, processHandle, {
-      method: "codexhost/remote-control-bridge/ready",
+      method: "harnessmix/remote-control-bridge/ready",
       params: { protocolVersion: 1 },
     });
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(1));
@@ -611,7 +611,7 @@ describe("Renderer draft prewarm policy", () => {
     const frames = writtenBridgeFrames(directSend);
     expect(frames[1]).toEqual({ method: "initialized", params: {} });
     expect(frames[2]).toMatchObject({
-      method: "codexhost/harness/inspect",
+      method: "harnessmix/harness/inspect",
       params: { harnessId: "claude-code" },
     });
 
@@ -626,10 +626,10 @@ describe("Renderer draft prewarm policy", () => {
 
     emitRemoteBridgeOutput(notifications, processHandle, {
       method: "thread/started",
-      params: { thread: { id: "external-1", modelProvider: "codexhost" } },
+      params: { thread: { id: "external-1", modelProvider: "harnessmix" } },
     });
     expect(originalNotification).toHaveBeenCalledWith("thread/started", {
-      thread: { id: "external-1", modelProvider: "codexhost" },
+      thread: { id: "external-1", modelProvider: "harnessmix" },
     });
 
     const readPromise = bridge.sendRequest("thread/read", {
@@ -700,7 +700,7 @@ describe("Renderer draft prewarm policy", () => {
     expect(spawn).toBeDefined();
     const processHandle = (spawn?.[1] as { processHandle: string }).processHandle;
     emitRemoteBridgeOutput(notifications, processHandle, {
-      method: "codexhost/remote-control-bridge/ready",
+      method: "harnessmix/remote-control-bridge/ready",
       params: { protocolVersion: 1 },
     });
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(1));
@@ -709,7 +709,7 @@ describe("Renderer draft prewarm policy", () => {
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(3));
     const ownership = writtenBridgeFrames(directSend)[2];
     expect(ownership).toMatchObject({
-      method: "codexhost/thread/ownership/list",
+      method: "harnessmix/thread/ownership/list",
       params: { threadIds: ["external-after-reload"] },
     });
     emitRemoteBridgeOutput(notifications, processHandle, {
@@ -738,7 +738,7 @@ describe("Renderer draft prewarm policy", () => {
     await expect(archive).resolves.toEqual({});
     expect(directSend).not.toHaveBeenCalledWith("thread/archive", expect.anything());
     expect(
-      writtenBridgeFrames(directSend).some(({ method }) => method === "codexhost/thread/inspect"),
+      writtenBridgeFrames(directSend).some(({ method }) => method === "harnessmix/thread/inspect"),
     ).toBe(false);
   });
 
@@ -760,7 +760,7 @@ describe("Renderer draft prewarm policy", () => {
     const spawn = directSend.mock.calls.find(([method]) => method === "process/spawn");
     const processHandle = (spawn?.[1] as { processHandle: string }).processHandle;
     emitRemoteBridgeOutput(notifications, processHandle, {
-      method: "codexhost/remote-control-bridge/ready",
+      method: "harnessmix/remote-control-bridge/ready",
       params: { protocolVersion: 1 },
     });
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(1));
@@ -769,7 +769,7 @@ describe("Renderer draft prewarm policy", () => {
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(3));
     const ownership = writtenBridgeFrames(directSend)[2];
     expect(ownership).toMatchObject({
-      method: "codexhost/thread/ownership/list",
+      method: "harnessmix/thread/ownership/list",
       params: { threadIds: ["official-after-reload"] },
     });
     emitRemoteBridgeOutput(notifications, processHandle, {
@@ -806,11 +806,11 @@ describe("Renderer draft prewarm policy", () => {
       cwd: "C:\\workspace",
     });
 
-    const pending = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const pending = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     void pending.catch(() => undefined);
     const processHandle = (directSend.mock.calls[2]?.[1] as { processHandle: string })
       .processHandle;
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as { dispose(): void };
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void };
     policy.dispose();
 
     expect(directSend).toHaveBeenCalledWith("process/kill", { processHandle });
@@ -824,11 +824,11 @@ describe("Renderer draft prewarm policy", () => {
       discardAllPrewarmedThreads: vi.fn(),
     });
 
-    const first = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const first = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     const firstStart = directSend.mock.calls.find(([method]) => method === "process/spawn");
     const firstProcessHandle = (firstStart?.[1] as { processHandle: string }).processHandle;
     emitBridgeOutput(manager, firstProcessHandle, {
-      method: "codexhost/remote-control-bridge/ready",
+      method: "harnessmix/remote-control-bridge/ready",
       params: { protocolVersion: 99 },
     });
     await expect(first).rejects.toThrow("unsupported protocol version");
@@ -836,14 +836,14 @@ describe("Renderer draft prewarm policy", () => {
       processHandle: firstProcessHandle,
     });
 
-    const second = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const second = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     void second.catch(() => undefined);
     const starts = directSend.mock.calls.filter(([method]) => method === "process/spawn");
     expect(starts).toHaveLength(2);
     const secondProcessHandle = (starts[1]?.[1] as { processHandle: string }).processHandle;
     expect(secondProcessHandle).not.toBe(firstProcessHandle);
 
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as { dispose(): void };
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void };
     policy.dispose();
   });
 
@@ -857,7 +857,7 @@ describe("Renderer draft prewarm policy", () => {
       discardAllPrewarmedThreads: vi.fn(),
     });
 
-    const first = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const first = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     const firstStart = directSend.mock.calls.find(([method]) => method === "process/spawn");
     const firstProcessHandle = (firstStart?.[1] as { processHandle: string }).processHandle;
     notifications.emit("process/exited", {
@@ -878,7 +878,7 @@ describe("Renderer draft prewarm policy", () => {
       processHandle: firstProcessHandle,
     });
 
-    const second = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const second = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     void second.catch(() => undefined);
     const starts = directSend.mock.calls.filter(([method]) => method === "process/spawn");
     expect(starts).toHaveLength(2);
@@ -886,7 +886,7 @@ describe("Renderer draft prewarm policy", () => {
       firstProcessHandle,
     );
 
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as { dispose(): void };
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void };
     policy.dispose();
   });
 
@@ -899,11 +899,11 @@ describe("Renderer draft prewarm policy", () => {
       discardAllPrewarmedThreads: vi.fn(),
     });
 
-    const first = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const first = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     const firstStart = directSend.mock.calls.find(([method]) => method === "process/spawn");
     const firstProcessHandle = (firstStart?.[1] as { processHandle: string }).processHandle;
     emitRemoteBridgeOutput(notifications, firstProcessHandle, {
-      method: "codexhost/remote-control-bridge/ready",
+      method: "harnessmix/remote-control-bridge/ready",
       params: { protocolVersion: 1 },
     });
     await vi.waitFor(() => expect(writtenBridgeFrames(directSend)).toHaveLength(1));
@@ -920,10 +920,10 @@ describe("Renderer draft prewarm policy", () => {
     directSend.mockRejectedValueOnce(
       new Error(`no active process for process handle "${firstProcessHandle}"`),
     );
-    const stale = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const stale = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     await expect(stale).rejects.toThrow("no active process for process handle");
 
-    const retry = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+    const retry = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
     void retry.catch(() => undefined);
     const starts = directSend.mock.calls.filter(([method]) => method === "process/spawn");
     expect(starts).toHaveLength(2);
@@ -931,7 +931,7 @@ describe("Renderer draft prewarm policy", () => {
       firstProcessHandle,
     );
 
-    const policy = target.__codexhostDraftPrewarmPolicyV1 as { dispose(): void };
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void };
     policy.dispose();
   });
 
@@ -946,7 +946,7 @@ describe("Renderer draft prewarm policy", () => {
         discardAllPrewarmedThreads: vi.fn(),
       });
 
-      const first = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+      const first = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
       const firstRejected = expect(first).rejects.toThrow("initialization timed out after 15000ms");
       const firstStart = directSend.mock.calls.find(([method]) => method === "process/spawn");
       const firstProcessHandle = (firstStart?.[1] as { processHandle: string }).processHandle;
@@ -955,7 +955,7 @@ describe("Renderer draft prewarm policy", () => {
         stream: "stdout",
         deltaBase64: Buffer.from(
           `${JSON.stringify({
-            method: "codexhost/remote-control-bridge/ready",
+            method: "harnessmix/remote-control-bridge/ready",
             params: { protocolVersion: 1 },
           })}\n`,
           "utf8",
@@ -971,7 +971,7 @@ describe("Renderer draft prewarm policy", () => {
         processHandle: firstProcessHandle,
       });
 
-      const second = bridge.sendRequest("codexhost/harness/inspect", {}) as Promise<unknown>;
+      const second = bridge.sendRequest("harnessmix/harness/inspect", {}) as Promise<unknown>;
       void second.catch(() => undefined);
       const starts = directSend.mock.calls.filter(([method]) => method === "process/spawn");
       expect(starts).toHaveLength(2);
@@ -979,7 +979,7 @@ describe("Renderer draft prewarm policy", () => {
         firstProcessHandle,
       );
 
-      const policy = target.__codexhostDraftPrewarmPolicyV1 as { dispose(): void };
+      const policy = target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void };
       policy.dispose();
     } finally {
       vi.useRealTimers();

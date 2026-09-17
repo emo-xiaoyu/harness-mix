@@ -39,7 +39,7 @@ npm start -- --no-update
 export HARNESS_MIX_DESKTOP_APP="/absolute/path/Codex.app"
 ```
 
-启动器读取 Info.plist 的可执行文件名和版本，默认使用 `Contents/Resources/codex`。CLI 布局不同时设置 `CODEXHOST_STOCK_CODEX_PATH`，必须指向桌面自带的原版 CLI，不能指向 Harness Mix Shim。不改写签名包，不关闭 Gatekeeper。CLI 工具需在启动终端的 PATH 中可用。
+启动器读取 Info.plist 的可执行文件名和版本，默认使用 `Contents/Resources/codex`。CLI 布局不同时设置 `HARNESSMIX_STOCK_CODEX_PATH`，必须指向桌面自带的原版 CLI，不能指向 Harness Mix Shim。不改写签名包，不关闭 Gatekeeper。CLI 工具需在启动终端的 PATH 中可用。
 
 ## Linux 安装
 
@@ -49,7 +49,7 @@ export HARNESS_MIX_DESKTOP_APP="/absolute/path/Codex.app"
 npm ci
 npm run build:native
 export HARNESS_MIX_DESKTOP_EXECUTABLE="/absolute/path/to/desktop-binary"
-export CODEXHOST_STOCK_CODEX_PATH="/absolute/path/to/resources/codex"
+export HARNESSMIX_STOCK_CODEX_PATH="/absolute/path/to/resources/codex"
 # 填写真实桌面版本，不是 CLI 版本；未知时省略，兼容性显示 unverified
 export HARNESS_MIX_DESKTOP_VERSION="1.2.3"
 npm run check:native
@@ -58,7 +58,7 @@ npm start -- --no-update
 
 ## 平台行为
 
-- 数据目录：Windows 延续 `%APPDATA%/harness-mix/codexhost`；macOS 使用 `~/Library/Application Support/harness-mix/codexhost`；Linux 使用 `$XDG_DATA_HOME/harness-mix/codexhost`，默认 `~/.local/share/harness-mix/codexhost`。`CODEXHOST_DATA_DIR` 始终优先。历史 Unix 试用数据如在其他目录，需显式设置该变量；不会自动搬迁。
+- 数据目录：Windows 延续 `%APPDATA%/harnessmix`；macOS 使用 `~/Library/Application Support/harnessmix`；Linux 使用 `$XDG_DATA_HOME/harnessmix`，默认 `~/.local/share/harnessmix`。`HARNESSMIX_DATA_DIR` 始终优先。历史 Unix 试用数据如在其他目录，需显式设置该变量；不会自动搬迁。
 - macOS/Linux 要求先退出已运行的同一个桌面程序，避免 Electron 单实例复用丢失 Shim 环境。不会按程序名批量清理用户进程。
 - Unix Shim 使用 `exec` 替换自己，保留 PID、stdio 和信号；正常关闭依赖 Host 的 EOF/SIGTERM 清理。停止 Harness 时按父子关系清理子进程。Unix 不宣称具备 Windows Job Object 在 `SIGKILL` 下的强制整树退出保证；已经脱离父进程的 daemon 不属于该保证。
 - Grok、Hermes 的 Unix 默认命令去掉 `.exe`；DSH Web 模式在 Unix 使用 `npm`，必须配置 `HARNESS_MIX_DSH_ROOT`。其他 Harness 仍需其厂商提供相应系统的原生 CLI，不将协议适配等同于厂商跨平台支持。

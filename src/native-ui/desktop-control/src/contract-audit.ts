@@ -242,17 +242,17 @@ async function executeReadOnlyAudit(
     const contents = webContents.fromId(${rendererWebContentsId});
     if (contents == null || contents.isDestroyed()) throw new Error('Renderer webContents is unavailable');
     return contents.executeJavaScript(${JSON.stringify(`(() => {
-      const previous = window.__codexhostContractAuditV1;
+      const previous = window.__harnessmixContractAuditV1;
       ${source}
       try {
-        const audit = window.__codexhostContractAuditV1;
+        const audit = window.__harnessmixContractAuditV1;
         if (audit == null || typeof audit.inspect !== 'function') {
           throw new Error('Renderer contract audit entry is unavailable');
         }
         return audit.inspect();
       } finally {
-        if (previous === undefined) delete window.__codexhostContractAuditV1;
-        else window.__codexhostContractAuditV1 = previous;
+        if (previous === undefined) delete window.__harnessmixContractAuditV1;
+        else window.__harnessmixContractAuditV1 = previous;
       }
     })()`)}, true);
   })()`);

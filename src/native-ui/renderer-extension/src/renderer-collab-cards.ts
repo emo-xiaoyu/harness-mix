@@ -1,4 +1,4 @@
-import { type HostThreadId, hostThreadIdSchema } from '@codexhost/shared-contracts';
+import { type HostThreadId, hostThreadIdSchema } from '@harnessmix/shared-contracts';
 import { openRendererThread } from './renderer-fork-control.js';
 import { collaborationIcon } from './collaboration-icon.js';
 

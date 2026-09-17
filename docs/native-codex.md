@@ -18,7 +18,7 @@ Codex Desktop → Harness Mix Shim/Host → HostRuntime/ProtocolCore → 原生 
 
 ## Codex 多账号
 
-「设置 → 账号」保留官方 Codex Desktop 账号，并允许添加最多 127 个附加账号。每个附加账号使用 `%APPDATA%\harness-mix\codexhost\codex-accounts\profiles\<account-id>` 作为独立 `CODEX_HOME`；设备码登录、`auth.json`、令牌刷新、额度与原生会话均由该目录对应的 Codex app-server 所有。Harness Mix 的 `accounts.json` 只记录账号档案 ID、显示名、创建时间和默认选择，不读取或复制认证内容。
+「设置 → 账号」保留官方 Codex Desktop 账号，并允许添加最多 127 个附加账号。每个附加账号使用 `%APPDATA%\harnessmix\codex-accounts\profiles\<account-id>` 作为独立 `CODEX_HOME`；设备码登录、`auth.json`、令牌刷新、额度与原生会话均由该目录对应的 Codex app-server 所有。Harness Mix 的 `accounts.json` 只记录账号档案 ID、显示名、创建时间和默认选择，不读取或复制认证内容。
 
 账号页会从每个账号的原生 `account/read` 与 `account/rateLimits/read` 读取套餐、5 小时/7 天已用或剩余额度及刷新时间。编辑器 Agent 菜单可直接选择账号；官方账号仍走官方直通路径，附加账号的新任务进入同一套 Desktop Thread/Turn/工具/审批/Diff 界面并固定到所选账号。更改默认账号不会迁移或中断已运行任务。
 
@@ -52,7 +52,7 @@ npm start
 - **git 检出（开发形态）**：可快进且工作区干净时自动拉取、按需重装依赖并重建原生组件；`install` / `build` 失败自动回退到更新前的提交。分叉、本地领先或工作区有未提交改动时跳过并打印原因。
 - **npm 全局安装**：从 registry 发现新版本后，先停止桌面，再用 `npm install -g harness-mix@<版本>` 应用（校验由 npm integrity 承担），失败自动重试并挂起至下次启动；连续两次启动未成功会自动回滚到上一版本。
 
-所有变更操作持有更新锁（`%APPDATA%\harness-mix\codexhost\update.lock`），状态记录在 `update-state.json`；应用成功后启动器自行重启加载新代码。任何更新失败（如离线、占用、权限）都不阻塞启动。
+所有变更操作持有更新锁（`%APPDATA%\harnessmix\update.lock`），状态记录在 `update-state.json`；应用成功后启动器自行重启加载新代码。任何更新失败（如离线、占用、权限）都不阻塞启动。
 
 - `npm run update`：只检查并应用更新，不启动桌面（应用时会先停一次桌面）。
 - `npm start -- --no-update` 或 `HARNESS_MIX_AUTO_UPDATE=0`：跳过本次更新检查。
@@ -67,7 +67,7 @@ Shim 只接管作为 Desktop 协议端点的普通 `app-server`。`app-server pr
 ## 进程监管
 
 - Shim 启动即把自身加入 Job Object（`KILL_ON_JOB_CLOSE`）：node 宿主、官方 app-server、各家 CLI 与 pwsh 终端全部随 shim 级联清理，强杀或崩溃也不例外。
-- 宿主每 5s 写心跳（`%APPDATA%\harness-mix\codexhost\runtime\instance.json`）；`uncaughtException` / `unhandledRejection` / `SIGBREAK` 会写入同目录 `crash-<ts>.json` 并尝试优雅收尾。
+- 宿主每 5s 写心跳（`%APPDATA%\harnessmix\runtime\instance.json`）；`uncaughtException` / `unhandledRejection` / `SIGBREAK` 会写入同目录 `crash-<ts>.json` 并尝试优雅收尾。
 - 启动器在重启桌面前清扫本项目残留进程（仅匹配 shim 二进制路径与 `native-host.cjs` / `desktop-controller.mjs` 入口），并把上次异常退出时运行中的任务标记为 interrupted，重新发送即可继续。
 - 适配器与终端统一经 `src/main/native/process-utils.js` 的 `terminateTree()`（Windows `taskkill /T /F`）终止进程树。
 
@@ -77,13 +77,13 @@ Shim 只接管作为 Desktop 协议端点的普通 `app-server`。`app-server pr
 - `host-traffic.jsonl` 与 `shim-invocations.log` 均为 5MB × 3 轮转；写盘前对 Bearer/API key 形态与敏感字段键做脱敏（`src/main/native/redact.js`）。
 - `npm run diagnostics`：把版本、桌面兼容状态、更新/实例状态、脱敏日志尾与最近崩溃报告打包为 zip 输出到 `output/`，供问题反馈。
 
-默认 Host 数据目录为 `%APPDATA%\harness-mix\codexhost`，可用 `CODEXHOST_DATA_DIR` 覆盖。
+默认 Host 数据目录为 `%APPDATA%\harnessmix`，可用 `HARNESSMIX_DATA_DIR` 覆盖。
 
 本项目仅保存以下非凭据配置到该目录的 `harness-mix-settings.json`，以适配 Windows AppX 环境传递：
 
 - `HARNESS_MIX_DSH_ROOT`：可选 DSH 源码目录。
 - `HARNESS_MIX_CODEBUDDY_EXECUTABLE`、`HARNESS_MIX_KIRO_EXECUTABLE`、`HARNESS_MIX_CURSOR_EXECUTABLE`：可选原生 CLI 路径。CodeBuddy 兼容旧的 `HARNESS_MIX_WORKBUDDY_EXECUTABLE`，新变量优先。接口与验收见 [原生 ACP 深度适配](native-acp.md)。
-- `CODEXHOST_PI_COMMAND`、`CODEXHOST_CLAUDE_COMMAND`、`CODEXHOST_DEEPSEEK_HARNESS_COMMAND`、`CODEXHOST_ANTIGRAVITY_COMMAND`：可选原生命令路径。
+- `HARNESSMIX_PI_COMMAND`、`HARNESSMIX_CLAUDE_COMMAND`、`HARNESSMIX_DEEPSEEK_HARNESS_COMMAND`、`HARNESSMIX_ANTIGRAVITY_COMMAND`：可选原生命令路径。
 
 环境变量优先于该文件；删除文件中的对应字段即可恢复默认。账号认证使用各原生程序和上游配置机制，本项目不保存凭据。
 

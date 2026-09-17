@@ -2,7 +2,7 @@ import {
   hostThreadIdSchema,
   hostTurnIdSchema,
   type ThreadInspection,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -279,7 +279,7 @@ describe("Renderer external Thread Fork control", () => {
     const client = clientWith({
       owner: "external",
       harnessId: "pi",
-      transportModelId: "codexhost/pi-native",
+      transportModelId: "harnessmix/pi-native",
       history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
       locked: true,
     });
@@ -302,7 +302,7 @@ describe("Renderer external Thread Fork control", () => {
     const client = clientWith({
       owner: "external",
       harnessId: "pi",
-      transportModelId: "codexhost/pi-native",
+      transportModelId: "harnessmix/pi-native",
       history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
       locked: true,
     });
@@ -322,7 +322,7 @@ describe("Renderer external Thread Fork control", () => {
     const client = clientWith({
       owner: "external",
       harnessId: "claude-code",
-      transportModelId: "codexhost/claude-code-native",
+      transportModelId: "harnessmix/claude-code-native",
       history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: false },
       locked: true,
     });

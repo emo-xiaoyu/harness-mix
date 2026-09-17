@@ -2,9 +2,9 @@ import {
   harnessPermissionModeIdSchema,
   type HarnessPermissionModeCatalog,
   type HarnessPermissionModeId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
-export const CLAUDE_PERMISSION_MODE_PREFERENCE_KEY = "codexhost.claude-code.permission-mode.v1";
+export const CLAUDE_PERMISSION_MODE_PREFERENCE_KEY = "harnessmix.claude-code.permission-mode.v1";
 
 export interface PermissionModePreferenceStorage {
   getItem(key: string): string | null;

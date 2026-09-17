@@ -15,9 +15,9 @@ describe("shared-contracts browser bundle", () => {
       write: false,
       stdin: {
         contents: [
-          'import { codexhostErrorSchema, deepSeekModernSessionImportParamsSchema, deepSeekModernSessionListResultSchema, harnessCommandDescriptorSchema, harnessInspectionSchema, harnessSessionImportCandidateSchema, harnessThinkingOptionSchema, hostThreadIdSchema, jsonRpcEnvelopeSchema, nativeSessionRefSchema, threadModelSelectParamsSchema, threadThinkingSelectParamsSchema } from "@codexhost/shared-contracts";',
-          "export const schemas = { codexhostErrorSchema, deepSeekModernSessionImportParamsSchema, deepSeekModernSessionListResultSchema, harnessCommandDescriptorSchema, harnessInspectionSchema, harnessSessionImportCandidateSchema, harnessThinkingOptionSchema, hostThreadIdSchema, jsonRpcEnvelopeSchema, nativeSessionRefSchema, threadModelSelectParamsSchema, threadThinkingSelectParamsSchema };",
-          'export { decodeHarnessPluginRoute, encodeHarnessPluginRoute, harnessPluginManifestSchema, harnessPluginListResultSchema } from "@codexhost/shared-contracts";',
+          'import { harnessmixErrorSchema, deepSeekModernSessionImportParamsSchema, deepSeekModernSessionListResultSchema, harnessCommandDescriptorSchema, harnessInspectionSchema, harnessSessionImportCandidateSchema, harnessThinkingOptionSchema, hostThreadIdSchema, jsonRpcEnvelopeSchema, nativeSessionRefSchema, threadModelSelectParamsSchema, threadThinkingSelectParamsSchema } from "@harnessmix/shared-contracts";',
+          "export const schemas = { harnessmixErrorSchema, deepSeekModernSessionImportParamsSchema, deepSeekModernSessionListResultSchema, harnessCommandDescriptorSchema, harnessInspectionSchema, harnessSessionImportCandidateSchema, harnessThinkingOptionSchema, hostThreadIdSchema, jsonRpcEnvelopeSchema, nativeSessionRefSchema, threadModelSelectParamsSchema, threadThinkingSelectParamsSchema };",
+          'export { decodeHarnessPluginRoute, encodeHarnessPluginRoute, harnessPluginManifestSchema, harnessPluginListResultSchema } from "@harnessmix/shared-contracts";',
         ].join("\n"),
         loader: "ts",
         resolveDir: resolve(import.meta.dirname, "../../.."),

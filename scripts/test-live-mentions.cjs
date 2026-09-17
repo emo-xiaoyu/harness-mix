@@ -43,14 +43,14 @@ async function main() {
   console.log('Waiting for probe to mount...');
   await evaluate(`(async () => {
     for (let i = 0; i < 50; i++) {
-      if (window.__codexhostRendererBindingProbeV1 && document.querySelector('.ProseMirror')) break;
+      if (window.__harnessmixRendererBindingProbeV1 && document.querySelector('.ProseMirror')) break;
       await new Promise(r => setTimeout(r, 100));
     }
   })()`);
 
   const directClientTest = await evaluate(`(async () => {
     try {
-      const probe = window.__codexhostRendererBindingProbeV1;
+      const probe = window.__harnessmixRendererBindingProbeV1;
       return {
         hasProbe: !!probe,
         probeKeys: probe ? Object.keys(probe) : []

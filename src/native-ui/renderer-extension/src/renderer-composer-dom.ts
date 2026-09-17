@@ -9,7 +9,7 @@ import type {
   CodexAccountSummary,
   HarnessCommandDescriptor,
   ThreadUsageSnapshot,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import {
   CONTROL_ATTRIBUTE,
   mountRendererAgentPicker,
@@ -125,11 +125,11 @@ function buttonText(button: HTMLButtonElement): string {
 function isOwnedRendererControl(element: Element): boolean {
   return (
     element.hasAttribute(CONTROL_ATTRIBUTE) ||
-    element.hasAttribute("data-codexhost-model-control") ||
-    element.hasAttribute("data-codexhost-permission-mode-control") ||
-    element.hasAttribute("data-codexhost-usage-control") ||
-    element.hasAttribute("data-codexhost-credits-control") ||
-    element.hasAttribute("data-codexhost-harness-command-control")
+    element.hasAttribute("data-harnessmix-model-control") ||
+    element.hasAttribute("data-harnessmix-permission-mode-control") ||
+    element.hasAttribute("data-harnessmix-usage-control") ||
+    element.hasAttribute("data-harnessmix-credits-control") ||
+    element.hasAttribute("data-harnessmix-harness-command-control")
   );
 }
 
@@ -231,7 +231,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function isNativeModelControlCandidate(element: Element): boolean {
   if (
     element.hasAttribute(CONTROL_ATTRIBUTE) ||
-    element.hasAttribute("data-codexhost-model-control") ||
+    element.hasAttribute("data-harnessmix-model-control") ||
     !element.matches('button[aria-haspopup="menu"]')
   ) {
     return false;
@@ -274,7 +274,7 @@ export function isNativeModelControlCandidate(element: Element): boolean {
 export function isNativePermissionModeControlCandidate(element: Element): boolean {
   if (
     element.hasAttribute(CONTROL_ATTRIBUTE) ||
-    element.hasAttribute("data-codexhost-permission-mode-control") ||
+    element.hasAttribute("data-harnessmix-permission-mode-control") ||
     !element.matches('button[aria-haspopup="menu"][data-composer-navigation-target="permissions"]')
   ) {
     return false;
@@ -321,7 +321,7 @@ function semanticNativePermissionModeControlForComposer(composer: Element): HTML
     ...composer.querySelectorAll<HTMLElement>(
       'button[aria-haspopup="menu"][data-composer-navigation-target="permissions"]',
     ),
-  ].filter((element) => !element.hasAttribute("data-codexhost-permission-mode-control"));
+  ].filter((element) => !element.hasAttribute("data-harnessmix-permission-mode-control"));
   return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
@@ -339,8 +339,8 @@ function nativeModelControlForComposer(composer: Element): HTMLElement | null {
 
 export function isNativeContextUsageControlCandidate(element: Element): boolean {
   if (
-    element.hasAttribute("data-codexhost-usage-control") ||
-    element.hasAttribute("data-codexhost-credits-control")
+    element.hasAttribute("data-harnessmix-usage-control") ||
+    element.hasAttribute("data-harnessmix-credits-control")
   ) {
     return false;
   }
@@ -412,7 +412,7 @@ export function inspectRendererComposerContract(
       ...composer.querySelectorAll<HTMLElement>(
         'button[aria-haspopup="menu"][data-composer-navigation-target="permissions"]',
       ),
-    ].filter((element) => !element.hasAttribute("data-codexhost-permission-mode-control"));
+    ].filter((element) => !element.hasAttribute("data-harnessmix-permission-mode-control"));
     result.permissionCandidateCount += permissionCandidates.length;
     result.verifiedPermissionCandidateCount += permissionCandidates.filter(
       isNativePermissionModeControlCandidate,

@@ -38,7 +38,7 @@ describe("Host-scoped Codex Account state", () => {
     expect(second).toBe(first);
     response.resolve({ accounts: [account("default", true)] });
     await first;
-    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("codexhost/account/list", {});
+    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("harnessmix/account/list", {});
     expect(state.selection.selectedAccountId).toBe("default");
   });
 

@@ -170,7 +170,7 @@ async function evaluateSource(renderer: RendererCdpClient, source: string): Prom
 }
 
 async function readBinding(renderer: RendererCdpClient): Promise<unknown> {
-  return renderer.evaluate<unknown>("window.__codexhostRendererBindingProbeV1?.status() ?? null");
+  return renderer.evaluate<unknown>("window.__harnessmixRendererBindingProbeV1?.status() ?? null");
 }
 
 async function waitForBinding(

@@ -331,7 +331,7 @@ const defaultOperations: RendererControlOperations = {
     executeInWebContents(
       inspector,
       rendererWebContentsId,
-      "window.__codexhostRendererBindingProbeV1?.status() ?? null",
+      "window.__harnessmixRendererBindingProbeV1?.status() ?? null",
     ),
   readTitlePolicyCounters: readMainProcessTitlePolicyCounters,
 };
@@ -499,9 +499,9 @@ class InstalledRendererControlSession implements RendererControlSession {
 const startupTraceStartedAt = Date.now();
 
 function startupTrace(stage: string): void {
-  if (process.env.CODEXHOST_STARTUP_TRACE !== "1") return;
+  if (process.env.HARNESSMIX_STARTUP_TRACE !== "1") return;
   console.error(
-    `[codexhost startup +${Date.now() - startupTraceStartedAt}ms] renderer-session: ${stage}`,
+    `[harnessmix startup +${Date.now() - startupTraceStartedAt}ms] renderer-session: ${stage}`,
   );
 }
 

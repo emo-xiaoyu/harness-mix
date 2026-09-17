@@ -34,7 +34,7 @@ export type {
   HarnessPluginListResult,
   HarnessPluginManifest,
 } from "./harness-plugins.js";
-export { codexhostErrorSchema } from "./errors.js";
+export { harnessmixErrorSchema } from "./errors.js";
 export {
   codexAccountUsageParamsSchema,
   codexAccountUsageResultSchema,
@@ -76,7 +76,7 @@ export type {
   CodexAccountSummary,
 } from "./codex-accounts.js";
 export { REASONING_TRANSCRIPT_COMMAND } from "./reasoning-transcript.js";
-export type { CodexhostError } from "./errors.js";
+export type { HarnessMixError } from "./errors.js";
 export {
   HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH,
   HARNESS_SESSION_IMPORT_ID_MAX_LENGTH,
@@ -322,6 +322,6 @@ export { WORKSPACE_CONTRACT_VERSION } from "./version.js";
 export const workspaceContractVersionSchema = z.literal(WORKSPACE_CONTRACT_VERSION);
 
 export const packageMetadata = {
-  name: "@codexhost/shared-contracts",
+  name: "@harnessmix/shared-contracts",
   contractVersion: WORKSPACE_CONTRACT_VERSION,
 } as const;

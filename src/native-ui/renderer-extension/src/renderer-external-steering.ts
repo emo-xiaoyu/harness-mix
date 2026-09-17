@@ -1,4 +1,4 @@
-import { threadOwnershipListResultSchema } from "@codexhost/shared-contracts";
+import { threadOwnershipListResultSchema } from "@harnessmix/shared-contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -219,7 +219,7 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
       // Official steering must not depend on our additional presentation binding.
     }
     const ownership = threadOwnershipListResultSchema.parse(
-      await originalSend.call(manager, "codexhost/thread/ownership/list", {
+      await originalSend.call(manager, "harnessmix/thread/ownership/list", {
         threadIds: [threadId],
       }),
     );
@@ -311,7 +311,7 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
           resumeQueue();
         } catch {
           // Never turn an accepted input into a failed delivery (and invite a retry).
-          console.error("codexhost could not restore follow-up queue state after steering");
+          console.error("harnessmix could not restore follow-up queue state after steering");
         }
         return { turnId: response.turn.id };
       })

@@ -187,7 +187,7 @@ class CodexAccountManager {
         this.logins.delete(message.params.loginId);
         pending.unwatch?.();
         pending.server.release();
-        this.emit?.({ method: 'codexhost/account/login/completed', params: {
+        this.emit?.({ method: 'harnessmix/account/login/completed', params: {
           accountId: pending.accountId,
           loginId: message.params.loginId,
           success: message.params.success === true,

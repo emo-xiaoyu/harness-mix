@@ -50,10 +50,10 @@ export interface RendererIntegrationsClient {
 }
 export function createRendererIntegrationsClient(send: (method: string, params: unknown) => Promise<unknown>): RendererIntegrationsClient {
   return {
-    integrationCatalog: async () => catalogSchema.parse(await send('codexhost/integrations/catalog', {})),
-    listIntegrations: async input => snapshotSchema.parse(await send('codexhost/integrations/list', input)),
-    saveMcp: input => send('codexhost/integrations/mcp/save', input),
-    removeMcp: input => send('codexhost/integrations/mcp/remove', input),
-    changeSkill: input => send('codexhost/integrations/skill/change', input),
+    integrationCatalog: async () => catalogSchema.parse(await send('harnessmix/integrations/catalog', {})),
+    listIntegrations: async input => snapshotSchema.parse(await send('harnessmix/integrations/list', input)),
+    saveMcp: input => send('harnessmix/integrations/mcp/save', input),
+    removeMcp: input => send('harnessmix/integrations/mcp/remove', input),
+    changeSkill: input => send('harnessmix/integrations/skill/change', input),
   };
 }

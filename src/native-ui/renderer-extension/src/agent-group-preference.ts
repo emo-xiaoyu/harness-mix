@@ -35,7 +35,7 @@ export interface AgentGroupPreferenceStore {
   subscribe(listener: () => void): () => void;
 }
 
-export const AGENT_GROUP_PREFERENCE_STORAGE_KEY = "codexhost.agentGroupPreference.v1";
+export const AGENT_GROUP_PREFERENCE_STORAGE_KEY = "harnessmix.agentGroupPreference.v1";
 
 const EXTERNAL_AGENTS: readonly ExternalRendererAgent[] = KNOWN_RENDERER_AGENTS.filter(
   (agent): agent is ExternalRendererAgent => agent !== "codex",

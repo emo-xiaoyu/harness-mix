@@ -11,7 +11,7 @@ import {
   harnessSessionListResultSchema,
   harnessSessionImportParamsSchema,
   harnessSessionImportResultSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 const candidate = {
   nativeSessionId: "pi-native",

@@ -2,7 +2,7 @@ import {
   harnessModelRefSchema,
   harnessPermissionModeIdSchema,
   harnessThinkingOptionIdSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -433,7 +433,7 @@ describe("current Codex Renderer Agent adapter", () => {
     };
     const listeners = new Map<string, EventListener>();
     const fakeWindow = {
-      __codexhostDraftPrewarmPolicyV1: policy,
+      __harnessmixDraftPrewarmPolicyV1: policy,
       dispatchEvent: vi.fn(),
       addEventListener: vi.fn((type: string, listener: EventListener) => {
         listeners.set(type, listener);
@@ -465,7 +465,7 @@ describe("current Codex Renderer Agent adapter", () => {
     try {
       const adapter = installCurrentRendererAdapter();
       expect(adapter.status).toMatchObject({ state: "ready", reason: "ready" });
-      expect("__codexhostMainProcessTitlePolicyV1" in fakeWindow).toBe(false);
+      expect("__harnessmixMainProcessTitlePolicyV1" in fakeWindow).toBe(false);
       adapter.dispose();
     } finally {
       for (const [name, descriptor] of [

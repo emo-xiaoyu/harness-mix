@@ -64,7 +64,7 @@ async function main() {
     const login = await manager.startLogin(created.account.accountId);
     assert.equal(login.userCode, 'WXYZ-1234');
     server.notify({ method: 'account/login/completed', params: { loginId: login.loginId, success: true, error: null } });
-    assert.deepEqual(emitted.at(-1), { method: 'codexhost/account/login/completed', params: { accountId: created.account.accountId, loginId: login.loginId, success: true, error: null } });
+    assert.deepEqual(emitted.at(-1), { method: 'harnessmix/account/login/completed', params: { accountId: created.account.accountId, loginId: login.loginId, success: true, error: null } });
 
     const registry = fs.readFileSync(path.join(root, 'codex-accounts', 'accounts.json'), 'utf8');
     assert.equal(registry.includes('owner@example.com'), false, 'Registry must not persist native identity or credentials');

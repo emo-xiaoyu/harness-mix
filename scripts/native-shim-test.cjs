@@ -12,7 +12,7 @@ async function main() {
   const host = path.join(work, 'fixture host.cjs');
   const stockProbe = path.join(work, 'stock probe.cjs');
   const env = { ...process.env, HARNESS_MIX_NODE_PATH: process.execPath,
-    CODEXHOST_STOCK_CODEX_PATH: process.execPath, HARNESS_MIX_HOST_SCRIPT: host, CODEX_CLI_PATH: 'must-be-removed' };
+    HARNESSMIX_STOCK_CODEX_PATH: process.execPath, HARNESS_MIX_HOST_SCRIPT: host, CODEX_CLI_PATH: 'must-be-removed' };
   let child;
   try {
     fs.writeFileSync(host, `const readline = require('node:readline');

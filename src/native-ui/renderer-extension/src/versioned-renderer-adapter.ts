@@ -22,7 +22,7 @@ import {
   type ThreadOwnershipListParams,
   type ThreadUsageInspection,
   type ThreadUsageInspectionParams,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import type { RendererAgent } from "./agent-selection-state.js";
 import { installRendererForkControl } from "./renderer-fork-control.js";
@@ -33,19 +33,19 @@ import {
   type RendererModelClient,
 } from "./renderer-model-client.js";
 
-export const PI_TRANSPORT_MODEL_ID = "codexhost/pi-native";
+export const PI_TRANSPORT_MODEL_ID = "harnessmix/pi-native";
 export const PI_TRANSPORT_MODEL_PREFIX = `${PI_TRANSPORT_MODEL_ID}@`;
-export const CLAUDE_CODE_TRANSPORT_MODEL_ID = "codexhost/claude-code-native";
+export const CLAUDE_CODE_TRANSPORT_MODEL_ID = "harnessmix/claude-code-native";
 export const CLAUDE_CODE_TRANSPORT_MODEL_PREFIX = `${CLAUDE_CODE_TRANSPORT_MODEL_ID}@`;
-export const DEEPSEEK_HARNESS_TRANSPORT_MODEL_ID = "codexhost/deepseek-harness-native";
+export const DEEPSEEK_HARNESS_TRANSPORT_MODEL_ID = "harnessmix/deepseek-harness-native";
 export const DEEPSEEK_HARNESS_TRANSPORT_MODEL_PREFIX = `${DEEPSEEK_HARNESS_TRANSPORT_MODEL_ID}@`;
-export const OPENCODE_TRANSPORT_MODEL_ID = "codexhost/opencode-native";
+export const OPENCODE_TRANSPORT_MODEL_ID = "harnessmix/opencode-native";
 export const OPENCODE_TRANSPORT_MODEL_PREFIX = `${OPENCODE_TRANSPORT_MODEL_ID}@`;
-export const GROK_TRANSPORT_MODEL_ID = "codexhost/grok-native";
+export const GROK_TRANSPORT_MODEL_ID = "harnessmix/grok-native";
 export const GROK_TRANSPORT_MODEL_PREFIX = `${GROK_TRANSPORT_MODEL_ID}@`;
-export const OMP_TRANSPORT_MODEL_ID = "codexhost/omp-native";
+export const OMP_TRANSPORT_MODEL_ID = "harnessmix/omp-native";
 export const OMP_TRANSPORT_MODEL_PREFIX = `${OMP_TRANSPORT_MODEL_ID}@`;
-export const ANTIGRAVITY_TRANSPORT_MODEL_ID = "codexhost/antigravity-native";
+export const ANTIGRAVITY_TRANSPORT_MODEL_ID = "harnessmix/antigravity-native";
 export const ANTIGRAVITY_TRANSPORT_MODEL_PREFIX = `${ANTIGRAVITY_TRANSPORT_MODEL_ID}@`;
 
 export type RendererAdapterState = "installing" | "ready" | "unsupported";
@@ -122,7 +122,7 @@ export interface RendererDraftPrewarmPolicy {
 }
 
 interface RendererDraftPrewarmPolicyTarget {
-  __codexhostDraftPrewarmPolicyV1?: RendererDraftPrewarmPolicy;
+  __harnessmixDraftPrewarmPolicyV1?: RendererDraftPrewarmPolicy;
   setTimeout(handler: TimerHandler, timeout?: number): number;
 }
 
@@ -131,8 +131,8 @@ const DRAFT_PREWARM_POLICY_POLL_INTERVAL_MS = 25;
 
 declare global {
   interface Window {
-    __codexhostMainProcessTitlePolicyV1?: { state: "ready" };
-    __codexhostDraftPrewarmPolicyV1?: RendererDraftPrewarmPolicy;
+    __harnessmixMainProcessTitlePolicyV1?: { state: "ready" };
+    __harnessmixDraftPrewarmPolicyV1?: RendererDraftPrewarmPolicy;
   }
 }
 
@@ -916,7 +916,7 @@ export async function waitForRendererDraftPrewarmPolicy(
 ): Promise<RendererDraftPrewarmPolicy> {
   const deadline = Date.now() + DRAFT_PREWARM_POLICY_WAIT_TIMEOUT_MS;
   while (true) {
-    const policy = target.__codexhostDraftPrewarmPolicyV1;
+    const policy = target.__harnessmixDraftPrewarmPolicyV1;
     if (isDraftPrewarmPolicyReady(policy)) return policy;
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error("Renderer draft prewarm policy is unavailable");
@@ -994,13 +994,13 @@ export function installCurrentRendererAdapter(): {
   ): void => {
     liveStatus.modelUpdates = modelUpdates;
     transitionRendererAdapterStatus(liveStatus, { state, reason, hook }, () => {
-      window.dispatchEvent(new CustomEvent("codexhost:renderer-adapter-status"));
+      window.dispatchEvent(new CustomEvent("harnessmix:renderer-adapter-status"));
     });
   };
 
   const usageSubscription = createThreadUsageSubscriptionRelay();
   const requestRouteResolver = createRendererRequestRouteResolver(
-    () => window.__codexhostDraftPrewarmPolicyV1,
+    () => window.__harnessmixDraftPrewarmPolicyV1,
     () => findActivePrewarmTargets(document),
   );
   const clientsByTarget = new WeakMap<
@@ -1060,7 +1060,7 @@ export function installCurrentRendererAdapter(): {
       const route = currentRequestRoute();
       if (route?.policy.hostId === hostId)
         return modelClientForTargets(route.targets, route.policy);
-      const policy = window.__codexhostDraftPrewarmPolicyV1;
+      const policy = window.__harnessmixDraftPrewarmPolicyV1;
       if (isDraftPrewarmPolicyReady(policy) && hasPolicyRequestTarget(policy)) return null;
       const targets = rendererRequestTargetsForHost(findActivePrewarmTargets(document), hostId);
       return modelClientForTargets(targets ?? []);
@@ -1140,7 +1140,7 @@ export function installCurrentRendererAdapter(): {
     getClient: () => modelControl,
     reportError: (error) => {
       console.error(
-        "codexhost external Thread Fork failed",
+        "harnessmix external Thread Fork failed",
         error instanceof Error ? error.name : "UnknownError",
       );
     },
@@ -1201,7 +1201,7 @@ export function installCurrentRendererAdapter(): {
   };
   if (!captureRoutingPolicy()) {
     updateStatus("installing", "draft-routing-policy-unavailable", null);
-    const policy = window.__codexhostDraftPrewarmPolicyV1;
+    const policy = window.__harnessmixDraftPrewarmPolicyV1;
     if (!isDraftPrewarmPolicyReady(policy) || !hasPolicyRequestTarget(policy)) {
       startPolicyCapture();
     }
@@ -1209,7 +1209,7 @@ export function installCurrentRendererAdapter(): {
   const handleRoutingPolicyChange = (): void => {
     stopPolicyRecapture();
     if (captureRoutingPolicy()) return;
-    const policy = window.__codexhostDraftPrewarmPolicyV1;
+    const policy = window.__harnessmixDraftPrewarmPolicyV1;
     if (isDraftPrewarmPolicyReady(policy) && hasPolicyRequestTarget(policy)) {
       stopPolicyCapture();
     }
@@ -1219,7 +1219,7 @@ export function installCurrentRendererAdapter(): {
       startPolicyRecapture();
     }
   };
-  window.addEventListener("codexhost:draft-prewarm-policy-changed", handleRoutingPolicyChange);
+  window.addEventListener("harnessmix:draft-prewarm-policy-changed", handleRoutingPolicyChange);
 
   const applyAgent = (
     agent: RendererAgent,
@@ -1265,7 +1265,7 @@ export function installCurrentRendererAdapter(): {
       stopPolicyCapture();
       stopPolicyRecapture();
       window.removeEventListener(
-        "codexhost:draft-prewarm-policy-changed",
+        "harnessmix:draft-prewarm-policy-changed",
         handleRoutingPolicyChange,
       );
       const activeRoutingPolicy = routingPolicy;

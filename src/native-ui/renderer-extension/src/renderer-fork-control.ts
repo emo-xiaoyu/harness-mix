@@ -3,7 +3,7 @@ import {
   hostTurnIdSchema,
   type HostThreadId,
   type HostTurnId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import type { RendererModelClient } from "./renderer-model-client.js";
 import {
