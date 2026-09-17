@@ -104,7 +104,7 @@ Antigravity question token 均为内存生成、按需注入子进程环境）�
 }
 ```
 
-`<data>` = `CODEXHOST_DATA_DIR`（默认 `%APPDATA%\harness-mix\codexhost`）。
+`<data>` = `HARNESSMIX_DATA_DIR`（默认 `%APPDATA%\harnessmix`）。
 
 ### 4.3 git 通道
 
@@ -308,7 +308,7 @@ launcher 入口（持锁）：
 
 新增：
 
-- `docs/superpowers/specs/2026-09-13-native-hardening-design.md`（本文）
+- `docs/specs/2026-09-13-native-hardening-design.md`（本文）
 - `src/main/native/process-utils.js`、`src/main/native/redact.js`、
   `src/main/native/secure-store.js`
 - `src/main/native/rs/crates/secret/`（新 crate）

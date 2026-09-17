@@ -6,7 +6,7 @@ import {
   updateStartResultSchema,
   updateStatusResultSchema,
   updateStatusSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 const status = {
   version: "1.2.3",
@@ -26,7 +26,7 @@ describe("update runtime contracts", () => {
         updateAvailable: true,
         installationAvailable: true,
         releaseNotes: "## Changes\n\n- Safer updates",
-        releaseNotesUrl: "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+        releaseNotesUrl: "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
         status: null,
         error: null,
       }),
@@ -98,7 +98,7 @@ describe("update runtime contracts", () => {
         updateAvailable: true,
         installationAvailable: true,
         releaseNotes: null,
-        releaseNotesUrl: "https://github.com/Other/codex-host/releases/tag/v1.2.3",
+        releaseNotesUrl: "https://github.com/Other/other-project/releases/tag/v1.2.3",
         status: null,
         error: null,
       }).success,
@@ -111,7 +111,7 @@ describe("update runtime contracts", () => {
         updateAvailable: true,
         installationAvailable: true,
         releaseNotes: "x".repeat(20_001),
-        releaseNotesUrl: "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+        releaseNotesUrl: "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
         status: null,
         error: null,
       }).success,

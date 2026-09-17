@@ -1,8 +1,8 @@
 const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 const clean = obj => Object.fromEntries(Object.entries(obj).filter(([, v]) => valid(v)));
 
-// Same native accounting as codex-host/pi-usage: cache tokens are separate
-// from uncached input. Session totals and latest-request cache rate must not mix.
+// Cache tokens are accounted separately from uncached input, matching the native
+// accounting. Session totals and latest-request cache rate must not mix.
 function sessionUsage(data = {}) {
   const t = data.tokens ?? {}, c = data.contextUsage ?? {};
   return { ...clean({ input: t.input, output: t.output, cacheRead: t.cacheRead,

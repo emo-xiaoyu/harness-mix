@@ -8,7 +8,7 @@ const manifest = {
   name: "Claude Code",
   icon: "claude-color.svg",
   aliases: ['claude', 'claude-code'],
-  // 完整接入（对齐 codex-host）：官方 Agent SDK query() 常驻双向 stream-json 会话，
+  // 完整接入：官方 Agent SDK query() 常驻双向 stream-json 会话，
   // 审批/提问经 canUseTool 桥接回 Host，中断/模型/权限模式走原生控制协议。
   capabilities: { collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
