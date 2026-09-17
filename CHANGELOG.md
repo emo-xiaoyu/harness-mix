@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- Renamed the kernel's internal `codexhost` identifiers to `harnessmix`: data directory, environment variables, protocol method namespaces, DOM hooks, and the `@harnessmix/*` package scope. Deployed Shim and protocol binaries must be rebuilt (`npm run build:native`) so the Rust and JavaScript layers agree on the environment contract.
-- Relocated the data directory to `<base>/harnessmix`. The launcher now moves an existing `harness-mix/codexhost` directory into the new location once, after retiring the previous runtime, so sessions, Harness accounts, thread mappings, collaboration state, and the credential vault survive the rename.
+- The README is now fully bilingual (中文 + English), and Harness Mix is dual-licensed under Apache-2.0 OR MIT: `LICENSE-MIT` was added, and `package.json`, the Rust crates and the native-package publisher now declare `(Apache-2.0 OR MIT)`.
+
+- Renamed the kernel's internal legacy identifiers to `harnessmix`: data directory, environment variables, protocol method namespaces, DOM hooks, and the `@harnessmix/*` package scope. Deployed Shim and protocol binaries must be rebuilt (`npm run build:native`) so the Rust and JavaScript layers agree on the environment contract.
+- Relocated the data directory to `<base>/harnessmix`; the one-time relocation of pre-rename installs has served its purpose and is now removed together with every remaining mention of the old naming.
 - `npm run build:native` now fails instead of silently keeping a stale `harness-mix-shim.exe` when a running Codex Desktop locks it **and** its contents changed; a byte-identical locked binary is still kept for UI-only rebuilds.
 - Removed the remaining third-party reference comments from adapter and error-classification sources, and narrowed the release-notes URL check in `@harnessmix/shared-contracts` so only this project's GitHub Release (`emo-xiaoyu/harness-mix`) is accepted. Attribution required by upstream licenses (`NOTICE`, `licenses/`, `src/native-ui/LICENSE` and the per-subtree provenance notes) is unchanged.
 - Dropped the last third-party reference comments in the multi-Agent collaboration runtime and renamed `docs/superpowers/specs/` to `docs/specs/`, so no source path or comment names another project. Stopped tracking `.workbuddy/memory/` (already covered by `.gitignore`); the local notes are unchanged.
 - Added the missing attribution for the bundled harness and model icons: twenty-four of the thirty-three are redistributed from `lobehub/lobe-icons` (MIT) — fifteen byte-identical, nine with identical path data — so `licenses/lobe-icons-MIT.txt` was added, `src/assets/icons/PROVENANCE.md` now maps every file to its origin (and lists the three files no code path references), and `NOTICE` records the redistribution plus the trademark status of all bundled brand marks.
-- Added a bilingual acknowledgements section to the README crediting the projects this kernel drew on: `BytePioneer-AI/codex-host` for the Codex Desktop integration basis, `NanmiCoder/cc-haha` for the collaboration orchestration approach, `xintaofei/codeg` for the tool protocol and multi-Harness wiring, and `HeiGeAi/heige-codex-skin-studio` for the bundled skin artwork.
+- Added a bilingual acknowledgements section to the README crediting the projects this kernel drew on: BytePioneer-AI's Codex Desktop integration project for the native integration basis, `NanmiCoder/cc-haha` for the collaboration orchestration approach, `xintaofei/codeg` for the tool protocol and multi-Harness wiring, and `HeiGeAi/heige-codex-skin-studio` for the bundled skin artwork.
 
 ## 0.1.11 — 2026-09-16
 

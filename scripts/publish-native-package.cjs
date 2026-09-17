@@ -24,7 +24,7 @@ if (!sourceOnly) {
 }
 fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({
   name: `@harness-mix/native-${key}`, version, description: `Harness Mix native runtime for ${key}${sourceOnly ? ' (source-only; build locally)' : ''}`,
-  license: 'Apache-2.0', os: [platform], cpu: [arch], files: ['bin'], publishConfig: { access: 'public' },
+  license: '(Apache-2.0 OR MIT)', os: [platform], cpu: [arch], files: ['bin'], publishConfig: { access: 'public' },
 }, null, 2) + '\n');
 fs.writeFileSync(path.join(pkg, 'README.md'), `# @harness-mix/native-${key}\n\nNative runtime selected automatically by @harness-mix/cli.\n`);
 const publish = flags.includes('--publish');
