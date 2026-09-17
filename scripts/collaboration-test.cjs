@@ -181,6 +181,9 @@ async function main() {
     assert.equal(denied.status, 403);
     const outsider = await rt.createThread({ harnessId: 'worker', cwd: root });
     await assert.rejects(rt.collaboration.inspectTeam(outsider.id, team.team_id), /not a team participant/);
+    const noTeam = await rt.collaboration.inspectTeam(outsider.id);
+    assert.equal(noTeam.team, null, 'Inspecting a non-team thread without a teamId answers benignly');
+    assert.deepEqual(noTeam.snapshots, []);
     await rt.send(outsider.id, 'unrelated');
     assert.equal(outsider.messages.at(-1).concurrent, true, 'Independent same-workspace turns are marked concurrent');
     await rt.cancel(outsider.id); await wait(() => !pending.has(outsider.id));
