@@ -54,7 +54,9 @@ const { HostRuntime } = require('../src/main/host/runtime');
   rt.subscribe(e => { if (e.type === 'turn/diff/updated') updates.push(e); });
   await rt.store.load();
   rt.adapters.set('test', {
-    manifest: { id: 'test', name: 'Test', capabilities: {} },
+    // Even a Harness that advertises nativePatch may omit a native file event.
+    // Host final Diff must still close the gap from its authoritative snapshot.
+    manifest: { id: 'test', name: 'Test', capabilities: { nativeDiff: true, nativePatch: true } },
     open: async () => ({}), close: async () => {},
     send: async (_session, _text, { emit }) => {
       emit({ kind: 'text-delta', text: 'progress' });
@@ -73,7 +75,7 @@ const { HostRuntime } = require('../src/main/host/runtime');
   assert.equal(t.status, 'ready');
   const answer = t.messages.at(-1);
   assert.deepEqual(answer.coreItems.filter(i => ['agent_message', 'tool_call'].includes(i.type)).map(i => i.type), ['agent_message', 'tool_call', 'agent_message']);
-  assert.equal(answer.review.files.length, 1);
+  assert.equal(answer.review.files.length, 1, 'Host final Diff supplements a missing native patch');
   assert.equal(answer.review.files[0].path, 'dirty.js');
   assert.ok(updates.some(e => e.turnId === answer.id && e.review?.live && e.review.files.some(f => f.path === 'dirty.js')), 'Runtime pushes live diff without Renderer polling');
   assert.ok(updates.some(e => e.turnId === answer.id && e.review?.live === false), 'Runtime pushes final diff');

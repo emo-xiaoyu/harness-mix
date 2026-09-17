@@ -4,7 +4,9 @@ const CAPABILITY_GROUPS = {
   conversation: ['streaming', 'reasoning', 'plan', 'compaction', 'attachments'],
   interaction: ['approval', 'question', 'permissionMode'],
   session: ['resume', 'fork', 'forkFromMessage'],
-  workspace: ['nativeDiff', 'nativePatch'],
+  // git/worktree/finalDiff are Host-owned. nativeDiff/nativePatch remain
+  // adapter-owned signals describing the native Harness event stream.
+  workspace: ['git', 'worktree', 'finalDiff', 'nativeDiff', 'nativePatch'],
   model: ['selection', 'thinkingLevel'],
   usage: ['tokens', 'context', 'cost'],
 };

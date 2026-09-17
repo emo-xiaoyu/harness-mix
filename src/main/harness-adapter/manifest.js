@@ -49,7 +49,13 @@ function normalizeCapabilities(caps = {}) {
   return createCapabilities({
     conversation: { streaming: caps.streaming === true, reasoning: caps.thinking === true, plan: caps.plan === true, compaction: caps.compaction === true, attachments: caps.attachments === true },
     interaction: { approval: caps.approvals === true, question: caps.questions === true, permissionMode: caps.permissionModes === true },
-    workspace: { nativeDiff: caps.nativeDiff === true, nativePatch: caps.nativePatch === true },
+    workspace: {
+      git: true,
+      worktree: true,
+      finalDiff: true,
+      nativeDiff: caps.nativeDiff === true,
+      nativePatch: caps.nativePatch === true,
+    },
     session: { resume: caps.resume === true, fork: caps.fork === true, forkFromMessage: caps.fork === true && caps.forkFromMessage === true },
     model: { selection: caps.models === true, thinkingLevel: caps.thinkingLevels === true },
     usage: { tokens: caps.usage === true, context: caps.contextUsage === true, cost: caps.cost === true },

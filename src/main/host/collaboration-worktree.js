@@ -13,6 +13,32 @@ async function git(cwd, args, env = {}) {
   })).stdout;
 }
 
+async function inspectWorkspace(cwd, workspace = null) {
+  const result = {
+    hostManaged: true,
+    git: { available: false },
+    worktree: { available: false, active: workspace?.mode === 'worktree' },
+    finalDiff: { available: true, source: 'snapshot' },
+  };
+  try {
+    const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
+    const head = (await git(cwd, ['rev-parse', '--verify', 'HEAD'])).trim();
+    let branch = null;
+    try { branch = (await git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim() || null; } catch {}
+    const dirty = Boolean((await git(cwd, ['status', '--porcelain', '--untracked-files=normal'])).trim());
+    result.git = { available: true, root, head, branch, dirty };
+    result.worktree = {
+      available: true,
+      active: workspace?.mode === 'worktree',
+      ...(workspace?.branch ? { branch: workspace.branch } : {}),
+      ...(workspace?.root ? { root: workspace.root } : {}),
+    };
+  } catch (error) {
+    result.git.reason = /not a git repository/i.test(error.stderr || '') ? 'not-a-git-repository' : 'git-unavailable';
+  }
+  return result;
+}
+
 // A private index snapshots tracked and non-ignored files without staging the user's index.
 async function tree(cwd) {
   const index = path.join(os.tmpdir(), `harness-mix-index-${randomUUID()}`);
@@ -148,4 +174,4 @@ async function pushWorkspace(workspace, remote = 'origin', remoteBranch = worksp
   return { remote, branch: remoteBranch, commit: newCommit, pushed: true };
 }
 
-module.exports = { createWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace, git, tree };
+module.exports = { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace, git, tree };
