@@ -718,6 +718,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     sync(target: HTMLElement) {
       syncBadges(target);
     },
+    prepareSubmission(composer: Element): boolean {
+      const editorEl = findEditorIn(composer);
+      return !!editorEl && injectMentionsInto(editorEl);
+    },
     dispose() {
       disposed = true;
       close();

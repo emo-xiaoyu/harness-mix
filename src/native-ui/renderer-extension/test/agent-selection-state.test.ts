@@ -2,7 +2,7 @@ import {
   harnessModelRefSchema,
   harnessPermissionModeIdSchema,
   harnessThinkingOptionIdSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { DraftAgentController } from "../src/index.js";
@@ -418,6 +418,65 @@ describe("Renderer draft Agent controller", () => {
       piThinkingOptionId: thinkingOptionId,
       permissionModeByAgent: { pi: permissionModeId },
     });
+  });
+
+  it("carries a live draft selection when Codex re-derives the draft identity", async () => {
+    const composer = {};
+    const agents = controller();
+    const firstTarget = ["default", "client-new-thread:draft-a"] as const;
+    const reboundTarget = ["default", "client-new-thread:draft-b"] as const;
+    const model = harnessModelRefSchema.parse({ id: "kimi-k3-max" });
+
+    agents.mount(composer, firstTarget);
+    await agents.switchAgent(composer, "pi", {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.setExternalModel(composer, "pi", model);
+    const liveState = agents.get(composer);
+
+    const rebound = agents.rebindTarget(composer, reboundTarget);
+    expect(rebound).toBe(liveState);
+    expect(rebound).toMatchObject({ agent: "pi", phase: "draft", piModel: model });
+    // The rebound identity is restorable: leaving and returning keeps it.
+    agents.rebindTarget(composer, ["conversation", "visited-thread", "local"]);
+    expect(agents.rebindTarget(composer, reboundTarget)).toBe(liveState);
+  });
+
+  it("keeps a pending submission across a draft identity rebind", async () => {
+    const composer = {};
+    const agents = controller();
+    agents.mount(composer, ["default", "client-new-thread:pending-a"]);
+    await agents.switchAgent(composer, "pi", {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.markSubmissionPending(composer);
+
+    agents.rebindTarget(composer, ["default", "client-new-thread:pending-b"]);
+    expect(agents.isSubmissionPending(composer)).toBe(true);
+    // The pending draft still transfers onto the created conversation.
+    expect(agents.transfer(composer, composer, ["conversation", "created-thread"])).toBe(true);
+    expect(agents.get(composer)).toMatchObject({ agent: "pi", phase: "locked" });
+  });
+
+  it("still seeds an untouched rebound draft from the last submitted Agent", async () => {
+    const submitted = {};
+    const quiet = {};
+    const agents = controller();
+    agents.mount(submitted, ["default", "client-new-thread:submitted-a"]);
+    await agents.switchAgent(submitted, "pi", {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.recordSubmission(submitted);
+
+    // A draft the user never configured follows the new-Thread seed even when
+    // Codex re-derives its identity underneath the same Composer element.
+    agents.mount(quiet, ["default", "client-new-thread:quiet-a"]);
+    const rebound = agents.rebindTarget(quiet, ["default", "client-new-thread:quiet-b"]);
+    expect(rebound).toMatchObject({ agent: "pi", phase: "draft" });
+    expect(rebound.composerId).not.toBe("composer-2");
   });
 
   it("does not revive a submitted draft after it becomes a conversation", async () => {

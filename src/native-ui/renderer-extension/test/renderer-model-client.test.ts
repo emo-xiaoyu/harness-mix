@@ -6,7 +6,7 @@ import {
   hostThreadIdSchema,
   hostTurnIdSchema,
   type ThreadUsageInspection,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -85,7 +85,7 @@ describe("Renderer fixed Model request client", () => {
     await expect(client?.inspectCodexAccountUsage?.({ accountId: "account-b" })).resolves.toEqual(
       result,
     );
-    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("codexhost/account/usage/inspect", {
+    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("harnessmix/account/usage/inspect", {
       accountId: "account-b",
     });
   });
@@ -176,7 +176,7 @@ describe("Renderer fixed Model request client", () => {
     const sendRequest = vi.fn().mockResolvedValue({ accounts: [account] });
     const client = createRendererModelClient([{ sendRequest }]);
     expect(await client?.listHarnessAccounts?.()).toEqual({ accounts: [account] });
-    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("codexhost/harness/accounts/list", {});
+    expect(sendRequest).toHaveBeenCalledExactlyOnceWith("harnessmix/harness/accounts/list", {});
     sendRequest.mockResolvedValueOnce({ accounts: [{ ...account, token: "private" }] });
     await expect(client?.listHarnessAccounts?.()).rejects.toThrow();
   });
@@ -221,7 +221,7 @@ describe("Renderer fixed Model request client", () => {
       .mockResolvedValueOnce({
         owner: "external",
         harnessId: "pi",
-        transportModelId: "codexhost/pi-native",
+        transportModelId: "harnessmix/pi-native",
         effectiveModel: model,
         effectiveThinkingOptionId: high,
         availableThinkingOptions: thinkingOptions,
@@ -264,7 +264,7 @@ describe("Renderer fixed Model request client", () => {
         updateAvailable: true,
         installationAvailable: true,
         releaseNotes: "Safer updates",
-        releaseNotesUrl: "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+        releaseNotesUrl: "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
         status: null,
         error: null,
       })
@@ -299,6 +299,7 @@ describe("Renderer fixed Model request client", () => {
       "inspectStorage",
       "inspectThread",
       "inspectThreadCommands",
+      "inspectThreadTeam",
       "inspectThreadUsage",
       "installHarness",
       "integrationCatalog",
@@ -496,9 +497,9 @@ describe("Renderer fixed Model request client", () => {
       await client.importHarnessSession({ harnessId: piHarnessId, nativeSessionId: "native-1" }),
     ).toEqual({ threadId: "thread-1" });
     expect(sendRequest.mock.calls).toEqual([
-      ["codexhost/harness/session-import/sources", {}],
-      ["codexhost/harness/session-import/list", { harnessId: "pi" }],
-      ["codexhost/harness/session-import/import", { harnessId: "pi", nativeSessionId: "native-1" }],
+      ["harnessmix/harness/session-import/sources", {}],
+      ["harnessmix/harness/session-import/list", { harnessId: "pi" }],
+      ["harnessmix/harness/session-import/import", { harnessId: "pi", nativeSessionId: "native-1" }],
     ]);
     for (const extra of [{ cwd: "C:\\injected" }, { locator: { sessionFile: "/injected" } }]) {
       await expect(
@@ -573,7 +574,7 @@ describe("Renderer fixed Model request client", () => {
         limit: 20,
       }),
     ).rejects.toBe(failure);
-    expect(sendRequest).toHaveBeenCalledWith("codexhost/harness/session-import/list", {
+    expect(sendRequest).toHaveBeenCalledWith("harnessmix/harness/session-import/list", {
       harnessId: "pi",
       query: "needle",
       offset: 40,
@@ -649,7 +650,7 @@ describe("Renderer fixed Model request client", () => {
     const sendRequest = vi.fn(async () => ({
       owner: "external",
       harnessId: "pi",
-      transportModelId: "codexhost/pi-native",
+      transportModelId: "harnessmix/pi-native",
       locked: true,
       nativeSessionRef: { nativeSessionId: "private" },
     }));
@@ -686,7 +687,7 @@ describe("Renderer fixed Model request client", () => {
       updateAvailable: true,
       installationAvailable: true,
       releaseNotes: "Safer updates",
-      releaseNotesUrl: "https://github.com/BytePioneer-AI/codex-host/releases/tag/v1.2.3",
+      releaseNotesUrl: "https://github.com/emo-xiaoyu/harness-mix/releases/tag/v1.2.3",
       status: null,
       error: null,
       artifactUrl: "https://example.com/update.exe",

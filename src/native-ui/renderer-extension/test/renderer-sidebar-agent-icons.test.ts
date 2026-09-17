@@ -3,7 +3,7 @@ import {
   type HostThreadId,
   type ThreadOwnershipListParams,
   type ThreadOwnershipListResult,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RendererAgent } from "../src/agent-selection-state.js";
@@ -172,7 +172,14 @@ describe("Renderer sidebar Agent ownership", () => {
       threadIdFromSidebarRowElement(fiberRow(["thread-1"], { matchingAttributes: false })),
     ).toBeNull();
     expect(threadIdFromSidebarRowElement(fiberRow(["thread-1", "thread-2"]))).toBeNull();
-    expect(threadIdFromSidebarRowElement(fiberRow(["thread-1"], { fiberCount: 2 }))).toBeNull();
+    // Multiple Fiber roots that agree on the row identity still resolve; only
+    // genuine disagreement stays fail-closed.
+    expect(threadIdFromSidebarRowElement(fiberRow(["thread-1"], { fiberCount: 2 }))).toBe(
+      "thread-1",
+    );
+    expect(
+      threadIdFromSidebarRowElement(fiberRow(["thread-1", "thread-2"], { fiberCount: 2 })),
+    ).toBeNull();
   });
 
   it("uses a mounted draft Agent before querying ownership", async () => {
@@ -402,7 +409,7 @@ describe("Renderer sidebar Agent ownership", () => {
         vi
           .fn()
           .mockRejectedValue(
-            new RendererMethodUnavailableError("codexhost/thread/ownership/list", { code: -32601 }),
+            new RendererMethodUnavailableError("harnessmix/thread/ownership/list", { code: -32601 }),
           ),
       );
       const control = installRendererSidebarAgentIcons({ getClient: () => client, dom });

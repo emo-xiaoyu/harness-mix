@@ -15,8 +15,8 @@ import {
   type ThreadInspection,
   type ThreadUsageInspection,
   type ThreadUsageSnapshot,
-  type CodexhostError,
-} from "@codexhost/shared-contracts";
+  type HarnessMixError,
+} from "@harnessmix/shared-contracts";
 
 import {
   DEFAULT_RENDERER_AGENTS,
@@ -81,6 +81,7 @@ import {
 import { installRendererSidebarAgentIcons } from "./renderer-sidebar-agent-icons.js";
 import { installHarnessMentions } from './renderer-harness-mentions.js';
 import { installCollabCards } from './renderer-collab-cards.js';
+import { installTeamCards } from './renderer-team-cards.js';
 import {
   rendererHarnessCommandExecutesDirectly,
   routeRendererHarnessCommandSelection,
@@ -133,12 +134,12 @@ const externalAgents: readonly ExternalRendererAgent[] = [
   'codex-harness',
 ];
 type HarnessAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
-type HarnessAvailabilityErrors = Record<ExternalRendererAgent, CodexhostError | undefined>;
+type HarnessAvailabilityErrors = Record<ExternalRendererAgent, HarnessMixError | undefined>;
 type HarnessWebUiAvailability = Record<ExternalRendererAgent, boolean>;
 
 function isRetryableHarnessAvailability(
   availability: RendererAgentAvailability | undefined,
-  error: CodexhostError | undefined,
+  error: HarnessMixError | undefined,
 ): boolean {
   return (
     availability !== undefined &&
@@ -301,7 +302,7 @@ export interface RendererBindingProbeApi {
 
 declare global {
   interface Window {
-    __codexhostRendererBindingProbeV1?: RendererBindingProbeApi;
+    __harnessmixRendererBindingProbeV1?: RendererBindingProbeApi;
   }
 }
 
@@ -685,7 +686,7 @@ function catalogWithConfigurationState(
 export function installRendererBindingProbe(
   options: RendererBindingProbeOptions = {},
 ): RendererBindingProbeApi {
-  const existing = window.__codexhostRendererBindingProbeV1;
+  const existing = window.__harnessmixRendererBindingProbeV1;
   if (existing) return existing;
 
   const enabledAgents = [...new Set(options.enabledAgents ?? DEFAULT_RENDERER_AGENTS)];
@@ -768,6 +769,25 @@ export function installRendererBindingProbe(
     applyWorkspace: async (threadId, digest) => {
       const client = modelClientForHost('local');
       return (client as any)?.applyThreadWorkspace?.({ threadId, digest }) ?? { patch: '', digest: '' };
+    },
+  });
+  const teamCards = installTeamCards({
+    inspectTeam: async (threadId, teamId) => {
+      const client = modelClientForHost('local');
+      return client?.inspectThreadTeam?.({ threadId, ...(teamId ? { teamId } : {}) }) ?? null;
+    },
+    openThread: (threadId) => openRendererThread(hostThreadIdSchema.parse(threadId), { hostId: 'local' }),
+    activeThread: () => {
+      const mounted = [...mountedByComposer.values()].find(candidate => {
+        if (!candidate.composer.isConnected || !candidate.control.root.isConnected) return false;
+        if (!threadIdFromComposerModelTarget(candidate.modelTarget)) return false;
+        const style = window.getComputedStyle(candidate.composer);
+        return style.display !== 'none' && style.visibility !== 'hidden' && candidate.composer.getClientRects().length > 0;
+      });
+      const threadId = mounted ? threadIdFromComposerModelTarget(mounted.modelTarget) : null;
+      const scroll = mounted?.composer.closest('.thread-scroll-container');
+      const content = scroll?.parentElement?.parentElement;
+      return mounted && threadId ? { threadId, anchor: content ?? mounted.composer } : null;
     },
   });
   let connectionDiagnostics: RendererConnectionDiagnostics | null = null;
@@ -911,7 +931,7 @@ export function installRendererBindingProbe(
       }
     }
     window.dispatchEvent(
-      new CustomEvent("codexhost:renderer-submission", {
+      new CustomEvent("harnessmix:renderer-submission", {
         detail: {
           composerId: state.composerId,
           agent: state.agent,
@@ -1002,7 +1022,7 @@ export function installRendererBindingProbe(
       await modelControl.executeThreadCommand({ threadId, commandId: command.id });
     } catch (error) {
       console.error(
-        "codexhost Harness command failed",
+        "harnessmix Harness command failed",
         error instanceof Error ? error.message : String(error),
       );
     } finally {
@@ -1022,7 +1042,7 @@ export function installRendererBindingProbe(
     ) {
       return;
     }
-    console.error("codexhost Harness command could not claim the current Composer editor");
+    console.error("harnessmix Harness command could not claim the current Composer editor");
   };
 
   const applyThreadUsageUpdate = (update: ThreadUsageInspection): void => {
@@ -2164,12 +2184,11 @@ export function installRendererBindingProbe(
       sidebarAgentIcons.refresh();
       return switched;
     } catch {
-      adapterStatus = {
-        ...adapterStatus,
-        state: "unsupported",
-        reason: "draft-prewarm-clear-failed",
-        hook: null,
-      };
+      // A failed draft-prewarm clear is transient (timers may be throttled in a
+      // hidden window). The Adapter owns its status lifecycle and recovers via
+      // its own recapture path; replacing the live status object here detached
+      // every picker from future status updates and latched "unsupported".
+      renderMounted(mounted);
       return false;
     } finally {
       for (const candidate of mountedByComposer.values()) {
@@ -2225,7 +2244,7 @@ export function installRendererBindingProbe(
       const policy = await waitForRendererDraftPrewarmPolicy(window);
       if (!isCurrent() || policy.hostId !== hostId) return;
       await policy.clear();
-      if (!isCurrent() || window.__codexhostDraftPrewarmPolicyV1 !== policy) return;
+      if (!isCurrent() || window.__harnessmixDraftPrewarmPolicyV1 !== policy) return;
       if (!policy.selectAccount) throw new Error("Codex Account selection is unavailable");
       policy.selectAccount(codexAccountRouteOverride(accounts.accounts, accountId));
       accounts.overrideAccountId =
@@ -2322,7 +2341,7 @@ export function installRendererBindingProbe(
       await Promise.all(
         agentsToInspect.map(async (agent) => {
           let status: RendererAgentAvailability = "error";
-          let nextError: CodexhostError | undefined;
+          let nextError: HarnessMixError | undefined;
           let webUiAvailable = false;
           try {
             const inspection = await client.inspectHarness({
@@ -2843,7 +2862,7 @@ export function installRendererBindingProbe(
         composerCodexAccounts(composer)?.accounts ?? [],
         accountId,
       );
-      const policy = window.__codexhostDraftPrewarmPolicyV1;
+      const policy = window.__harnessmixDraftPrewarmPolicyV1;
       if (override !== null && (policy?.hostId !== mounted.hostId || !policy.selectAccount)) {
         return false;
       }
@@ -2884,6 +2903,7 @@ export function installRendererBindingProbe(
       blockEvent(event);
       return;
     }
+    harnessMentions.prepareSubmission(composer);
     notifySubmission(composer, "submit");
   };
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -2911,6 +2931,7 @@ export function installRendererBindingProbe(
       blockEvent(event);
       return;
     }
+    harnessMentions.prepareSubmission(composer);
     notifySubmission(composer, "enter");
   };
   const onClick = (event: MouseEvent): void => {
@@ -2925,6 +2946,7 @@ export function installRendererBindingProbe(
       blockEvent(event);
       return;
     }
+    harnessMentions.prepareSubmission(composer);
     notifySubmission(composer, "click");
   };
 
@@ -2992,8 +3014,8 @@ export function installRendererBindingProbe(
       void refreshHarnessAvailability(true);
     }
   };
-  window.addEventListener("codexhost:draft-prewarm-policy-changed", onHostRouteChange);
-  window.addEventListener("codexhost:renderer-adapter-status", onAdapterStatus);
+  window.addEventListener("harnessmix:draft-prewarm-policy-changed", onHostRouteChange);
+  window.addEventListener("harnessmix:renderer-adapter-status", onAdapterStatus);
   window.addEventListener("focus", onWindowFocus);
 
   const connectedComposers = (): MountedComposer[] =>
@@ -3115,13 +3137,14 @@ export function installRendererBindingProbe(
       sidebarAgentIcons.dispose();
       harnessMentions.dispose();
       collabCards.dispose();
+      teamCards.dispose();
       settingsLifecycle.dispose();
       document.removeEventListener("beforeinput", onBeforeInput, true);
       document.removeEventListener("submit", onSubmit, true);
       document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("click", onClick, true);
-      window.removeEventListener("codexhost:draft-prewarm-policy-changed", onHostRouteChange);
-      window.removeEventListener("codexhost:renderer-adapter-status", onAdapterStatus);
+      window.removeEventListener("harnessmix:draft-prewarm-policy-changed", onHostRouteChange);
+      window.removeEventListener("harnessmix:renderer-adapter-status", onAdapterStatus);
       window.removeEventListener("focus", onWindowFocus);
       for (const state of harnessAvailabilityByHost.values()) {
         state.requestGeneration += 1;
@@ -3139,10 +3162,10 @@ export function installRendererBindingProbe(
       pendingReplacements.clear();
       connectionListeners.clear();
       connectionDiagnostics = null;
-      delete window.__codexhostRendererBindingProbeV1;
+      delete window.__harnessmixRendererBindingProbeV1;
     },
   };
-  window.__codexhostRendererBindingProbeV1 = api;
+  window.__harnessmixRendererBindingProbeV1 = api;
   scan();
   return api;
 }

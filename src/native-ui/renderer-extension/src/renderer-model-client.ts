@@ -95,7 +95,7 @@ import {
   type UpdateCheckResult,
   type UpdateStartResult,
   type UpdateStatusResult,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   createRendererRequestSender,
@@ -110,39 +110,40 @@ import {
   type RendererPetsClient,
 } from "./settings/pets-client.js";
 
-export const HARNESS_INSPECT_METHOD = "codexhost/harness/inspect";
-export const HARNESS_INSTALL_METHOD = "codexhost/harness/install";
-export const HARNESS_PLUGIN_LIST_METHOD = "codexhost/harness/plugins/list";
-export const HARNESS_WEB_UI_OPEN_METHOD = "codexhost/harness/web-ui/open";
-export const THREAD_FORK_METHOD = "codexhost/thread/fork";
-export const THREAD_HARNESS_SWITCH_METHOD = "codexhost/thread/harness/switch";
-export const THREAD_INSPECT_METHOD = "codexhost/thread/inspect";
-export const HARNESS_COMMANDS_INSPECT_METHOD = "codexhost/harness/commands/inspect";
-export const THREAD_COMMANDS_INSPECT_METHOD = "codexhost/thread/commands/inspect";
-export const THREAD_COMMAND_EXECUTE_METHOD = "codexhost/thread/command/execute";
-export const THREAD_DELEGATE_METHOD = "codexhost/thread/delegate";
-export const THREAD_MESSAGE_METHOD = "codexhost/thread/message";
-export const THREAD_MODEL_SELECT_METHOD = "codexhost/thread/model/select";
-export const THREAD_THINKING_SELECT_METHOD = "codexhost/thread/thinking/select";
-export const THREAD_PERMISSION_MODE_SELECT_METHOD = "codexhost/thread/permission-mode/select";
-export const THREAD_OWNERSHIP_LIST_METHOD = "codexhost/thread/ownership/list";
-export const THREAD_USAGE_INSPECT_METHOD = "codexhost/thread/usage/inspect";
-export const THREAD_USAGE_UPDATED_METHOD = "codexhost/thread/usage/updated";
+export const HARNESS_INSPECT_METHOD = "harnessmix/harness/inspect";
+export const HARNESS_INSTALL_METHOD = "harnessmix/harness/install";
+export const HARNESS_PLUGIN_LIST_METHOD = "harnessmix/harness/plugins/list";
+export const HARNESS_WEB_UI_OPEN_METHOD = "harnessmix/harness/web-ui/open";
+export const THREAD_FORK_METHOD = "harnessmix/thread/fork";
+export const THREAD_HARNESS_SWITCH_METHOD = "harnessmix/thread/harness/switch";
+export const THREAD_INSPECT_METHOD = "harnessmix/thread/inspect";
+export const HARNESS_COMMANDS_INSPECT_METHOD = "harnessmix/harness/commands/inspect";
+export const THREAD_COMMANDS_INSPECT_METHOD = "harnessmix/thread/commands/inspect";
+export const THREAD_COMMAND_EXECUTE_METHOD = "harnessmix/thread/command/execute";
+export const THREAD_DELEGATE_METHOD = "harnessmix/thread/delegate";
+export const THREAD_MESSAGE_METHOD = "harnessmix/thread/message";
+export const THREAD_MODEL_SELECT_METHOD = "harnessmix/thread/model/select";
+export const THREAD_THINKING_SELECT_METHOD = "harnessmix/thread/thinking/select";
+export const THREAD_PERMISSION_MODE_SELECT_METHOD = "harnessmix/thread/permission-mode/select";
+export const THREAD_OWNERSHIP_LIST_METHOD = "harnessmix/thread/ownership/list";
+export const THREAD_USAGE_INSPECT_METHOD = "harnessmix/thread/usage/inspect";
+export const THREAD_TEAM_INSPECT_METHOD = "harnessmix/thread/team/inspect";
+export const THREAD_USAGE_UPDATED_METHOD = "harnessmix/thread/usage/updated";
 export const THREAD_TOKEN_USAGE_UPDATED_METHOD = "thread/tokenUsage/updated";
-export const UPDATE_CHECK_METHOD = "codexhost/update/check";
-export const UPDATE_START_METHOD = "codexhost/update/start";
-export const UPDATE_STATUS_METHOD = "codexhost/update/status";
+export const UPDATE_CHECK_METHOD = "harnessmix/update/check";
+export const UPDATE_START_METHOD = "harnessmix/update/start";
+export const UPDATE_STATUS_METHOD = "harnessmix/update/status";
 export const RUNTIME_VERSION_METHOD = "harness-mix/runtime/version";
-export const CODEX_ACCOUNT_LIST_METHOD = "codexhost/account/list";
-export const CODEX_ACCOUNT_REFRESH_METHOD = "codexhost/account/refresh";
-export const CODEX_ACCOUNT_CREATE_METHOD = "codexhost/account/create";
-export const CODEX_ACCOUNT_DELETE_METHOD = "codexhost/account/delete";
-export const CODEX_ACCOUNT_ACTIVATE_METHOD = "codexhost/account/activate";
-export const CODEX_ACCOUNT_LOGIN_START_METHOD = "codexhost/account/login/start";
-export const CODEX_ACCOUNT_LOGIN_CANCEL_METHOD = "codexhost/account/login/cancel";
-export const CODEX_ACCOUNT_LOGIN_COMPLETED_METHOD = "codexhost/account/login/completed";
+export const CODEX_ACCOUNT_LIST_METHOD = "harnessmix/account/list";
+export const CODEX_ACCOUNT_REFRESH_METHOD = "harnessmix/account/refresh";
+export const CODEX_ACCOUNT_CREATE_METHOD = "harnessmix/account/create";
+export const CODEX_ACCOUNT_DELETE_METHOD = "harnessmix/account/delete";
+export const CODEX_ACCOUNT_ACTIVATE_METHOD = "harnessmix/account/activate";
+export const CODEX_ACCOUNT_LOGIN_START_METHOD = "harnessmix/account/login/start";
+export const CODEX_ACCOUNT_LOGIN_CANCEL_METHOD = "harnessmix/account/login/cancel";
+export const CODEX_ACCOUNT_LOGIN_COMPLETED_METHOD = "harnessmix/account/login/completed";
 export const CODEX_ACCOUNT_RESET_CREDIT_CONSUME_METHOD =
-  "codexhost/account/rate-limit-reset/consume";
+  "harnessmix/account/rate-limit-reset/consume";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -197,6 +198,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   executeThreadCommand(input: ThreadCommandExecuteParams): Promise<ThreadCommandExecuteResult>;
   listThreadOwnership(input: ThreadOwnershipListParams): Promise<ThreadOwnershipListResult>;
   inspectThreadUsage(input: ThreadUsageInspectionParams): Promise<ThreadUsageInspection>;
+  inspectThreadTeam?(input: { threadId: string; teamId?: string }): Promise<unknown>;
   subscribeThreadUsage?(listener: (update: ThreadUsageInspection) => void): () => void;
   selectThreadModel(input: ThreadModelSelectParams): Promise<HarnessModelSelectionState>;
   selectThreadThinking(input: ThreadThinkingSelectParams): Promise<HarnessModelSelectionState>;
@@ -263,6 +265,20 @@ export function createThreadUsageSubscriptionRelay(): {
   };
 }
 
+/** Mutations that may legitimately outlive the default request timeout
+ * (installs, forks, Harness handoffs, command execution, update downloads,
+ * interactive Account login) keep the previous unbounded wait. */
+const REQUEST_TIMEOUT_EXEMPT_METHODS: ReadonlySet<string> = new Set([
+  HARNESS_INSTALL_METHOD,
+  THREAD_FORK_METHOD,
+  THREAD_HARNESS_SWITCH_METHOD,
+  THREAD_COMMAND_EXECUTE_METHOD,
+  THREAD_DELEGATE_METHOD,
+  THREAD_MESSAGE_METHOD,
+  UPDATE_START_METHOD,
+  CODEX_ACCOUNT_LOGIN_START_METHOD,
+]);
+
 export function createRendererModelClient(
   candidates: readonly RequestManagerCandidate[],
 ): RendererModelClient | null {
@@ -276,8 +292,9 @@ export function createRendererModelClient(
   const source = managers[0];
   if (managers.length !== 1 || !source) return null;
   const manager = {
-    sendRequest: createRendererRequestSender((method, params) =>
-      source.sendRequest(method, params),
+    sendRequest: createRendererRequestSender(
+      (method, params) => source.sendRequest(method, params),
+      { isTimeoutExempt: (method) => REQUEST_TIMEOUT_EXEMPT_METHODS.has(method) },
     ),
   };
 
@@ -337,10 +354,10 @@ export function createRendererModelClient(
   };
 
   return Object.freeze({
-    async inspectStorage() { return await manager.sendRequest('codexhost/storage/inspect', {}) as import('./settings/storage-page.js').RendererStorageInspection; },
-    async optimizeStorage() { return await manager.sendRequest('codexhost/storage/optimize', {}) as { before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }; },
+    async inspectStorage() { return await manager.sendRequest('harnessmix/storage/inspect', {}) as import('./settings/storage-page.js').RendererStorageInspection; },
+    async optimizeStorage() { return await manager.sendRequest('harnessmix/storage/optimize', {}) as { before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }; },
     async listCollaborationAgents(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>> {
-      const result = await manager.sendRequest('codexhost/collaboration/agents', {});
+      const result = await manager.sendRequest('harnessmix/collaboration/agents', {});
       if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');
       return result;
     },
@@ -377,7 +394,7 @@ export function createRendererModelClient(
       return result as { success: boolean; command?: string; stdout?: string; stderr?: string; error?: string };
     },
     async loginHarnessAccount(input: { harnessId: string }): Promise<{ success: boolean; command?: string; error?: string }> {
-      const result = await manager.sendRequest("codexhost/harness/account/login", input);
+      const result = await manager.sendRequest("harnessmix/harness/account/login", input);
       return result as { success: boolean; command?: string; error?: string };
     },
     async listHarnessPlugins(): Promise<HarnessPluginListResult> {
@@ -411,10 +428,10 @@ export function createRendererModelClient(
           thread.id !== params.threadId ||
           typeof thread.modelProvider !== "string" ||
           !thread.modelProvider ||
-          thread.modelProvider === "codexhost" ||
+          thread.modelProvider === "harnessmix" ||
           typeof thread.cliVersion !== "string" ||
           !thread.cliVersion ||
-          thread.cliVersion === "codexhost"
+          thread.cliVersion === "harnessmix"
         ) {
           throw new Error("Native Thread response cannot establish Codex ownership");
         }
@@ -440,6 +457,10 @@ export function createRendererModelClient(
       return result;
     },
     inspectThreadUsage,
+    async inspectThreadTeam(input: { threadId: string; teamId?: string }): Promise<unknown> {
+      const threadId = hostThreadIdSchema.parse(input.threadId);
+      return manager.sendRequest(THREAD_TEAM_INSPECT_METHOD, { threadId, ...(input.teamId ? { teamId: input.teamId } : {}) });
+    },
     subscribeThreadUsage(listener: (update: ThreadUsageInspection) => void): () => void {
       const notifications = notificationTarget(source);
       if (!notifications?.addNotificationCallback) {
@@ -503,7 +524,7 @@ export function createRendererModelClient(
       input: CodexAccountUsageParams,
     ): Promise<CodexAccountUsageResult> {
       const result = await manager.sendRequest(
-        "codexhost/account/usage/inspect",
+        "harnessmix/account/usage/inspect",
         codexAccountUsageParamsSchema.parse(input),
       );
       return codexAccountUsageResultSchema.parse(result);
@@ -519,7 +540,7 @@ export function createRendererModelClient(
     },
     async listHarnessAccounts(): Promise<HarnessAccountListResult> {
       return harnessAccountListResultSchema.parse(
-        await manager.sendRequest("codexhost/harness/accounts/list", {}),
+        await manager.sendRequest("harnessmix/harness/accounts/list", {}),
       );
     },
     async listCodexAccounts(): Promise<CodexAccountListResult> {
@@ -572,7 +593,7 @@ export function createRendererModelClient(
       return codexAccountLoginCancelResultSchema.parse(result);
     },
     async logoutCodexAccount(): Promise<CodexAccountMutationResult> {
-      const result = await manager.sendRequest("codexhost/account/logout", {});
+      const result = await manager.sendRequest("harnessmix/account/logout", {});
       return codexAccountMutationResultSchema.parse(result);
     },
     subscribeCodexAccountLogin(listener: (result: CodexAccountLoginCompleted) => void): () => void {

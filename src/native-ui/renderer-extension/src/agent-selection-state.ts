@@ -2,7 +2,7 @@ import type {
   HarnessModelRef,
   HarnessPermissionModeId,
   HarnessThinkingOptionId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 export const KNOWN_RENDERER_AGENTS = [
   "codex",
@@ -110,7 +110,7 @@ export interface DraftAgentSwitchOperations {
 }
 
 function defaultIdFactory(sequence: number): string {
-  return `codexhost-composer-${Date.now().toString(36)}-${sequence.toString(36)}`;
+  return `harnessmix-composer-${Date.now().toString(36)}-${sequence.toString(36)}`;
 }
 
 function isDefaultTarget(target: readonly unknown[] | null): target is readonly unknown[] {
@@ -144,6 +144,7 @@ export class DraftAgentController<Composer extends object> {
   readonly #modelRequestGenerations = new WeakMap<MutableComposerState, number>();
   readonly #ownershipRequestGenerations = new WeakMap<MutableComposerState, number>();
   readonly #states = new WeakMap<Composer, MutableComposerState>();
+  readonly #interactedDrafts = new WeakSet<MutableComposerState>();
   readonly #switching = new Set<MutableComposerState>();
   readonly #pendingSubmissions = new Set<MutableComposerState>();
   #composerSequence = 0;
@@ -232,25 +233,34 @@ export class DraftAgentController<Composer extends object> {
   ): Readonly<DraftComposerState> | null {
     if (!isComposerTarget(target)) return null;
     const previous = this.#state(composer);
-    this.#pendingSubmissions.delete(previous);
+    const pendingSubmission = this.#pendingSubmissions.delete(previous);
     this.#modelRequestGenerations.set(previous, ++this.#modelRequestSequence);
     this.#ownershipRequestGenerations.set(previous, ++this.#ownershipRequestSequence);
 
     let state = this.#targetState(target);
     if (!state) {
-      const preferredAgent =
-        isDefaultTarget(target) &&
-        preferredNewThreadAgent &&
-        this.#enabledAgents.has(preferredNewThreadAgent)
-          ? preferredNewThreadAgent
-          : isDefaultTarget(target)
-            ? this.#lastSubmittedAgent
-            : "codex";
-      state = {
-        agent: preferredAgent,
-        phase: "draft",
-        composerId: this.#idFactory(++this.#composerSequence),
-      };
+      if (isDefaultTarget(target) && previous.phase === "draft" && this.#interactedDrafts.has(previous)) {
+        // Codex can resolve or re-derive a draft's identity underneath the same
+        // Composer element. Carrying the live draft state keeps a manual Agent
+        // or Model choice; untouched drafts still follow the new-Thread
+        // preference, and genuinely fresh drafts fall back to it as well.
+        state = previous;
+        if (pendingSubmission) this.#pendingSubmissions.add(state);
+      } else {
+        const preferredAgent =
+          isDefaultTarget(target) &&
+          preferredNewThreadAgent &&
+          this.#enabledAgents.has(preferredNewThreadAgent)
+            ? preferredNewThreadAgent
+            : isDefaultTarget(target)
+              ? this.#lastSubmittedAgent
+              : "codex";
+        state = {
+          agent: preferredAgent,
+          phase: "draft",
+          composerId: this.#idFactory(++this.#composerSequence),
+        };
+      }
       if (isRestorableTarget(target)) this.#targetStates.push({ target, state });
     }
     this.#states.set(composer, state);
@@ -432,6 +442,7 @@ export class DraftAgentController<Composer extends object> {
       ...state.permissionModeByAgent,
       [agent]: permissionModeId,
     };
+    if (state.phase === "draft") this.#interactedDrafts.add(state);
     return state;
   }
 
@@ -458,6 +469,7 @@ export class DraftAgentController<Composer extends object> {
     else if (agent === "cursor-cli") state.cursorModel = model;
     else if (agent === "cline") state.clineModel = model;
     else if (agent === 'codex-harness') state.codexHarnessModel = model;
+    if (state.phase === "draft") this.#interactedDrafts.add(state);
     return state;
   }
 
@@ -470,6 +482,7 @@ export class DraftAgentController<Composer extends object> {
     state.piModel = model;
     if (thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
     else delete state.piThinkingOptionId;
+    if (state.phase === "draft") this.#interactedDrafts.add(state);
     return state;
   }
 
@@ -546,6 +559,7 @@ export class DraftAgentController<Composer extends object> {
     } else if (agent === 'codex-harness') {
       delete state.codexHarnessThinkingOptionId;
     }
+    if (state.phase === "draft") this.#interactedDrafts.add(state);
     return state;
   }
 
@@ -646,6 +660,7 @@ export class DraftAgentController<Composer extends object> {
         return false;
       }
       state.agent = nextAgent;
+      this.#interactedDrafts.add(state);
       return true;
     } finally {
       this.#switching.delete(state);
