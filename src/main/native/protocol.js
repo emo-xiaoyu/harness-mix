@@ -326,7 +326,7 @@ class NativeProtocol {
       createdAt: Math.floor(thread.createdAt / 1000),
       updatedAt, recencyAt: updatedAt,
       status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
-      path: null, cwd: thread.cwd, cliVersion: 'harnessmix', source: 'vscode', threadSource: null,
+      path: null, cwd: thread.cwd, cliVersion: 'harnessmix', source: thread.parentThreadId ? 'subAgentThreadSpawn' : 'vscode', threadSource: null,
       name: thread.title || null, agentNickname: thread.parentThreadId ? this.runtime.adapters.get(thread.harnessId)?.manifest.name || thread.harnessId : null,
       agentRole: thread.parentThreadId ? 'worker' : null, gitInfo: thread.gitInfo || null,
       sessionId: thread.id, forkedFromId: thread.forkedFrom ?? null, parentThreadId: thread.parentThreadId ?? null,

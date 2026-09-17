@@ -16,7 +16,12 @@ function includesThread(thread, query = {}, threads = []) {
   if (query.isPinned === false && thread.isPinned) return false;
   if (query.cwd != null && !(Array.isArray(query.cwd) ? query.cwd : [query.cwd]).includes(thread.cwd)) return false;
   if (query.modelProviders?.length && !query.modelProviders.includes('harnessmix')) return false;
-  if (query.sourceKinds?.length && !query.sourceKinds.includes('vscode')) return false;
+  if (query.sourceKinds?.length) {
+    // 协作子任务线程投影为 subAgentThreadSpawn（Desktop 子代理入口按此 sourceKind 查询）；
+    // 其余外部线程保持 vscode 来源。
+    const sourceKind = thread.parentThreadId ? 'subAgentThreadSpawn' : 'vscode';
+    if (!query.sourceKinds.includes(sourceKind)) return false;
+  }
   if (query.searchTerm && !(thread.title || '').toLowerCase().includes(query.searchTerm.toLowerCase())) return false;
   return true;
 }

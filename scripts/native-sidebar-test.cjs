@@ -15,6 +15,14 @@ for (const query of [{}, { sectionId: null }, { cwd: ['E:/project'] }, { searchT
 }
 assert.equal(includesThread({ ...thread, ephemeral: true }, {}), false);
 assert.equal(includesThread({ ...thread, section: { id: 'pinned' } }, { sectionId: 'pinned' }), true);
+// 协作子任务线程：按 subAgentThreadSpawn 来源匹配（Desktop 点击子代理入口的查询），
+// 且不再匹配 vscode 来源；根线程仍不匹配 subAgentThreadSpawn（上方已断言）。
+const child = { ...thread, id: 'child', parentThreadId: 'external' };
+assert.equal(includesThread(child, { sourceKinds: ['subAgentThreadSpawn'] }), true);
+assert.equal(includesThread(child, { sourceKinds: ['vscode'] }), false);
+assert.equal(includesThread(child, { ancestorThreadId: 'external', sourceKinds: ['subAgentThreadSpawn'] }), true);
+assert.equal(includesThread(child, { parentThreadId: 'external', sourceKinds: ['subAgentThreadSpawn'] }), true);
+assert.equal(includesThread(child, {}), true, '无来源过滤时子线程照常列出');
 const page = { data: [{ id: 'official', createdAt: 20 }, thread], nextCursor: 'next' };
 const merged = mergeThreadPage(page, [thread], {}, t => t);
 assert.deepEqual(merged.data.map(t => t.id), ['official', 'external']);
