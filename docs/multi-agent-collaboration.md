@@ -11,11 +11,11 @@
 收齐结果后由你运行验证并总结。
 ```
 
-也可直接输入 `#pi`、`#claude`、`#dsh`、`#codex` 等已注册 ID/别名。显式 `[名称](harness-mix://agent/pi)` 引用可随草稿复制；代码块和行内代码中的 `#` 不作为路由元数据。选择本身由主模型结合用户任务理解，Host 不按文字片段盲目拆任务。
+也可直接输入 `#pi`、`#claude`、`#dsh`、`#codex` 等已注册 ID/别名。显式 `[名称](harness-mix://agent/pi)` 引用可随草稿复制；代码块和行内代码中的 `#` 不作为路由元数据。纯文本请求也可在“团队、组队、协作、委派、调度、分工、成员”等明确协作语境中，通过完整 Harness 名称授权，例如“用 Pi 开发、Claude 审查组成 Agent Team”。普通提及“Codex UI”不会启动协作。选择本身由主模型结合用户任务理解，Host 不按文字片段盲目拆任务。
 
 ## 执行方式
 
-借鉴 Codeg 的 [委派工具](https://github.com/xintaofei/codeg/blob/main/src-tauri/src/acp/delegation/tool_schema.json) 和 [Agent 引用路由](https://github.com/xintaofei/codeg/blob/main/src-tauri/src/acp/agent_mentions.rs)：
+协作面由委派工具与 Agent 引用路由两部分组成，按以下方式接入：
 
 1. Host 为主任务提供会话绑定的协作工具。Claude 通过 SDK 的 MCP 配置，Codex Adapter 通过 app-server 的线程 MCP 配置，Pi/OMP 通过原生扩展加载，Grok 通过原生 `session/new` 的 `mcpServers` 槽注入（L1），OpenCode 通过 `OPENCODE_CONFIG_CONTENT` 内联配置注入 `mcp["harness-mix"]`（V2 schema，运行时最高优先级、不写任何用户配置文件），DSH 协作主任务通过官方 `dsh --profile acp` 的 session-scoped MCP 注入，Antigravity 协作主任务通过 bridge 目录自动生成的 `.agents/plugins/harness-mix` plugin 及 loopback MCP 配置注入与引导词；DSH 普通任务仍走 Web Remote。
 2. 主模型调用 `delegate_to_agent(agent_type, task)`，立即取得 `task_id`，可以继续发起其他任务。
@@ -25,17 +25,31 @@
 
 `list_agents` 提供真实可用性。旧 `/delegate` 仍是独立的手动委派入口，其完成结果只回投父任务工具卡片，不自动调用父模型。
 
+## Agent Team（不是并行 SubAgent）
+
+Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`Task`、`Message` 提升为 Host Runtime 的持久化一级对象：
+
+1. Lead 调用 `create_agent_team` 创建团队、共同目标、具名成员与角色；成员必须来自用户本轮显式选择的 Harness。
+2. `assign_team_task` 建立共享任务图，任务有固定 assignee 和 `depends_on` 依赖。依赖未完成时任务为 blocked，依赖完成后自动转为 pending。
+3. Lead 使用带 `team_id` / `member_id` / `team_task_id` 的 `delegate_to_agent` 启动或复用该成员的原生 Session。Team member 是持续身份，不是完成即销毁的一次性 SubAgent。
+4. Team member 可调用 `get_team_state`、`update_team_task` 和 `send_team_message`。成员只能更新分配给自己的任务；消息可定向或广播，先写入持久邮箱，目标成员空闲时会直接投递到其原生 Session。
+5. Codex 对话顶部显示紧凑团队驾驶舱；点击「展开详情」后仍在原生内容流内展开 Team Workbench，不覆盖侧栏、对话或输入框。工作台用唯一 Lead 和最多六名成员的真实 Harness 图标呈现职责编队，每名成员拥有自己的职责、状态、任务列和进度，并显示团队通信与可回放事件时间轴。点击有原生 Session 的成员可直接进入其 Codex 子任务，点击「收起详情」或按 `Esc` 收起。
+6. Workbench 通过 `harnessmix/thread/team/inspect` 直接查询 Host 持久化状态并实时刷新，不依赖工具卡片初次输出的旧快照；只有 Team Lead 和该团队成员线程可以读取。每次团队状态变化保留最近 200 个回放快照。
+
+这与普通委派的区别是：普通委派仍是 Lead → worker → Lead；Agent Team 允许 teammate 围绕同一任务图直接交接、反馈和解锁依赖，同时每个 Harness 继续独立持有自己的模型、工具、权限、账户和原生历史。
+
 ## 执行边界
 
-- 同一主任务最多四个同时运行的子任务，每轮最多创建十六个；子任务不注入协作工具，不允许递归委派。
+- Git、Worktree 与最终 Diff 是 Host Workspace 统一能力，不依赖 Adapter 是否提供原生 Git/Diff。所有已注册 Harness 都声明 `workspace.git/worktree/finalDiff=true`；`nativeDiff/nativePatch` 仍按各原生协议诚实声明。显式 Worktree 创建失败时任务直接失败，绝不静默落回共享目录。每轮最终 Diff 由 Host 文件快照补齐原生事件遗漏；只有同目录并发时，才以原生 Patch 限定本轮文件归属。
+- 一个 Agent Team 由一个 Lead 和最多六个具名成员组成；同一主任务最多六个同时运行的子任务，每轮最多创建十六个。普通子任务不注入协作工具。Agent Team member 只获得团队状态、任务更新和邮箱能力，仍不能创建团队、分配任务或递归委派。
 - 模型工具委派默认共享主任务目录，子 Agent 使用独立原生会话。开发完成后再委派审查，审查意见通过 `message_agent` 发回原开发者，修复后复用原审查会话复审。主任务应等待依赖步骤完成并避免同时修改相同文件。主任务负责共享目录整体文件快照。显式 `isolation=worktree`（或 Git 项目中的 `auto`）仍创建隔离分支与工作区，保存主目录当前非忽略文件作为起点，保留用户暂存区；隔离改动不会自动出现在主目录。
-- 协作不创建独立面板或第二套 UI。父子关系通过原生 `parentThreadId` 投影，子任务进入 Codex 原生任务体系；委派和跟进显示为原生协作卡片；普通工具及轮询仍显示为 MCP 工具卡片，审批在相应原生子任务中处理，文件变化由原生 Changes 界面展示。
-- 主任务可调用 `review_delegation_changes` 在原生工具卡片中审查 worktree patch。只有用户明确要求应用时才可调用 `apply_delegation_changes`，并必须提交刚审查得到的 digest。应用前检查 Git patch 冲突；冲突时结构化输出冲突文件清单及处置指引（工作区手动解决、推送到远程分支开 PR、或一键丢弃）。系统提供 `codexhost/thread/workspace/discard` 一键安全清除 worktree 与删除临时分支，以及 `codexhost/thread/workspace/push` 提交快照并直接推送到 Git 远程分支。worktree 默认保留供检查，不自动删除。隔离子任务有独立审查快照；共享子任务仍由主任务记录整体快照。旧 `/delegate` 手动入口仍为共享目录。
+- 协作不创建第二个应用或复制原生侧栏。Team Workbench 内嵌在当前 Codex Renderer 的会话内容区；父子关系仍通过原生 `parentThreadId` 投影，子任务仍进入 Codex 原生任务体系，审批与文件变化仍由对应 Harness 和原生 Changes 界面处理。
+- 主任务可调用 `review_delegation_changes` 在原生工具卡片中审查 worktree patch。只有用户明确要求应用时才可调用 `apply_delegation_changes`，并必须提交刚审查得到的 digest。应用前检查 Git patch 冲突；冲突时结构化输出冲突文件清单及处置指引（工作区手动解决、推送到远程分支开 PR、或一键丢弃）。系统提供 `harnessmix/thread/workspace/discard` 一键安全清除 worktree 与删除临时分支，以及 `harnessmix/thread/workspace/push` 提交快照并直接推送到 Git 远程分支。worktree 默认保留供检查，不自动删除。隔离子任务有独立审查快照；共享子任务仍由主任务记录整体快照。旧 `/delegate` 手动入口仍为共享目录。
 - 同目录的无关任务仍受原有执行互斥约束。父任务结束/取消、Host 关闭会取消尚未完成的子任务；30 分钟未完成的子任务会超时。
 - 协作 HTTP 桥仅绑定 loopback，以每个主任务的随机本地能力标识鉴权；工具参数校验，子任务归属检查，外部 Origin 拒绝。该标识不是模型账户令牌。Host 不读取或代理原生账户密钥。
 - Claude 的 `canUseTool` 和 Codex MCP elicitation 继续走原生审批。需要确认时，用户在相应任务的审批界面处理；自动验证不会代答。
 - 主任务 Fork 会重新绑定自己的协作身份，不复用源任务的子任务访问权。
-- task_id、父子会话、任务文本、结果和 worktree 起点在独立串行存储中持久化；重启后在途任务变为 interrupted，不自动重复执行有副作用的操作。点击「继续协作」向原主任务发送续跑请求，主模型用 `list_delegations` / `resume_delegation` 恢复原子会话。原生会话丢失或无法恢复会明确报错。会话鉴权标识不持久化，重启重新签发。
+- task_id、父子会话、任务文本、结果、worktree 起点以及 Team/Member/Task/Message 在独立串行存储中持久化；重启后在途 Job、Team Task 和 Member 一起变为 interrupted，不会继续显示为“工作中”，也不自动重复执行有副作用的操作。点击「继续协作」向原主任务发送续跑请求，主模型用 `list_delegations` / `resume_delegation` 恢复原子会话，并把同一 Team Task/Member 原子地切回进行中。原生会话丢失或无法恢复会明确报错。会话鉴权标识不持久化，重启重新签发。
 
 ## 支持与验证范围
 
@@ -65,7 +79,7 @@ npm run e2e:native
 npm run build:native
 ```
 
-`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、历史引用提示和共享快照策略。UI smoke 只检查原生输入框内的 Harness/历史会话选择、图标、标识、键盘选取和清理，截图位于 `output/collaboration-ui/mentions.png`。协作过程由 Native Protocol 的原生工具卡片测试覆盖。这不是完整 Codex Desktop 的交互验收；构建过程不会重启当前桌面。
+`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、Agent Team 身份/任务依赖/成员邮箱、时间轴持久化和共享快照策略。UI smoke 检查摘要入口、内嵌工作台、Lead/成员职责、真实 Harness 图标、成员会话跳转、成员任务列、通信流和时间轴，截图位于 `output/collaboration-ui/team-inline-expanded.png`。这不是完整 Codex Desktop 的真实模型交互验收；构建过程不会重启当前桌面。
 
 2026-09-12 验证：Pi→Claude 两个真实子任务分别在不同 worktree 运行，DSH→CodeBuddy 两个真实子任务也在独立 worktree 完成并由 DSH 主会话汇总 `COLLAB_VERIFIED`。恢复测试覆盖持久化身份、原子会话续跑、不重复建任务；Git 测试覆盖脏目录起点、暂存区保留、过期预览拒绝、冲突时不部分应用。Native Protocol 覆盖父子任务归属与原生 MCP 工具卡片，Electron 仅覆盖原生输入框中的协作引用增强。Runtime 保持 Adapter `open()` 返回对象的同一身份，避免原生回调更新到浅拷贝而被活动回合闸门丢弃。
 ## 统一历史
@@ -74,7 +88,7 @@ npm run build:native
 
 导入只创建投影和原生会话引用，不启动模型；再次发送时原生恢复。重复导入返回同一任务。输入 `#` 可从「会话」页选择一条记录；Host 最多读取三条引用，每条只附加最近十二条用户/助手文本，并明确标记为不可执行的历史数据。引用不会创建、恢复或占用原生会话。原始完整工具、隐藏状态和分支数据仍留在原生存储，因此这不是原生历史的无损迁移。原生运行状态未知时，应先关闭其他客户端的同一会话。
 
-## 2026-09-11 Codeg 协作流程修复
+## 2026-09-11 协作流程修复
 
 - Agents 与历史会话分栏，使用 `#` 调出协作菜单，`@` 保留给原生功能；提示不可用主 Agent 的能力边界。
 - 默认共享目录，使开发与审查读取同一份实际文件；保留显式隔离工作区。多任务等待在任一结果可收取时返回。
