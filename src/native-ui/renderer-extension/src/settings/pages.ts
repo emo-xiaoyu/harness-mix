@@ -4,7 +4,7 @@ import type {
   UpdateStartResult,
   UpdateStatus,
   UpdateStatusResult,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   createRendererSettingsPageRegistry,
@@ -46,9 +46,9 @@ import {
   runBoundedRendererUpdateRequest,
 } from "./update-request.js";
 
-export const CODEXHOST_GITHUB_REPOSITORY_URL = "https://github.com/emo-xiaoyu/harness-mix";
-export const CODEXHOST_RELEASES_LATEST_URL = `${CODEXHOST_GITHUB_REPOSITORY_URL}/releases/latest`;
-export const CODEXHOST_NPM_MANUAL_UPDATE_COMMAND = "npm install -g harness-mix@latest";
+export const HARNESSMIX_GITHUB_REPOSITORY_URL = "https://github.com/emo-xiaoyu/harness-mix";
+export const HARNESSMIX_RELEASES_LATEST_URL = `${HARNESSMIX_GITHUB_REPOSITORY_URL}/releases/latest`;
+export const HARNESSMIX_NPM_MANUAL_UPDATE_COMMAND = "npm install -g harness-mix@latest";
 
 interface RendererUserAgentData {
   readonly platform?: string;
@@ -198,7 +198,7 @@ export function aboutPage(
       checkUpdateBtn.className = "settings-command-button settings-command-button--secondary";
       checkUpdateBtn.append(createRendererSettingsIcon("updates", 14), messages.checkUpdateNow);
       checkUpdateBtn.addEventListener("click", () => {
-        const shell = document.querySelector("[data-codexhost-settings-shell]");
+        const shell = document.querySelector("[data-harnessmix-settings-shell]");
         const updatesNavBtn = (shell?.shadowRoot ?? document).querySelector<HTMLButtonElement>(
           'button[data-page-id="updates"]',
         );
@@ -221,11 +221,11 @@ export function aboutPage(
       openSource.textContent = messages.aboutOpenSource;
       const repository = document.createElement("a");
       repository.className = "settings-about-repository-link";
-      repository.href = CODEXHOST_GITHUB_REPOSITORY_URL;
+      repository.href = HARNESSMIX_GITHUB_REPOSITORY_URL;
       repository.target = "_blank";
       repository.rel = "noopener noreferrer";
       const repositoryUrl = document.createElement("code");
-      repositoryUrl.textContent = CODEXHOST_GITHUB_REPOSITORY_URL;
+      repositoryUrl.textContent = HARNESSMIX_GITHUB_REPOSITORY_URL;
       repository.append(
         createRendererSettingsIcon("external-link", 14),
         messages.aboutRepository,
@@ -312,7 +312,7 @@ export function updatesPage(
       const manualNpmCommandRow = document.createElement("div");
       manualNpmCommandRow.className = "settings-update-command";
       const manualNpmCommand = document.createElement("code");
-      manualNpmCommand.textContent = CODEXHOST_NPM_MANUAL_UPDATE_COMMAND;
+      manualNpmCommand.textContent = HARNESSMIX_NPM_MANUAL_UPDATE_COMMAND;
       const copyCommand = document.createElement("button");
       copyCommand.type = "button";
       copyCommand.className = "settings-update-command__copy";
@@ -330,7 +330,7 @@ export function updatesPage(
           restore(messages.updateCopyFailed);
           return;
         }
-        void clipboard.writeText(CODEXHOST_NPM_MANUAL_UPDATE_COMMAND).then(
+        void clipboard.writeText(HARNESSMIX_NPM_MANUAL_UPDATE_COMMAND).then(
           () => restore(messages.updateCommandCopied),
           () => restore(messages.updateCopyFailed),
         );
@@ -347,7 +347,7 @@ export function updatesPage(
       manualWindowsInstallerActions.className = "settings-update-actions";
       const manualWindowsInstallerLink = document.createElement("a");
       manualWindowsInstallerLink.className = "settings-update-link";
-      manualWindowsInstallerLink.href = CODEXHOST_RELEASES_LATEST_URL;
+      manualWindowsInstallerLink.href = HARNESSMIX_RELEASES_LATEST_URL;
       manualWindowsInstallerLink.target = "_blank";
       manualWindowsInstallerLink.rel = "noopener noreferrer";
       manualWindowsInstallerLink.append(
@@ -363,7 +363,7 @@ export function updatesPage(
       actions.className = "settings-update-actions";
       const releaseLink = document.createElement("a");
       releaseLink.className = "settings-update-link";
-      releaseLink.href = CODEXHOST_RELEASES_LATEST_URL;
+      releaseLink.href = HARNESSMIX_RELEASES_LATEST_URL;
       releaseLink.target = "_blank";
       releaseLink.rel = "noopener noreferrer";
       releaseLink.append(

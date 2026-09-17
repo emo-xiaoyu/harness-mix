@@ -15,7 +15,7 @@
       "params": {
         "clientInfo": {
           "name": "codex_app_server_daemon",
-          "title": "codexhost Gate A differential",
+          "title": "harnessmix Gate A differential",
           "version": "0.0.0"
         },
         "capabilities": {
@@ -67,7 +67,7 @@
     },
     {
       "id": 7,
-      "method": "codexhost/unknown-method",
+      "method": "harnessmix/unknown-method",
       "params": {}
     }
   ],

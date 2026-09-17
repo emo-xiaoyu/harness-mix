@@ -9,7 +9,7 @@ try {
   await runDesktopController(parseDesktopControllerArguments(process.argv.slice(2)), abort.signal);
 } catch (error) {
   console.error(
-    `codexhost Desktop Controller: ${error instanceof Error ? error.message : String(error)}`,
+    `harnessmix Desktop Controller: ${error instanceof Error ? error.message : String(error)}`,
   );
   process.exitCode = 1;
 } finally {

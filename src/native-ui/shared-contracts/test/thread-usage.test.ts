@@ -4,7 +4,7 @@ import {
   threadUsageInspectionParamsSchema,
   threadUsageInspectionSchema,
   threadUsageSnapshotSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 describe("Thread Usage contracts", () => {
   it("carries credits and independent context percent through usage inspection", () => {

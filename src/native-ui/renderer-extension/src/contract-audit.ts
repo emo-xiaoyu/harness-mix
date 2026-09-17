@@ -54,7 +54,7 @@ export interface RendererContractAuditInspection {
 
 declare global {
   interface Window {
-    __codexhostContractAuditV1?: RendererContractAuditApi;
+    __harnessmixContractAuditV1?: RendererContractAuditApi;
   }
 }
 
@@ -76,11 +76,11 @@ export function inspectRendererContracts(
   ownerWindow: Window = window,
 ): RendererContractAuditInspection {
   const composers = [...ownerWindow.document.querySelectorAll<Element>(CODEX_COMPOSER_SELECTOR)];
-  const binding = ownerWindow.__codexhostRendererBindingProbeV1;
+  const binding = ownerWindow.__harnessmixRendererBindingProbeV1;
   const status = binding?.status();
   const adapterState = status?.adapter.state ?? "absent";
-  const titlePolicy = ownerWindow.__codexhostMainProcessTitlePolicyV1;
-  const draftPolicy = ownerWindow.__codexhostDraftPrewarmPolicyV1;
+  const titlePolicy = ownerWindow.__harnessmixMainProcessTitlePolicyV1;
+  const draftPolicy = ownerWindow.__harnessmixDraftPrewarmPolicyV1;
   return {
     schemaVersion: RENDERER_CONTRACT_AUDIT_SCHEMA_VERSION,
     composer: inspectRendererComposerContract(ownerWindow.document),

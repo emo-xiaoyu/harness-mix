@@ -5,7 +5,7 @@ import {
   harnessPermissionModeIdSchema,
   harnessThinkingOptionIdSchema,
   decodeHarnessPluginRoute,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 import { modelSelectionForAgent } from "../src/versioned-renderer-adapter.js";
 
@@ -624,13 +624,13 @@ describe("Renderer Composer DOM behavior", () => {
     expect(placeCredits).toHaveBeenCalledWith(permissionModeRoot);
   });
 
-  it("does not treat codexhost Usage controls as native anchors", () => {
+  it("does not treat harnessmix Usage controls as native anchors", () => {
     const usage = {
-      hasAttribute: (name: string) => name === "data-codexhost-usage-control",
+      hasAttribute: (name: string) => name === "data-harnessmix-usage-control",
       getAttribute: () => "Context window usage",
     } as unknown as HTMLElement;
     const credits = {
-      hasAttribute: (name: string) => name === "data-codexhost-credits-control",
+      hasAttribute: (name: string) => name === "data-harnessmix-credits-control",
       getAttribute: () => "Weekly limit",
     } as unknown as HTMLElement;
     expect(isNativeContextUsageControlCandidate(usage)).toBe(false);
@@ -932,7 +932,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "pi",
-        transportModelId: "codexhost/pi-native",
+        transportModelId: "harnessmix/pi-native",
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
         effectiveModel: model,
         effectiveThinkingOptionId: thinkingOptionId,
@@ -947,7 +947,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "pi",
-        transportModelId: `codexhost/pi-native@${model.id}@${thinkingOptionId}`,
+        transportModelId: `harnessmix/pi-native@${model.id}@${thinkingOptionId}`,
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
         locked: true,
       }),
@@ -959,7 +959,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "claude-code",
-        transportModelId: "codexhost/claude-code-native@claude-model-v1.c29ubmV0@acceptEdits@high",
+        transportModelId: "harnessmix/claude-code-native@claude-model-v1.c29ubmV0@acceptEdits@high",
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: false },
         effectiveModel: harnessModelRefSchema.parse({ id: "claude-model-v1.c29ubmV0" }),
         effectiveThinkingOptionId: thinkingOptionId,
@@ -979,7 +979,7 @@ describe("Renderer Composer DOM behavior", () => {
         owner: "external",
         harnessId: "opencode",
         transportModelId:
-          "codexhost/opencode-native@opencode-model-v1.WyJwcm92aWRlci0xIiwibW9kZWwtMSJd@ask@ocv.aGlnaA",
+          "harnessmix/opencode-native@opencode-model-v1.WyJwcm92aWRlci0xIiwibW9kZWwtMSJd@ask@ocv.aGlnaA",
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
         effectiveModel: harnessModelRefSchema.parse({
           id: "opencode-model-v1.WyJwcm92aWRlci0xIiwibW9kZWwtMSJd",
@@ -1001,7 +1001,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "omp",
-        transportModelId: "codexhost/omp-native@omp-model-v1.synthetic@write@high",
+        transportModelId: "harnessmix/omp-native@omp-model-v1.synthetic@write@high",
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: true },
         effectiveModel: harnessModelRefSchema.parse({ id: "omp-model-v1.synthetic" }),
         effectiveThinkingOptionId: thinkingOptionId,
@@ -1019,7 +1019,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "grok",
-        transportModelId: "codexhost/grok-native@grok-4.6@auto@high",
+        transportModelId: "harnessmix/grok-native@grok-4.6@auto@high",
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: true },
         effectiveModel: harnessModelRefSchema.parse({ id: "grok-4.6" }),
         effectiveThinkingOptionId: thinkingOptionId,
@@ -1037,7 +1037,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "grok",
-        transportModelId: "codexhost/grok-native@grok-4.6@always-approve",
+        transportModelId: "harnessmix/grok-native@grok-4.6@always-approve",
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: true },
         locked: true,
       }),
@@ -1050,7 +1050,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "claude-code",
-        transportModelId: "codexhost/claude-code-native@claude-model-v1.c29ubmV0@acceptEdits",
+        transportModelId: "harnessmix/claude-code-native@claude-model-v1.c29ubmV0@acceptEdits",
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: false },
         locked: true,
       }),
@@ -1064,7 +1064,7 @@ describe("Renderer Composer DOM behavior", () => {
         owner: "external",
         harnessId: "deepseek-harness",
         transportModelId:
-          "codexhost/deepseek-harness-native@deepseek-harness-model-v1.Zmxhc2g@team-safe",
+          "harnessmix/deepseek-harness-native@deepseek-harness-model-v1.Zmxhc2g@team-safe",
         history: { fork: false, forkAcrossCwd: false, rollbackLastTurn: false },
         effectiveModel: harnessModelRefSchema.parse({
           id: "deepseek-harness-model-v1.Zmxhc2g",
@@ -1081,7 +1081,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "antigravity",
-        transportModelId: "codexhost/antigravity-native@gpt-5.6-sol@configured@high",
+        transportModelId: "harnessmix/antigravity-native@gpt-5.6-sol@configured@high",
         history: { fork: false, forkAcrossCwd: false, rollbackLastTurn: false },
         locked: true,
       }),
@@ -1207,7 +1207,7 @@ describe("Renderer Composer DOM behavior", () => {
       restoredThreadOwnership({
         owner: "external",
         harnessId: "pi",
-        transportModelId: `codexhost/pi-native@${model.id}`,
+        transportModelId: `harnessmix/pi-native@${model.id}`,
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
         effectiveModel: model,
         effectiveThinkingOptionId: harnessThinkingOptionIdSchema.parse("high"),

@@ -17,10 +17,10 @@ app.whenReady().then(async () => {
   const preload = path.join(out, 'preload.cjs');
   await fs.writeFile(preload, `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('integrationTest',{request:(method,params)=>ipcRenderer.invoke('integrations-test',method,params)});`);
   ipcMain.handle('integrations-test', (_event, method, params) => {
-    assert.ok(method.startsWith('codexhost/integrations/'));
+    assert.ok(method.startsWith('harnessmix/integrations/'));
     return NativeProtocol.prototype.request.call({ runtime }, method, params);
   });
-  const build = await esbuild.build({ stdin: { contents: `export {createMcpSettingsPage,createSkillsSettingsPage} from './src/native-ui/renderer-extension/src/settings/integrations-page.ts'; export {mountRendererSettingsShell} from './src/native-ui/renderer-extension/src/settings/shell.ts'; export {createRendererSettingsPageRegistry} from './src/native-ui/renderer-extension/src/settings/core.ts'; export {rendererSettingsMessages} from './src/native-ui/renderer-extension/src/settings/localization.ts'; export {createRendererIntegrationsClient} from './src/native-ui/renderer-extension/src/renderer-integrations-client.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'browser', format: 'iife', globalName: 'IntegrationUI', write: false, alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.css': 'text' } });
+  const build = await esbuild.build({ stdin: { contents: `export {createMcpSettingsPage,createSkillsSettingsPage} from './src/native-ui/renderer-extension/src/settings/integrations-page.ts'; export {mountRendererSettingsShell} from './src/native-ui/renderer-extension/src/settings/shell.ts'; export {createRendererSettingsPageRegistry} from './src/native-ui/renderer-extension/src/settings/core.ts'; export {rendererSettingsMessages} from './src/native-ui/renderer-extension/src/settings/localization.ts'; export {createRendererIntegrationsClient} from './src/native-ui/renderer-extension/src/renderer-integrations-client.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'browser', format: 'iife', globalName: 'IntegrationUI', write: false, alias: { '@harnessmix/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.css': 'text' } });
   const consoleProblems = [];
   const win = new BrowserWindow({ show: false, width: 1100, height: 900, webPreferences: { preload, contextIsolation: true, sandbox: true, offscreen: true } });
   win.webContents.on('console-message', (_event, details) => { if (details.level === 'error' || details.level === 'warning') consoleProblems.push(details.message); });
@@ -74,7 +74,7 @@ app.whenReady().then(async () => {
     await fs.writeFile(path.join(out, 'settings.png'), overviewImage);
     await fs.writeFile(path.join(out, 'skills.png'), overviewImage);
     await win.webContents.executeJavaScript(`(async()=>{
-      const root=document.querySelector('[data-codexhost-settings-shell]').shadowRoot;
+      const root=document.querySelector('[data-harnessmix-settings-shell]').shadowRoot;
       root.querySelector('button[data-page-id="mcp"]').click();
       const wait=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(r=>setTimeout(r,30));}throw Error('MCP screenshot timed out');};
       await wait(()=>root.querySelector('select')?.options.length===17&&!root.querySelector('select').disabled);
@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 60));
     await fs.writeFile(path.join(out, 'mcp-matrix.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(async()=>{
-      const root=document.querySelector('[data-codexhost-settings-shell]').shadowRoot;
+      const root=document.querySelector('[data-harnessmix-settings-shell]').shadowRoot;
       const byHarnessBtn=Array.from(root.querySelectorAll('.settings-mcp-tabs button')).find(b=>b.textContent.includes('Harness'));
       byHarnessBtn?.click();
       const wait=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(r=>setTimeout(r,30));}throw Error('MCP switch timed out');};
@@ -101,7 +101,7 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 60));
     await fs.writeFile(path.join(out, 'mcp-overview.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(async()=>{
-      const root=document.querySelector('[data-codexhost-settings-shell]').shadowRoot;
+      const root=document.querySelector('[data-harnessmix-settings-shell]').shadowRoot;
       const [harness,scope]=root.querySelectorAll('select');
       harness.value='claude';harness.dispatchEvent(new Event('change'));
       const wait=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(r=>setTimeout(r,30));}throw Error('MCP reload timed out');};
@@ -111,7 +111,7 @@ app.whenReady().then(async () => {
     })()`);
     await fs.writeFile(path.join(out, 'mcp.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(async()=>{
-      const root=document.querySelector('[data-codexhost-settings-shell]').shadowRoot;
+      const root=document.querySelector('[data-harnessmix-settings-shell]').shadowRoot;
       const mcpRow=Array.from(root.querySelectorAll('.settings-integrations-row')).find(r=>r.querySelector('strong')?.textContent?.includes('ui-probe'));
       mcpRow.querySelector('button').click();
       const wait=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(r=>setTimeout(r,30));}throw Error('MCP editor timed out');};

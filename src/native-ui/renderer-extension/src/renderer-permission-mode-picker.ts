@@ -2,7 +2,7 @@ import type {
   HarnessPermissionMode,
   HarnessPermissionModeCatalog,
   HarnessPermissionModeId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import type { IconNode } from "lucide";
 import createElement from "lucide/dist/esm/createElement.mjs";
 import Check from "lucide/dist/esm/icons/check.mjs";
@@ -129,7 +129,7 @@ function positionMenu(control: RendererPermissionModePickerControl): void {
 export function syncRendererPermissionModeTriggerClass(
   control: RendererPermissionModePickerControl,
 ): void {
-  // Do not copy Codex's private Composer classes into codexhost controls.
+  // Do not copy Codex's private Composer classes into harnessmix controls.
   // Codex can rename or remove those between Desktop releases; our own
   // `TRIGGER_CHIP_CLASS` chrome (see renderer-trigger-chip-style.ts) does not.
   control.trigger.className = TRIGGER_CHIP_CLASS;
@@ -145,7 +145,7 @@ export function mountRendererPermissionModePicker(
   ensureRendererTriggerChipStyle(document);
 
   const root = document.createElement("div");
-  root.setAttribute("data-codexhost-permission-mode-control", composerId);
+  root.setAttribute("data-harnessmix-permission-mode-control", composerId);
   root.className = "relative min-w-0";
   root.style.display = "none";
 

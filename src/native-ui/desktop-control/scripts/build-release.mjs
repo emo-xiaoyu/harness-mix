@@ -62,7 +62,7 @@ export async function buildDesktopControllerBundle({ repositoryRoot, outputPath 
   if (!result.metafile) throw new Error("Desktop Controller build did not return a metafile");
   const audit = auditDesktopControllerMetafile(result.metafile);
   const source = await readFile(outputPath, "utf8");
-  for (const forbidden of ["@anthropic-ai/", "@codexhost/adapter-claude-code"]) {
+  for (const forbidden of ["@anthropic-ai/", "@harnessmix/adapter-claude-code"]) {
     if (source.includes(forbidden)) {
       throw new Error(`Desktop Controller Bundle contains forbidden reference: ${forbidden}`);
     }
@@ -87,7 +87,7 @@ if (invoked === import.meta.url) {
     outputPath: parseOutput(process.argv.slice(2)),
   }).catch((error) => {
     console.error(
-      `codexhost Desktop Controller Bundle: ${error instanceof Error ? error.message : error}`,
+      `harnessmix Desktop Controller Bundle: ${error instanceof Error ? error.message : error}`,
     );
     process.exitCode = 1;
   });

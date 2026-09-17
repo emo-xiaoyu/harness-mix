@@ -10,7 +10,7 @@ const { redact } = require('./redact');
 const { dataDirectory } = require('./platform');
 
 async function runNativeHost() {
-  const stock = process.env.CODEXHOST_STOCK_CODEX_PATH;
+  const stock = process.env.HARNESSMIX_STOCK_CODEX_PATH;
   if (!stock || !fs.existsSync(stock)) throw new Error('Official Codex CLI path is missing');
   const directory = path.join(dataDirectory(), 'mix-core');
   const trafficLog = path.join(path.dirname(directory), 'host-traffic.jsonl');

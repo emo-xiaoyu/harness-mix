@@ -16,7 +16,7 @@ class CodexAppServer {
     this.closed = false;
     this.codexHome = codexHome ? require('node:path').resolve(codexHome) : null;
     // The Desktop-bundled CLI and the PATH CLI can be different versions.
-    const executable = process.env.HARNESS_MIX_CODEX_EXECUTABLE || process.env.CODEXHOST_STOCK_CODEX_PATH;
+    const executable = process.env.HARNESS_MIX_CODEX_EXECUTABLE || process.env.HARNESSMIX_STOCK_CODEX_PATH;
     const { command, args } = executable ? { command: executable, args: ['app-server', '--listen', 'stdio://'] } : cliSpawn('codex', ['app-server', '--stdio']);
     const env = { ...process.env, ...(this.codexHome ? { CODEX_HOME: this.codexHome } : {}) };
     this.process = new JsonlProcess(command, args, { env }, {

@@ -7,7 +7,7 @@ import {
   type HarnessPermissionModeCatalog,
   type HarnessPermissionModeId,
   type HarnessThinkingOptionId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   KNOWN_RENDERER_AGENTS,
@@ -15,7 +15,7 @@ import {
   type RendererAgent,
 } from "./agent-selection-state.js";
 
-export const RENDERER_NEW_THREAD_PREFERENCE_KEY = "codexhost.new-thread-preference.v1";
+export const RENDERER_NEW_THREAD_PREFERENCE_KEY = "harnessmix.new-thread-preference.v1";
 
 interface ExternalConfigurationPreference {
   model: HarnessModelRef;

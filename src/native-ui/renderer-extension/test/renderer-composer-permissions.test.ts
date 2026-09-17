@@ -6,7 +6,7 @@ function nativePermissionButton(
   options: {
     target?: string;
     includeOwner?: boolean;
-    codexhost?: boolean;
+    harnessmix?: boolean;
     hasMenu?: boolean;
   } = {},
 ): Element {
@@ -15,7 +15,7 @@ function nativePermissionButton(
     ["data-composer-navigation-target", target],
     ["aria-haspopup", options.hasMenu === false ? "dialog" : "menu"],
   ]);
-  if (options.codexhost) attributes.set("data-codexhost-permission-mode-control", "composer-1");
+  if (options.harnessmix) attributes.set("data-harnessmix-permission-mode-control", "composer-1");
   const owner =
     options.includeOwner === false
       ? null
@@ -67,9 +67,9 @@ describe("versioned native Permission Mode control ownership", () => {
     );
   });
 
-  it("never recaptures the codexhost replacement control", () => {
+  it("never recaptures the harnessmix replacement control", () => {
     expect(
-      isNativePermissionModeControlCandidate(nativePermissionButton({ codexhost: true })),
+      isNativePermissionModeControlCandidate(nativePermissionButton({ harnessmix: true })),
     ).toBe(false);
   });
 });

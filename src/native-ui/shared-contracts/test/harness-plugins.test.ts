@@ -79,7 +79,7 @@ describe("versioned browser-safe Harness route", () => {
     expect(decodeHarnessPluginRoute(encodeHarnessPluginRoute(minimal))).toEqual(minimal);
   });
 
-  it.each([undefined, null, 1, "gpt-5", "codexhost/pi-native"])(
+  it.each([undefined, null, 1, "gpt-5", "harnessmix/pi-native"])(
     "leaves other protocols untouched (%j)",
     (value) => {
       expect(decodeHarnessPluginRoute(value)).toBeNull();

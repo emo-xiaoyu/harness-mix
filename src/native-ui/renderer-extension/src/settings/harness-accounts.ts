@@ -1,4 +1,4 @@
-import type { HarnessAccountListResult } from "@codexhost/shared-contracts";
+import type { HarnessAccountListResult } from "@harnessmix/shared-contracts";
 import { KNOWN_RENDERER_AGENTS } from "../agent-selection-state.js";
 import { createRendererAgentIcon } from "../renderer-agent-icon.js";
 import { createRendererSettingsIcon } from "./icons.js";

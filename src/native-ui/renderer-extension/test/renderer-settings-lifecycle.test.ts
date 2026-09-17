@@ -1,5 +1,5 @@
-import { harnessIdSchema } from "@codexhost/shared-contracts";
-import { hostThreadIdSchema, type UpdateCheckResult } from "@codexhost/shared-contracts";
+import { harnessIdSchema } from "@harnessmix/shared-contracts";
+import { hostThreadIdSchema, type UpdateCheckResult } from "@harnessmix/shared-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const triggerRefresh = vi.fn(() => true);

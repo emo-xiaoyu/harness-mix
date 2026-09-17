@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { rejectExplicitUndefined } from "./json-value.js";
 
-export const codexhostErrorSchema = z
+export const harnessmixErrorSchema = z
   .strictObject({
     code: z.string().min(1),
     message: z.string().min(1),
@@ -14,8 +14,8 @@ export const codexhostErrorSchema = z
   })
   .superRefine(rejectExplicitUndefined(["diagnostic", "stage", "durationMs", "stderrTail"]));
 
-export type CodexhostError = Omit<
-  z.infer<typeof codexhostErrorSchema>,
+export type HarnessMixError = Omit<
+  z.infer<typeof harnessmixErrorSchema>,
   "diagnostic" | "stage" | "durationMs" | "stderrTail"
 > & {
   diagnostic?: string;

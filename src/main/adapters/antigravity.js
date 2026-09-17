@@ -40,7 +40,7 @@ const ANTIGRAVITY_PERMISSION_MODES = [
 ];
 
 const ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION =
-  '[System Instruction: When creating new files in the workspace, you MUST use the write_to_file tool. When modifying existing files, use the replace_file_content tool. CRITICAL: NEVER include ArtifactMetadata when calling write_to_file for workspace files (ArtifactMetadata is strictly reserved for artifacts in the brain directory, and providing it for workspace files causes a path validation rejection). Do NOT use terminal commands (such as Set-Content, Out-File, echo, or cat) to create or write code files. For clarification, ask_question is connected to the codexhost Desktop through a Hook. Use single-choice or text questions. The Hook returns the actual user response in its reason while blocking the native auto-skip behavior; do not retry merely because the native tool reports it was blocked.]\n\n';
+  '[System Instruction: When creating new files in the workspace, you MUST use the write_to_file tool. When modifying existing files, use the replace_file_content tool. CRITICAL: NEVER include ArtifactMetadata when calling write_to_file for workspace files (ArtifactMetadata is strictly reserved for artifacts in the brain directory, and providing it for workspace files causes a path validation rejection). Do NOT use terminal commands (such as Set-Content, Out-File, echo, or cat) to create or write code files. For clarification, ask_question is connected to the harnessmix Desktop through a Hook. Use single-choice or text questions. The Hook returns the actual user response in its reason while blocking the native auto-skip behavior; do not retry merely because the native tool reports it was blocked.]\n\n';
 
 const EFFORT_LABELS = {
   low: 'Low',
@@ -59,7 +59,7 @@ function positiveDuration(value, fallback) {
 
 function resolveExecutable() {
   if (process.env.HARNESS_MIX_ANTIGRAVITY_COMMAND) return process.env.HARNESS_MIX_ANTIGRAVITY_COMMAND;
-  if (process.env.CODEXHOST_ANTIGRAVITY_COMMAND) return process.env.CODEXHOST_ANTIGRAVITY_COMMAND;
+  if (process.env.HARNESSMIX_ANTIGRAVITY_COMMAND) return process.env.HARNESSMIX_ANTIGRAVITY_COMMAND;
   if (process.platform === 'win32') {
     const local = path.join(process.env.LOCALAPPDATA || '', 'agy', 'bin', 'agy.exe');
     if (fs.existsSync(local)) return local;
@@ -515,7 +515,7 @@ function finish(value) {
 function unavailable() {
   finish({
     decision: "deny",
-    reason: "codexhost question bridge is unavailable. No user answer was received. Do not report that the user skipped or selected an option."
+    reason: "harnessmix question bridge is unavailable. No user answer was received. Do not report that the user skipped or selected an option."
   });
   if (request) request.destroy();
 }
@@ -532,19 +532,19 @@ process.stdin.on("data", chunk => {
 process.stdin.on("end", () => {
   if (finished) return;
   try {
-    const target = new URL(process.env.CODEXHOST_AGY_QUESTION_URL);
+    const target = new URL(process.env.HARNESSMIX_AGY_QUESTION_URL);
     if (target.protocol !== "http:" || target.hostname !== "127.0.0.1" ||
         target.pathname !== "/question" || target.username || target.password) {
       return unavailable();
     }
     const payload = JSON.parse(input);
-    const approval = process.env.CODEXHOST_AGY_QUESTION_APPROVALS === "1" &&
+    const approval = process.env.HARNESSMIX_AGY_QUESTION_APPROVALS === "1" &&
       payload.toolCall && payload.toolCall.name !== "ask_question";
     request = http.request(target, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "authorization": "Bearer " + process.env.CODEXHOST_AGY_QUESTION_TOKEN,
+        "authorization": "Bearer " + process.env.HARNESSMIX_AGY_QUESTION_TOKEN,
         "content-length": Buffer.byteLength(input)
       }
     }, response => {
@@ -566,7 +566,7 @@ process.stdin.on("end", () => {
         } catch { unavailable(); }
       });
     });
-    request.setTimeout(Number(process.env.CODEXHOST_AGY_QUESTION_TIMEOUT_MS) + 5000, unavailable);
+    request.setTimeout(Number(process.env.HARNESSMIX_AGY_QUESTION_TIMEOUT_MS) + 5000, unavailable);
     request.on("error", unavailable);
     request.end(input);
   } catch { unavailable(); }
@@ -587,7 +587,7 @@ class QuestionBridge {
 
   static async create(options) {
     const bridge = new QuestionBridge(options);
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'codexhost-agy-question-'));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'harnessmix-agy-question-'));
     bridge.directory = dir;
 
     bridge.server = http.createServer((req, res) => bridge.#receive(req, res));
@@ -606,13 +606,13 @@ class QuestionBridge {
     await fs.promises.writeFile(clientPath, ANTIGRAVITY_QUESTION_HOOK_CLIENT, 'utf8');
 
     const hookCmd = process.platform === 'win32'
-      ? '%CODEXHOST_AGY_QUESTION_NODE% %CODEXHOST_AGY_QUESTION_CLIENT%'
+      ? '%HARNESSMIX_AGY_QUESTION_NODE% %HARNESSMIX_AGY_QUESTION_CLIENT%'
       : `"${process.execPath}" "${clientPath}"`;
 
     await fs.promises.writeFile(
       path.join(dir, '.agents', 'hooks.json'),
       JSON.stringify({
-        'codexhost-question-bridge': {
+        'harnessmix-question-bridge': {
           PreToolUse: [
             {
               matcher: options.approvals ? '.*' : '^ask_question$',
@@ -631,12 +631,12 @@ class QuestionBridge {
     );
 
     bridge.environment = {
-      CODEXHOST_AGY_QUESTION_TOKEN: bridge.token,
-      CODEXHOST_AGY_QUESTION_URL: `http://127.0.0.1:${port}/question`,
-      CODEXHOST_AGY_QUESTION_TIMEOUT_MS: String(options.timeoutMs),
-      CODEXHOST_AGY_QUESTION_APPROVALS: options.approvals ? '1' : '0',
-      CODEXHOST_AGY_QUESTION_NODE: `"${process.execPath.replaceAll('\\', '/')}"`,
-      CODEXHOST_AGY_QUESTION_CLIENT: `"${clientPath.replaceAll('\\', '/')}"`,
+      HARNESSMIX_AGY_QUESTION_TOKEN: bridge.token,
+      HARNESSMIX_AGY_QUESTION_URL: `http://127.0.0.1:${port}/question`,
+      HARNESSMIX_AGY_QUESTION_TIMEOUT_MS: String(options.timeoutMs),
+      HARNESSMIX_AGY_QUESTION_APPROVALS: options.approvals ? '1' : '0',
+      HARNESSMIX_AGY_QUESTION_NODE: `"${process.execPath.replaceAll('\\', '/')}"`,
+      HARNESSMIX_AGY_QUESTION_CLIENT: `"${clientPath.replaceAll('\\', '/')}"`,
     };
 
     if (options.collaboration || options.managedMcp?.length) {
@@ -742,7 +742,7 @@ class QuestionBridge {
             })),
           };
       const reason =
-        'codexhost handled this question through the Desktop. Native ask_question is blocked only to prevent automatic skipping. ' +
+        'harnessmix handled this question through the Desktop. Native ask_question is blocked only to prevent automatic skipping. ' +
         'The following JSON contains the actual user response, not a tool permission decision: ' +
         JSON.stringify(result);
       if (!pending.response.writableEnded) {

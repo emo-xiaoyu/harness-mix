@@ -226,7 +226,7 @@ fn run() -> io::Result<i32> {
 
     let build_dir = root.join("output").join("native-build");
     let stock = setting(
-        "CODEXHOST_STOCK_CODEX_PATH",
+        "HARNESSMIX_STOCK_CODEX_PATH",
         &build_dir.join("stock-path.txt"),
     )?;
     let node = setting("HARNESS_MIX_NODE_PATH", &build_dir.join("node-path.txt"))?;
@@ -252,7 +252,7 @@ fn run() -> io::Result<i32> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_remove("CODEX_CLI_PATH")
-        .env("CODEXHOST_STOCK_CODEX_PATH", &stock);
+        .env("HARNESSMIX_STOCK_CODEX_PATH", &stock);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 

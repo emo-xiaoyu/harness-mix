@@ -1,4 +1,4 @@
-import type { HarnessCommandDescriptor } from "@codexhost/shared-contracts";
+import type { HarnessCommandDescriptor } from "@harnessmix/shared-contracts";
 
 import { rendererHarnessCommandExecutesDirectly } from "./renderer-harness-command-claim.js";
 import {
@@ -8,8 +8,8 @@ import {
 } from "./renderer-harness-localization.js";
 import type { RendererSettingsLocale } from "./settings/localization.js";
 
-const CONTROL_ATTRIBUTE = "data-codexhost-harness-command-control";
-const MENU_ATTRIBUTE = "data-codexhost-harness-command-menu";
+const CONTROL_ATTRIBUTE = "data-harnessmix-harness-command-control";
+const MENU_ATTRIBUTE = "data-harnessmix-harness-command-menu";
 const MENU_WIDTH = 320;
 const VIEWPORT_MARGIN = 8;
 const MENU_GAP = 8;

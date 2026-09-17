@@ -131,7 +131,7 @@ export function createRendererSettingsIcon(name: RendererSettingsIconName, size 
     "aria-hidden": "true",
     focusable: "false",
   });
-  icon.classList.add("codexhost-settings-icon");
+  icon.classList.add("harnessmix-settings-icon");
   return icon;
 }
 
@@ -148,6 +148,6 @@ export function createRendererSettingsBrandIcon(size = 22, ownerDocument?: Docum
   icon.style.width = `${size}px`;
   icon.style.height = `${size}px`;
   icon.style.objectFit = "contain";
-  icon.classList.add("codexhost-settings-icon");
+  icon.classList.add("harnessmix-settings-icon");
   return icon;
 }

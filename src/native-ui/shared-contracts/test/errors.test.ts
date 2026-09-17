@@ -1,22 +1,22 @@
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
-import { codexhostErrorSchema } from "../src/index.js";
-import type { CodexhostError } from "../src/index.js";
+import { harnessmixErrorSchema } from "../src/index.js";
+import type { HarnessMixError } from "../src/index.js";
 
-const mappingStoreErrorSchema = codexhostErrorSchema.safeExtend({
+const mappingStoreErrorSchema = harnessmixErrorSchema.safeExtend({
   code: z.enum(["IO_ERROR", "MAPPING_CONFLICT"]),
 });
 
-function assertExactOptionalDiagnostic(error: CodexhostError): void {
+function assertExactOptionalDiagnostic(error: HarnessMixError): void {
   // @ts-expect-error Explicit undefined is not an optional diagnostic.
-  const invalidError: CodexhostError = { ...error, diagnostic: undefined };
+  const invalidError: HarnessMixError = { ...error, diagnostic: undefined };
   void invalidError;
 }
 
 void assertExactOptionalDiagnostic;
 
-describe("codexhost cross-boundary error contract", () => {
+describe("harnessmix cross-boundary error contract", () => {
   it("accepts the minimal shared structure without fixing a global code enum", () => {
     const error = {
       code: "adapterSpecificFailure",
@@ -25,7 +25,7 @@ describe("codexhost cross-boundary error contract", () => {
       diagnostic: "Synthetic bounded diagnostic.",
     };
 
-    expect(codexhostErrorSchema.parse(error)).toEqual(error);
+    expect(harnessmixErrorSchema.parse(error)).toEqual(error);
   });
 
   it.each([
@@ -38,7 +38,7 @@ describe("codexhost cross-boundary error contract", () => {
     { code: "INVALID", message: "undefined diagnostic", retryable: false, diagnostic: undefined },
     { code: "INVALID", message: "extended", retryable: false, extra: true },
   ])("rejects incomplete or extended errors %#", (value) => {
-    expect(codexhostErrorSchema.safeParse(value).success).toBe(false);
+    expect(harnessmixErrorSchema.safeParse(value).success).toBe(false);
   });
 
   it("allows owning packages to narrow code without changing the shared schema", () => {
@@ -53,7 +53,7 @@ describe("codexhost cross-boundary error contract", () => {
       mappingStoreErrorSchema.safeParse({ ...storeError, code: "adapterSpecificFailure" }).success,
     ).toBe(false);
     expect(
-      codexhostErrorSchema.safeParse({ ...storeError, code: "adapterSpecificFailure" }).success,
+      harnessmixErrorSchema.safeParse({ ...storeError, code: "adapterSpecificFailure" }).success,
     ).toBe(true);
   });
 

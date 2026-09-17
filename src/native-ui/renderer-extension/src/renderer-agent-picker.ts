@@ -8,7 +8,7 @@ import type {
   RendererAgent,
   RendererAgentAvailability,
 } from "./agent-selection-state.js";
-import type { CodexAccountSummary } from "@codexhost/shared-contracts";
+import type { CodexAccountSummary } from "@harnessmix/shared-contracts";
 import {
   createRendererCodexAccountGroup,
   type RendererCodexAccountGroupControl,
@@ -52,7 +52,7 @@ function pickerGroupMessages(): Pick<
 
 // Opens the Connections settings page from the picker's "More Agents" group.
 // The shell installs this handle globally (see settings/shell.ts) as
-// `window.__codexhostSettingsShellV1`; it is a no-op before the settings
+// `window.__harnessmixSettingsShellV1`; it is a no-op before the settings
 // surface has mounted. Read through a local structural type instead of
 // augmenting the global `Window` interface, so this stays a no-op import
 // away from the settings module.
@@ -61,8 +61,8 @@ interface MinimalSettingsShellHandle {
 }
 
 function openSettingsPage(pageId: "accounts" | "connections", opener?: HTMLElement): void {
-  const shell = (window as unknown as { __codexhostSettingsShellV1?: MinimalSettingsShellHandle })
-    .__codexhostSettingsShellV1;
+  const shell = (window as unknown as { __harnessmixSettingsShellV1?: MinimalSettingsShellHandle })
+    .__harnessmixSettingsShellV1;
   shell?.openSettings(opener, pageId);
 }
 
@@ -92,7 +92,7 @@ export const RENDERER_AGENT_INSTALL_URLS: Readonly<Record<ExternalRendererAgent,
 
 type AgentAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
 
-export const CONTROL_ATTRIBUTE = "data-codexhost-agent-control";
+export const CONTROL_ATTRIBUTE = "data-harnessmix-agent-control";
 const AGENT_MENU_WIDTH = 224;
 // Below this many enabled Agents, the picker stays a flat list — grouping
 // only earns its keep once there are enough Harnesses to make scanning slow.
@@ -107,7 +107,7 @@ interface AgentOptionControl {
   // are mutually exclusive since `RendererAgentAvailability` is a single
   // enum value. The error mode has no error *details* to show inline (the
   // picker only ever receives the coarse availability enum, not the full
-  // `CodexhostError`), so it links out to Settings → Connections instead.
+  // `HarnessMixError`), so it links out to Settings → Connections instead.
   action: HTMLButtonElement | null;
 }
 
@@ -476,7 +476,7 @@ export function mountRendererAgentPicker(
               event.stopPropagation();
               // "error" mode has nothing more to show inline — the picker
               // only knows the coarse availability enum, not the full
-              // `CodexhostError` — so it hands off to Settings, which does.
+              // `HarnessMixError` — so it hands off to Settings, which does.
               // `requestConnectionsPageFocus` makes sure Settings opens
               // straight to *this* Agent's row, not just the page.
               if (control.dataset.mode === "error") {

@@ -3,7 +3,7 @@ import {
   hostThreadIdSchema,
   harnessModelRefSchema,
   type HarnessInspection,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   createRendererModelClient,

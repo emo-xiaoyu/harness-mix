@@ -2,7 +2,7 @@ import {
   harnessModelCatalogSchema,
   harnessModelRefSchema,
   harnessThinkingOptionIdSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it } from "vitest";
 
 import {

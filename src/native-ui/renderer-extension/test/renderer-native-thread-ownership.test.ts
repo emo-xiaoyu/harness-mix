@@ -1,4 +1,4 @@
-import { hostThreadIdSchema } from "@codexhost/shared-contracts";
+import { hostThreadIdSchema } from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createRendererModelClient, THREAD_INSPECT_METHOD } from "../src/renderer-model-client.js";
@@ -8,7 +8,7 @@ const nativeThread = { id: threadId, modelProvider: "custom", cliVersion: "0.151
 const unsupported = {
   code: -32600,
   message:
-    "Invalid request: unknown variant `codexhost/thread/inspect`, expected one of `thread/read`",
+    "Invalid request: unknown variant `harnessmix/thread/inspect`, expected one of `thread/read`",
 };
 
 function setup(error: unknown = unsupported, response: unknown = { thread: nativeThread }) {
@@ -21,7 +21,7 @@ function setup(error: unknown = unsupported, response: unknown = { thread: nativ
   return { client, sendRequest };
 }
 
-describe("native Thread ownership without the codexhost inspection API", () => {
+describe("native Thread ownership without the harnessmix inspection API", () => {
   it.each([unsupported, { code: -32601, message: "Method not found" }])(
     "verifies the native Thread on the same connection when inspection is unsupported: %j",
     async (error) => {
@@ -42,7 +42,7 @@ describe("native Thread ownership without the codexhost inspection API", () => {
     new Error("Method not found"),
     { code: -32000, message: "request timed out" },
     { code: -32600, message: "Invalid request: invalid params" },
-    { code: -32600, message: "Invalid request: unknown variant `codexhost/thread/usage/inspect`" },
+    { code: -32600, message: "Invalid request: unknown variant `harnessmix/thread/usage/inspect`" },
   ])("does not bypass an ordinary inspection failure: %j", async (error) => {
     const { client, sendRequest } = setup(error);
     await expect(client.inspectThread({ threadId })).rejects.toBe(error);
@@ -51,8 +51,8 @@ describe("native Thread ownership without the codexhost inspection API", () => {
 
   it.each([
     { thread: { ...nativeThread, id: "another-thread" } },
-    { thread: { ...nativeThread, modelProvider: "codexhost" } },
-    { thread: { ...nativeThread, cliVersion: "codexhost" } },
+    { thread: { ...nativeThread, modelProvider: "harnessmix" } },
+    { thread: { ...nativeThread, cliVersion: "harnessmix" } },
     { thread: { id: threadId } },
     { thread: { ...nativeThread, modelProvider: "" } },
     { thread: { ...nativeThread, cliVersion: "" } },

@@ -119,8 +119,8 @@ async function main() {
   const globalOnly = await blocked.ensureSkillRoots({ cwd: 'relative-not-absolute' }, adapters.get('codex'), {});
   assert.equal(globalOnly.length, 1);
   // Exercise the real protocol dispatcher without starting native processes.
-  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'codexhost/integrations/catalog', {})).harnesses.length, 17);
-  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'codexhost/integrations/list', local)).skills.length, 3);
+  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'harnessmix/integrations/catalog', {})).harnesses.length, 17);
+  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'harnessmix/integrations/list', local)).skills.length, 3);
   console.log('integrations: scope precedence, persistence, native status projection, no credential fields, unsupported capabilities, skill install/disable/restore, links, and protocol PASS');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

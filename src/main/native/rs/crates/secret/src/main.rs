@@ -125,14 +125,14 @@ fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
 }
 
 fn data_dir() -> Result<PathBuf, String> {
-    if let Ok(dir) = env::var("CODEXHOST_DATA_DIR") {
+    if let Ok(dir) = env::var("HARNESSMIX_DATA_DIR") {
         if !dir.trim().is_empty() {
             return Ok(PathBuf::from(dir));
         }
     }
     match env::var("APPDATA") {
-        Ok(appdata) if !appdata.trim().is_empty() => Ok(PathBuf::from(appdata).join("harness-mix").join("codexhost")),
-        _ => Err("无法确定数据目录（缺少 APPDATA / CODEXHOST_DATA_DIR）".to_string()),
+        Ok(appdata) if !appdata.trim().is_empty() => Ok(PathBuf::from(appdata).join("harnessmix")),
+        _ => Err("无法确定数据目录（缺少 APPDATA / HARNESSMIX_DATA_DIR）".to_string()),
     }
 }
 

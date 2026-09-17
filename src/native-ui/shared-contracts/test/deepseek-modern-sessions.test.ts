@@ -12,7 +12,7 @@ import {
   deepSeekModernSessionImportResultSchema,
   deepSeekModernSessionListParamsSchema,
   deepSeekModernSessionListResultSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 const candidate = {
   nativeSessionId: "session-1",

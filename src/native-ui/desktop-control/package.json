@@ -1,5 +1,5 @@
 {
-  "name": "@codexhost/desktop-control",
+  "name": "@harnessmix/desktop-control",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,6 +17,6 @@
     "build:release": "node scripts/build-release.mjs"
   },
   "dependencies": {
-    "@codexhost/shared-contracts": "0.0.0"
+    "@harnessmix/shared-contracts": "0.0.0"
   }
 }

@@ -12,13 +12,13 @@ app.whenReady().then(async () => {
   const icons = getAllIconsDictionary();
   icons.harnesses['claude-code'] = icons.harnesses.claude;
   icons.harnesses['deepseek-harness'] = icons.harnesses.dsh;
-  const bundle = await esbuild.build({ stdin: { contents: `export { createRendererAgentIcon } from './src/native-ui/renderer-extension/src/renderer-agent-icon.ts'; export { mountRendererAgentPicker, renderRendererAgentPicker } from './src/native-ui/renderer-extension/src/renderer-agent-picker.ts'; export { mountRendererModelPicker, renderRendererModelPicker } from './src/native-ui/renderer-extension/src/renderer-model-picker.ts'; export { mountRendererHarnessHandoff } from './src/native-ui/renderer-extension/src/renderer-harness-handoff.ts'; export { restoredThreadOwnership } from './src/native-ui/renderer-extension/src/renderer-binding-probe.ts'; export { installRendererSidebarAgentIcons } from './src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'; export { installRendererSettingsLifecycle } from './src/native-ui/renderer-extension/src/harness-mix-settings.ts'; export { createAccountsSettingsPage } from './src/native-ui/renderer-extension/src/settings/accounts-page.ts'; export { createStorageSettingsPage } from './src/native-ui/renderer-extension/src/settings/storage-page.ts'; export { createSkinSettingsPage } from './src/native-ui/renderer-extension/src/settings/skin-market.ts'; export { applyRendererSkin } from './src/native-ui/renderer-extension/src/settings/skin-runtime.ts'; export { aboutPage } from './src/native-ui/renderer-extension/src/settings/pages.ts'; export { rendererSettingsMessages } from './src/native-ui/renderer-extension/src/settings/localization.ts'; export { installRendererSettingsShell } from './src/native-ui/renderer-extension/src/settings/shell.ts';`, resolveDir: process.cwd() }, bundle: true, alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, platform: 'browser', format: 'iife', globalName: 'NativeUI', write: false, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.webp': 'dataurl', '.css': 'text' }, logLevel: 'silent' });
+  const bundle = await esbuild.build({ stdin: { contents: `export { createRendererAgentIcon } from './src/native-ui/renderer-extension/src/renderer-agent-icon.ts'; export { mountRendererAgentPicker, renderRendererAgentPicker } from './src/native-ui/renderer-extension/src/renderer-agent-picker.ts'; export { mountRendererModelPicker, renderRendererModelPicker } from './src/native-ui/renderer-extension/src/renderer-model-picker.ts'; export { mountRendererHarnessHandoff } from './src/native-ui/renderer-extension/src/renderer-harness-handoff.ts'; export { restoredThreadOwnership } from './src/native-ui/renderer-extension/src/renderer-binding-probe.ts'; export { installRendererSidebarAgentIcons } from './src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'; export { installRendererSettingsLifecycle } from './src/native-ui/renderer-extension/src/harness-mix-settings.ts'; export { createAccountsSettingsPage } from './src/native-ui/renderer-extension/src/settings/accounts-page.ts'; export { createStorageSettingsPage } from './src/native-ui/renderer-extension/src/settings/storage-page.ts'; export { createSkinSettingsPage } from './src/native-ui/renderer-extension/src/settings/skin-market.ts'; export { applyRendererSkin } from './src/native-ui/renderer-extension/src/settings/skin-runtime.ts'; export { aboutPage } from './src/native-ui/renderer-extension/src/settings/pages.ts'; export { rendererSettingsMessages } from './src/native-ui/renderer-extension/src/settings/localization.ts'; export { installRendererSettingsShell } from './src/native-ui/renderer-extension/src/settings/shell.ts';`, resolveDir: process.cwd() }, bundle: true, alias: { '@harnessmix/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, platform: 'browser', format: 'iife', globalName: 'NativeUI', write: false, loader: { '.svg': 'dataurl', '.png': 'dataurl', '.webp': 'dataurl', '.css': 'text' }, logLevel: 'silent' });
   const win = new BrowserWindow({ show: false, width: 900, height: 650, webPreferences: { contextIsolation: true, sandbox: true, offscreen: true, backgroundThrottling: false } });
   await win.loadURL('data:text/html,<html><head><style>body{background:%2317191d;color:white;font:16px Arial;padding:40px}button{background:%23272a30;color:white;border:0;padding:12px}img{vertical-align:middle}main{display:flex;gap:25px;margin-bottom:40px}</style></head><body><h2>Harness Mix native components</h2><main></main></body></html>');
   await win.webContents.executeJavaScript(`globalThis.__HARNESS_MIX_ICONS__=${JSON.stringify(icons)};globalThis.__HARNESS_MIX_MODEL_FAMILIES__=${JSON.stringify(MODEL_FAMILIES.map(f => ({ id: f.id, pattern: f.regex.source })))};${bundle.outputFiles[0].text}`);
   const liveSettingsPages = await win.webContents.executeJavaScript(`(() => {
     const lifecycle = NativeUI.installRendererSettingsLifecycle(window, {});
-    const pageIds = globalThis.__codexhostSettingsShellV1.registry.pages.map(page => page.id);
+    const pageIds = globalThis.__harnessmixSettingsShellV1.registry.pages.map(page => page.id);
     lifecycle.dispose();
     return pageIds;
   })()`);
@@ -26,7 +26,7 @@ app.whenReady().then(async () => {
   const { NativeProtocol } = require('../src/main/native/protocol');
   const nativeThreads = ['pi', 'claude', 'dsh', 'antigravity'].map((harnessId, index) => ({ id: 'sidebar-' + index, harnessId, model: { id: 'model-' + index, provider: 'native' }, options: {} }));
   const protocol = new NativeProtocol({ threads: nativeThreads, getThread: id => nativeThreads.find(thread => thread.id === id), subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}) }, () => {});
-  const inspections = await Promise.all(nativeThreads.map(thread => protocol.request('codexhost/thread/inspect', { threadId: thread.id })));
+  const inspections = await Promise.all(nativeThreads.map(thread => protocol.request('harnessmix/thread/inspect', { threadId: thread.id })));
   await win.webContents.executeJavaScript(`globalThis.testInspections=${JSON.stringify(inspections)}`);
   const result = await win.webContents.executeJavaScript(`(async () => {
     const agents = ['codex','pi','claude-code','deepseek-harness','antigravity','omp','opencode','grok'];
@@ -43,10 +43,10 @@ app.whenReady().then(async () => {
     }
     const decoration = NativeUI.installRendererSidebarAgentIcons({ getClient: () => ({ listThreadOwnership: async ({threadIds}) => ({threads: threadIds.map(threadId => { const agent = agents[Number(threadId.slice(4))]; return agent === 'codex' ? {threadId, owner:'codex'} : {threadId, owner:'external', harnessId:agent}; })}) }) });
     await new Promise(resolve => setTimeout(resolve, 50));
-    const sidebarIcons = [...sidebar.querySelectorAll('[data-codexhost-sidebar-agent-icon]')].map(icon => icon.getAttribute('data-codexhost-sidebar-agent-icon'));
+    const sidebarIcons = [...sidebar.querySelectorAll('[data-harnessmix-sidebar-agent-icon]')].map(icon => icon.getAttribute('data-harnessmix-sidebar-agent-icon'));
     // Rescan a React-updated row: no duplicate icon and no loss of ownership.
     decoration.refresh(); await new Promise(resolve => setTimeout(resolve, 50));
-    const sidebarIconCount = sidebar.querySelectorAll('[data-codexhost-sidebar-agent-icon]').length;
+    const sidebarIconCount = sidebar.querySelectorAll('[data-harnessmix-sidebar-agent-icon]').length;
     globalThis.testSidebarDecoration = decoration;
     for(const agent of agents) { const el=document.createElement('div'); el.append(NativeUI.createRendererAgentIcon(agent,28),document.createTextNode(' '+agent));document.querySelector('main').append(el); }
     let selected;
@@ -150,16 +150,16 @@ app.whenReady().then(async () => {
   assert.equal(settingsResult.addHidden, false, 'multi-account Add Account action remains visible');
   fs.writeFileSync(path.join(out, 'settings-account.png'), (await win.webContents.capturePage()).toPNG());
   const storageText = await win.webContents.executeJavaScript(`(async () => {
-    globalThis.__codexhostSettingsShellV1.openSettings(undefined, 'storage');
+    globalThis.__harnessmixSettingsShellV1.openSettings(undefined, 'storage');
     await new Promise(resolve => setTimeout(resolve, 100));
-    return globalThis.__codexhostSettingsShellV1.root.shadowRoot.textContent;
+    return globalThis.__harnessmixSettingsShellV1.root.shadowRoot.textContent;
   })()`);
   assert.match(storageText, /Schema v3/);
   assert.match(storageText, /12 个任务/);
   fs.writeFileSync(path.join(out, 'settings-storage.png'), (await win.webContents.capturePage()).toPNG());
   const skinResult = await win.webContents.executeJavaScript(`(async () => {
-    globalThis.__codexhostSettingsShellV1.openSettings(undefined, 'skins');
-    const shadow = globalThis.__codexhostSettingsShellV1.root.shadowRoot;
+    globalThis.__harnessmixSettingsShellV1.openSettings(undefined, 'skins');
+    const shadow = globalThis.__harnessmixSettingsShellV1.root.shadowRoot;
     const firstButton = shadow.querySelector('button[data-skin-action="styler-nocturne-studio"]');
     const mikuButton = shadow.querySelector('button[data-skin-action="miku-488137"]');
     firstButton.click();
@@ -180,16 +180,16 @@ app.whenReady().then(async () => {
     assert.equal(skinResult.bundledPreviewCount, 16);
     fs.writeFileSync(path.join(out, 'settings-skins.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(() => {
-      const shadow = globalThis.__codexhostSettingsShellV1.root.shadowRoot;
+      const shadow = globalThis.__harnessmixSettingsShellV1.root.shadowRoot;
       const page = shadow.querySelector('.settings-page');
       page.scrollTop = page.scrollHeight;
     })()`);
     await new Promise(resolve => setTimeout(resolve, 100));
     fs.writeFileSync(path.join(out, 'settings-skins-discovery.png'), (await win.webContents.capturePage()).toPNG());
   const aboutText = await win.webContents.executeJavaScript(`(async () => {
-    globalThis.__codexhostSettingsShellV1.openSettings(undefined, 'about');
+    globalThis.__harnessmixSettingsShellV1.openSettings(undefined, 'about');
     await new Promise(resolve => setTimeout(resolve, 100));
-    return globalThis.__codexhostSettingsShellV1.root.shadowRoot.textContent;
+    return globalThis.__harnessmixSettingsShellV1.root.shadowRoot.textContent;
   })()`);
   assert.match(aboutText, /v0\.1\.4/);
   fs.writeFileSync(path.join(out, 'settings-about.png'), (await win.webContents.capturePage()).toPNG());

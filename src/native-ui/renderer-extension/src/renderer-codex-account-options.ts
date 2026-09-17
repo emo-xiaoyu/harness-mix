@@ -1,4 +1,4 @@
-import type { CodexAccountSummary } from "@codexhost/shared-contracts";
+import type { CodexAccountSummary } from "@harnessmix/shared-contracts";
 
 import { createRendererAgentIcon } from "./renderer-agent-icon.js";
 

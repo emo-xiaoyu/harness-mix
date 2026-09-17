@@ -4,7 +4,7 @@ import type {
   HarnessModelRef,
   HarnessThinkingOption,
   HarnessThinkingOptionId,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   rendererModelPickerMainMenuPlacement,
@@ -28,7 +28,7 @@ const OPTION_CLASSES =
 
 const HEADING_CLASSES = "px-2 pb-1 pt-1.5 text-sm text-token-text-tertiary";
 const MODEL_TRIGGER_MAX_WIDTH = "min(200px, 26vw)";
-const MODEL_SCROLLBAR_STYLE_ATTRIBUTE = "data-codexhost-model-picker-scrollbar";
+const MODEL_SCROLLBAR_STYLE_ATTRIBUTE = "data-harnessmix-model-picker-scrollbar";
 
 export interface RendererModelControlView {
   status: "idle" | "waitingForAdapter" | "loading" | "ready" | "selecting" | "empty" | "error";
@@ -85,28 +85,28 @@ function ensureModelScrollbarStyle(ownerDocument: Document): void {
   const style = ownerDocument.createElement("style");
   style.setAttribute(MODEL_SCROLLBAR_STYLE_ATTRIBUTE, "true");
   style.textContent = `
-    [data-codexhost-model-scrollable] {
+    [data-harnessmix-model-scrollable] {
       scrollbar-width: thin;
       scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
     }
-    [data-codexhost-model-scrollable]::-webkit-scrollbar {
+    [data-harnessmix-model-scrollable]::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
-    [data-codexhost-model-scrollable]::-webkit-scrollbar-track {
+    [data-harnessmix-model-scrollable]::-webkit-scrollbar-track {
       background: transparent;
     }
-    [data-codexhost-model-scrollable]::-webkit-scrollbar-thumb {
+    [data-harnessmix-model-scrollable]::-webkit-scrollbar-thumb {
       min-height: 28px;
       border: 1px solid transparent;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.28);
       background-clip: padding-box;
     }
-    [data-codexhost-model-scrollable]::-webkit-scrollbar-thumb:hover {
+    [data-harnessmix-model-scrollable]::-webkit-scrollbar-thumb:hover {
       background: rgba(255, 255, 255, 0.42);
     }
-    [data-codexhost-model-scrollable]::-webkit-scrollbar-button {
+    [data-harnessmix-model-scrollable]::-webkit-scrollbar-button {
       display: none;
       width: 0;
       height: 0;
@@ -176,7 +176,7 @@ export function rendererModelPickerPresentation(
 
 function positionMenu(control: RendererModelPickerControl): void {
   const triggerRect = control.trigger.getBoundingClientRect();
-  const thinkingColumn = control.menu.querySelector<HTMLElement>("[data-codexhost-thinking-column]");
+  const thinkingColumn = control.menu.querySelector<HTMLElement>("[data-harnessmix-thinking-column]");
   const twoColumn = control.thinkingExpanded && thinkingColumn !== null;
   if (thinkingColumn) thinkingColumn.style.display = twoColumn ? "flex" : "none";
   control.menu.dataset.twoColumn = String(twoColumn);
@@ -194,13 +194,13 @@ function positionMenu(control: RendererModelPickerControl): void {
   control.menu.style.bottom = `${placement.bottom}px`;
   // 列内部滚动：弹层本身不滚动，模型列表在给定最大高度内滚动
   const listMaxHeight = placement.maxHeight ?? 320;
-  for (const column of control.menu.querySelectorAll<HTMLElement>("[data-codexhost-model-scrollable]")) {
+  for (const column of control.menu.querySelectorAll<HTMLElement>("[data-harnessmix-model-scrollable]")) {
     column.style.maxHeight = `${listMaxHeight}px`;
   }
 }
 
 export function syncRendererModelTriggerClass(control: RendererModelPickerControl): void {
-  // Keep codexhost controls independent from Codex's private utility classes.
+  // Keep harnessmix controls independent from Codex's private utility classes.
   // Codex can rename or remove those between Desktop releases; our own
   // `TRIGGER_CHIP_CLASS` chrome (see renderer-trigger-chip-style.ts) does not.
   control.trigger.className = TRIGGER_CHIP_CLASS;
@@ -254,7 +254,7 @@ export function mountRendererModelPicker(
   ensureRendererTriggerChipStyle(document);
 
   const root = document.createElement("div");
-  root.setAttribute("data-codexhost-model-control", composerId);
+  root.setAttribute("data-harnessmix-model-control", composerId);
   root.className = "relative min-w-0";
   root.style.display = "none";
 
@@ -322,7 +322,7 @@ export function mountRendererModelPicker(
   searchHeader.style.padding = "4px";
   searchHeader.style.backgroundColor = "Canvas";
   const searchEmpty = document.createElement("div");
-  searchEmpty.dataset.codexhostModelSearchEmpty = "true";
+  searchEmpty.dataset.harnessmixModelSearchEmpty = "true";
   searchEmpty.textContent = "No matching models";
   searchEmpty.className = "block px-2 py-2 text-sm text-token-text-tertiary";
   searchEmpty.hidden = true;
@@ -495,7 +495,7 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   modelColumn.style.width = `${RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH}px`;
   modelColumn.style.minWidth = "0";
   const modelList = document.createElement("div");
-  modelList.setAttribute("data-codexhost-model-scrollable", "true");
+  modelList.setAttribute("data-harnessmix-model-scrollable", "true");
   modelList.style.overflowY = "auto";
   modelList.style.minHeight = "0";
   modelColumn.append(createHeading("Model"), control.searchHeader, control.searchEmpty, modelList);
@@ -530,7 +530,7 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   // 右列：当前选中模型适用的思考强度档位
   if (presentation.showThinkingSection) {
     const thinkingColumn = document.createElement("div");
-    thinkingColumn.dataset.codexhostThinkingColumn = "true";
+    thinkingColumn.dataset.harnessmixThinkingColumn = "true";
     thinkingColumn.className = "flex min-w-0 flex-col";
     thinkingColumn.style.display = control.thinkingExpanded ? "flex" : "none";
     thinkingColumn.style.flexDirection = "column";
@@ -540,7 +540,7 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
     thinkingColumn.style.paddingLeft = "4px";
     thinkingColumn.append(createHeading("Thinking"));
     const thinkingList = document.createElement("div");
-    thinkingList.setAttribute("data-codexhost-model-scrollable", "true");
+    thinkingList.setAttribute("data-harnessmix-model-scrollable", "true");
     thinkingList.style.overflowY = "auto";
     thinkingList.style.minHeight = "0";
     for (const option of presentation.thinkingOptions) {

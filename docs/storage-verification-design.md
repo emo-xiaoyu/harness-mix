@@ -14,8 +14,8 @@ Core checkpoint 是历史的唯一执行投影。保存时移除可以从 Core �
 
 Host 提供：
 
-- `codexhost/storage/inspect`：返回文件大小、逻辑大小、紧凑后大小以及最大的 20 个任务。
-- `codexhost/storage/optimize`：显式重写为当前 schema，并返回优化前后统计。
+- `harnessmix/storage/inspect`：返回文件大小、逻辑大小、紧凑后大小以及最大的 20 个任务。
+- `harnessmix/storage/optimize`：显式重写为当前 schema，并返回优化前后统计。
 
 ## 分片存储 schema v3
 
@@ -36,9 +36,9 @@ Host 提供：
 
 Host 方法：
 
-- `codexhost/thread/verification/get`
-- `codexhost/thread/verification/configure`
-- `codexhost/thread/verification/run`
+- `harnessmix/thread/verification/get`
+- `harnessmix/thread/verification/configure`
+- `harnessmix/thread/verification/run`
 
 原生命令面板提供 `/verify`、`/gate-required`、`/gate-advisory` 和 `/gate-off`。完整配置可以直接输入，例如 `/gate required --auto --clean -- npm run test:ci`；也可以通过 Host 协议写入多条命令。
 

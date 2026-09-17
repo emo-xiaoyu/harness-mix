@@ -251,7 +251,7 @@ describe("Renderer Agent picker presentation", () => {
     expect(isNativeModelControlCandidate(element([], true, false))).toBe(false);
     expect(isNativeModelControlCandidate(element([], false, true))).toBe(false);
     expect(
-      isNativeModelControlCandidate(element(["data-codexhost-agent-control"], true, true)),
+      isNativeModelControlCandidate(element(["data-harnessmix-agent-control"], true, true)),
     ).toBe(false);
   });
 });

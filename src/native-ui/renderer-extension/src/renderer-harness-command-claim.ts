@@ -1,4 +1,4 @@
-import type { HarnessCommandDescriptor } from "@codexhost/shared-contracts";
+import type { HarnessCommandDescriptor } from "@harnessmix/shared-contracts";
 
 function inputEvent(editor: HTMLElement, text: string): Event {
   const view = editor.ownerDocument.defaultView;

@@ -1,4 +1,4 @@
-import type { AccountCreditsSnapshot } from "@codexhost/shared-contracts";
+import type { AccountCreditsSnapshot } from "@harnessmix/shared-contracts";
 
 import { formatRendererCreditsReset, rendererCreditsTone } from "../renderer-credits-control.js";
 import { formatRendererCreditsPercent } from "../renderer-usage-control.js";

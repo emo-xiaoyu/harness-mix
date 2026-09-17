@@ -90,15 +90,15 @@ function main() {
   const noInfo = protocol.turn({ id: 'turn_10', status: 'error', error: 'boom' });
   assert.equal(noInfo.error.codexErrorInfo, null);
   return (async () => {
-    const state = await protocol.request('codexhost/harness/turn-error', { threadId: 'thread_3' });
+    const state = await protocol.request('harnessmix/harness/turn-error', { threadId: 'thread_3' });
     assert.equal(state.errorKind, 'auth');
     assert.equal(state.error, 'Invalid API key');
     assert.deepEqual(state.actions, ['login', 'newSession']); // claude-code 有 loginCommand
     fakeRuntime.threads[0].errorKind = null;
-    const cleared = await protocol.request('codexhost/harness/turn-error', { threadId: 'thread_3' });
+    const cleared = await protocol.request('harnessmix/harness/turn-error', { threadId: 'thread_3' });
     assert.equal(cleared.errorKind, null);
     assert.deepEqual(cleared.actions, []);
-    await assert.rejects(protocol.request('codexhost/harness/turn-error', { threadId: 'nope' }), /Unknown thread/);
+    await assert.rejects(protocol.request('harnessmix/harness/turn-error', { threadId: 'nope' }), /Unknown thread/);
     protocol.close?.();
     console.log('PASS: error classification (explicit/codexErrorInfo/status/pattern/unknown), actions, normalizer/core/thread projection, turn-error query');
   })();

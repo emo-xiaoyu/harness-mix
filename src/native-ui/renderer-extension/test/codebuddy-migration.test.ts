@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readNewThreadAgentPreference, RENDERER_NEW_THREAD_PREFERENCE_KEY, readNewThreadExternalConfigurationPreference } from '../src/renderer-new-thread-preference.js';
 import { createAgentGroupPreferenceStore, AGENT_GROUP_PREFERENCE_STORAGE_KEY } from '../src/agent-group-preference.js';
 import { DEFAULT_RENDERER_AGENTS } from '../src/agent-selection-state.js';
-import { harnessModelCatalogSchema } from '@codexhost/shared-contracts';
+import { harnessModelCatalogSchema } from '@harnessmix/shared-contracts';
 
 describe('CodeBuddy rename compatibility', () => {
   it('keeps old last-agent, model and group preferences under the canonical name', () => {

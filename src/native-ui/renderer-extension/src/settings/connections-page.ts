@@ -1,4 +1,4 @@
-import type { CodexhostError, HarnessInspection } from "@codexhost/shared-contracts";
+import type { HarnessMixError, HarnessInspection } from "@harnessmix/shared-contracts";
 
 import {
   getSharedAgentGroupPreferenceStore,
@@ -16,7 +16,7 @@ import type { RendererSettingsPageDefinition, RendererSettingsPageMountContext }
 import { createRendererSettingsIcon } from "./icons.js";
 import type { RendererSettingsMessages } from "./localization.js";
 
-export const CODEXHOST_GITHUB_ISSUES_NEW_URL =
+export const HARNESSMIX_GITHUB_ISSUES_NEW_URL =
   "https://github.com/emo-xiaoyu/harness-mix/issues/new";
 
 export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererAgent, { command: string }>>> = Object.freeze({
@@ -58,7 +58,7 @@ const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Ob
 export interface RendererConnectionAgentSnapshot {
   readonly agent: ExternalRendererAgent;
   readonly availability: RendererAgentAvailability;
-  readonly error: CodexhostError | null;
+  readonly error: HarnessMixError | null;
   readonly webUiAvailable?: true;
 }
 
@@ -89,7 +89,7 @@ interface ConnectionListItem {
   readonly key: string;
   readonly name: string;
   readonly availability: ConnectionAvailability;
-  readonly error: CodexhostError | null;
+  readonly error: HarnessMixError | null;
   readonly agentSnapshot?: RendererConnectionAgentSnapshot;
   readonly openWebUi?: () => Promise<void>;
 }
@@ -130,7 +130,7 @@ function diagnosticText(
 ): string {
   const error = item.error;
   return [
-    "codexhost connection diagnostics",
+    "harnessmix connection diagnostics",
     `host: ${hostId}`,
     `agent: ${item.name}`,
     `status: ${item.availability}`,
@@ -841,7 +841,7 @@ function renderConnectionInspector(
     actions.className = "settings-connection-error-actions";
     const issue = document.createElement("a");
     issue.className = "settings-command-button settings-command-button--secondary";
-    issue.href = CODEXHOST_GITHUB_ISSUES_NEW_URL;
+    issue.href = HARNESSMIX_GITHUB_ISSUES_NEW_URL;
     issue.target = "_blank";
     issue.rel = "noopener noreferrer";
     issue.append(messages.connectionOpenIssue, createRendererSettingsIcon("external-link", 14));
@@ -1095,7 +1095,7 @@ export function createConnectionsSettingsPage(
         tabs.setAttribute("role", "tablist");
         tabs.setAttribute("aria-label", messages.connectionHosts);
         const scrollRight = createHostScrollButton(document, "right", messages);
-        const panelId = "codexhost-settings-connection-host-panel";
+        const panelId = "harnessmix-settings-connection-host-panel";
 
         snapshot.hosts.forEach((host, index) => {
           const tab = document.createElement("button");

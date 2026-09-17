@@ -67,7 +67,7 @@ button {
   border: 0;
 }
 
-.codexhost-settings-dialog {
+.harnessmix-settings-dialog {
   width: min(1120px, calc(100vw - 48px));
   height: min(780px, calc(100vh - 88px));
   max-width: none;
@@ -84,7 +84,7 @@ button {
   box-shadow: light-dark(0 16px 42px rgb(0 0 0 / 16%), 0 20px 54px rgb(0 0 0 / 42%));
 }
 
-.codexhost-settings-dialog::backdrop {
+.harnessmix-settings-dialog::backdrop {
   background: light-dark(rgb(0 0 0 / 24%), rgb(0 0 0 / 56%));
   backdrop-filter: blur(1px);
 }
@@ -155,7 +155,7 @@ button {
   color: var(--settings-text);
 }
 
-.settings-brand__mark .codexhost-settings-icon {
+.settings-brand__mark .harnessmix-settings-icon {
   width: 24px;
   height: 24px;
   object-fit: contain;
@@ -231,7 +231,7 @@ button {
   cursor: pointer;
 }
 
-.settings-nav-button .codexhost-settings-icon {
+.settings-nav-button .harnessmix-settings-icon {
   width: 16px;
   height: 16px;
   opacity: 0.9;
@@ -260,7 +260,7 @@ button {
   text-decoration: none;
 }
 
-.settings-nav-star-link .codexhost-settings-icon {
+.settings-nav-star-link .harnessmix-settings-icon {
   color: var(--settings-warning);
 }
 
@@ -1546,23 +1546,23 @@ button {
   gap: 8px;
 }
 
-.settings-update-panel__head .codexhost-settings-icon {
+.settings-update-panel__head .harnessmix-settings-icon {
   color: var(--settings-muted);
 }
 
-.settings-update-panel[data-update-state="available"] .codexhost-settings-icon,
-.settings-update-panel[data-update-state="downloading"] .codexhost-settings-icon,
-.settings-update-panel[data-update-state="installing"] .codexhost-settings-icon,
-.settings-update-panel[data-update-state="restarting"] .codexhost-settings-icon {
+.settings-update-panel[data-update-state="available"] .harnessmix-settings-icon,
+.settings-update-panel[data-update-state="downloading"] .harnessmix-settings-icon,
+.settings-update-panel[data-update-state="installing"] .harnessmix-settings-icon,
+.settings-update-panel[data-update-state="restarting"] .harnessmix-settings-icon {
   color: var(--settings-focus);
 }
 
-.settings-update-panel[data-update-state="current"] .codexhost-settings-icon {
+.settings-update-panel[data-update-state="current"] .harnessmix-settings-icon {
   color: var(--settings-success);
 }
 
-.settings-update-panel[data-update-state="failed"] .codexhost-settings-icon,
-.settings-update-panel[data-update-state="error"] .codexhost-settings-icon {
+.settings-update-panel[data-update-state="failed"] .harnessmix-settings-icon,
+.settings-update-panel[data-update-state="error"] .harnessmix-settings-icon {
   color: var(--settings-danger);
 }
 
@@ -1914,14 +1914,14 @@ button {
   outline-offset: 2px;
 }
 
-.codexhost-settings-icon {
+.harnessmix-settings-icon {
   display: block;
   flex: none;
   stroke: currentColor;
 }
 
 @media (max-width: 720px) {
-  .codexhost-settings-dialog {
+  .harnessmix-settings-dialog {
     width: calc(100vw - 16px);
     height: calc(100vh - 16px);
     border-radius: 10px;

@@ -15,7 +15,7 @@ import type {
   CodexAccountUsageResult,
   CodexAccountResetCreditConsumeParams,
   CodexAccountResetCreditConsumeResult,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import {
   accountListFocusRestorer,

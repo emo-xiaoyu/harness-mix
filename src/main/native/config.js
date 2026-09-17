@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { dataDirectory, executableName } = require('./platform');
 const root = path.resolve(__dirname, '../../..');
-const settingKeys = ['HARNESS_MIX_DSH_ROOT', 'CODEXHOST_PI_COMMAND', 'CODEXHOST_CLAUDE_COMMAND', 'CODEXHOST_DEEPSEEK_HARNESS_COMMAND', 'CODEXHOST_ANTIGRAVITY_COMMAND', 'HARNESS_MIX_CODEBUDDY_EXECUTABLE', 'HARNESS_MIX_WORKBUDDY_EXECUTABLE', 'HARNESS_MIX_KIRO_EXECUTABLE', 'HARNESS_MIX_CURSOR_EXECUTABLE', 'HARNESS_MIX_QODER_EXECUTABLE', 'HARNESS_MIX_ZCODE_ACP_EXECUTABLE', 'HARNESS_MIX_TRAE_EXECUTABLE'];
+const settingKeys = ['HARNESS_MIX_DSH_ROOT', 'HARNESSMIX_PI_COMMAND', 'HARNESSMIX_CLAUDE_COMMAND', 'HARNESSMIX_DEEPSEEK_HARNESS_COMMAND', 'HARNESSMIX_ANTIGRAVITY_COMMAND', 'HARNESS_MIX_CODEBUDDY_EXECUTABLE', 'HARNESS_MIX_WORKBUDDY_EXECUTABLE', 'HARNESS_MIX_KIRO_EXECUTABLE', 'HARNESS_MIX_CURSOR_EXECUTABLE', 'HARNESS_MIX_QODER_EXECUTABLE', 'HARNESS_MIX_ZCODE_ACP_EXECUTABLE', 'HARNESS_MIX_TRAE_EXECUTABLE'];
 
 function nativePaths(platform = process.platform) {
   const build = path.join(root, 'output/native-build');
@@ -22,32 +22,32 @@ function nativePaths(platform = process.platform) {
 
 function nativeEnvironment(environment = process.env) {
   const env = { ...environment };
-  env.CODEXHOST_DATA_DIR = dataDirectory(env);
-  const settingsPath = path.join(env.CODEXHOST_DATA_DIR, 'harness-mix-settings.json');
+  env.HARNESSMIX_DATA_DIR = dataDirectory(env);
+  const settingsPath = path.join(env.HARNESSMIX_DATA_DIR, 'harness-mix-settings.json');
   if (fs.existsSync(settingsPath)) {
     const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     for (const key of settingKeys) {
       if (!env[key] && typeof saved[key] === 'string') env[key] = saved[key];
     }
   }
-  env.CODEXHOST_DEFAULT_AGENT ||= 'codex';
+  env.HARNESSMIX_DEFAULT_AGENT ||= 'codex';
   env.HARNESS_MIX_NODE_PATH = process.execPath;
   if (!env.NODE_OPTIONS || !env.NODE_OPTIONS.includes('--max-old-space-size')) {
     env.NODE_OPTIONS = [env.NODE_OPTIONS, '--max-old-space-size=8192'].filter(Boolean).join(' ');
   }
-  if (!env.CODEXHOST_DEEPSEEK_HARNESS_COMMAND && process.platform === 'win32') {
-    env.CODEXHOST_DEEPSEEK_HARNESS_COMMAND = path.join(root, 'scripts', 'dsh-native.cmd');
+  if (!env.HARNESSMIX_DEEPSEEK_HARNESS_COMMAND && process.platform === 'win32') {
+    env.HARNESSMIX_DEEPSEEK_HARNESS_COMMAND = path.join(root, 'scripts', 'dsh-native.cmd');
   }
   return env;
 }
 
 function saveNativeSettings(env) {
-  fs.mkdirSync(env.CODEXHOST_DATA_DIR, { recursive: true });
+  fs.mkdirSync(env.HARNESSMIX_DATA_DIR, { recursive: true });
   // Only executable locations are persisted; never copy the complete environment.
   const settings = Object.fromEntries(settingKeys.filter(key => env[key] &&
-    !(key === 'CODEXHOST_DEEPSEEK_HARNESS_COMMAND' && env[key] === path.join(root, 'scripts', 'dsh-native.cmd')))
+    !(key === 'HARNESSMIX_DEEPSEEK_HARNESS_COMMAND' && env[key] === path.join(root, 'scripts', 'dsh-native.cmd')))
     .map(key => [key, env[key]]));
-  const file = path.join(env.CODEXHOST_DATA_DIR, 'harness-mix-settings.json');
+  const file = path.join(env.HARNESSMIX_DATA_DIR, 'harness-mix-settings.json');
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(settings, null, 2));
   fs.renameSync(`${file}.tmp`, file);
 }

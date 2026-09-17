@@ -55,13 +55,13 @@ async function testPrewarm() {
   const manager = { onNotification() {}, onRequest() {}, dispatchAppServerResponse() {} };
   const target = {};
   installDraftPrewarmPolicyBridge(manager, bridge, 'local', target, { discardAllPrewarmedThreads() {} });
-  const policy = target.__codexhostDraftPrewarmPolicyV1;
+  const policy = target.__harnessmixDraftPrewarmPolicyV1;
   for (const harness of ['pi', 'claude-code', 'deepseek-harness', 'antigravity']) {
-    policy.select(`codexhost/${harness}-native`);
+    policy.select(`harnessmix/${harness}-native`);
     bridge.prewarmThreadStart({ cwd: 'E:/project', model: 'gpt-test' });
     bridge.sendRequest('thread/start', { cwd: 'E:/project', model: 'gpt-test' });
     assert.equal(prewarmed.at(-1).ephemeral, true);
-    assert.equal(prewarmed.at(-1).model, `codexhost/${harness}-native`);
+    assert.equal(prewarmed.at(-1).model, `harnessmix/${harness}-native`);
     assert.equal(sent.at(-1).params.ephemeral, undefined);
   }
   bridge.prewarmThreadStart({ ephemeral: true, model: 'gpt-title' });
@@ -72,7 +72,7 @@ async function testPrewarm() {
   policy.dispose();
   console.log('PASS: all four external prewarm routes stay ephemeral; actual starts and Codex internal tasks are preserved');
   const sidebarFile = path.join(root, 'sidebar.cjs');
-  await require('esbuild').build({ entryPoints: ['src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'], outfile: sidebarFile, bundle: true, platform: 'node', format: 'cjs', alias: { '@codexhost/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, loader: { '.png': 'dataurl', '.svg': 'dataurl' }, logLevel: 'silent' });
+  await require('esbuild').build({ entryPoints: ['src/native-ui/renderer-extension/src/renderer-sidebar-agent-icons.ts'], outfile: sidebarFile, bundle: true, platform: 'node', format: 'cjs', alias: { '@harnessmix/shared-contracts': path.resolve('src/native-ui/shared-contracts/src/index.ts') }, loader: { '.png': 'dataurl', '.svg': 'dataurl' }, logLevel: 'silent' });
   const { installRendererSidebarAgentIcons } = require(sidebarFile);
   let cleared = 0;
   let agent = null;

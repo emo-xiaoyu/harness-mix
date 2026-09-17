@@ -31,7 +31,7 @@ const helper = [
 
   // --- real helper: DPAPI vault round-trip on a temp data dir ---
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-secret-'));
-  const env = { ...process.env, CODEXHOST_DATA_DIR: data };
+  const env = { ...process.env, HARNESSMIX_DATA_DIR: data };
   const call = (args, input) => execFileSync(helper, args, { encoding: 'utf8', windowsHide: true, env, input });
   call(['set', 'demo.token'], 'super-secret-value');
   assert.equal(call(['get', 'demo.token']), 'super-secret-value');

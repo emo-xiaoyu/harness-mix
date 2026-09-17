@@ -61,14 +61,14 @@ export function createRendererPetsClient(
   send: (method: string, params: unknown) => Promise<unknown>,
 ): RendererPetsClient {
   return {
-    catalog: async () => (await send("codexhost/pets/catalog", {})) as RendererPetCatalogResult,
+    catalog: async () => (await send("harnessmix/pets/catalog", {})) as RendererPetCatalogResult,
     community: async (query = {}) =>
-      (await send("codexhost/pets/community", query)) as RendererPetCommunityResult,
+      (await send("harnessmix/pets/community", query)) as RendererPetCommunityResult,
     preview: async (id: string) =>
-      (await send("codexhost/pets/preview", { id })) as RendererPetPreviewResult,
+      (await send("harnessmix/pets/preview", { id })) as RendererPetPreviewResult,
     install: async (params: RendererPetInstallParams) =>
-      (await send("codexhost/pets/install", params)) as RendererPetInstallResult,
+      (await send("harnessmix/pets/install", params)) as RendererPetInstallResult,
     uninstall: async (id: string) =>
-      (await send("codexhost/pets/uninstall", { id })) as { id: string; removed: boolean },
+      (await send("harnessmix/pets/uninstall", { id })) as { id: string; removed: boolean },
   };
 }

@@ -20,7 +20,7 @@ export const harnessSessionImportIdSchema = nonBlankTextSchema.max(
   HARNESS_SESSION_IMPORT_ID_MAX_LENGTH,
 );
 
-/** Browser-safe metadata required to map an existing Native Session into codexhost. */
+/** Browser-safe metadata required to map an existing Native Session into harnessmix. */
 export const harnessSessionImportCandidateSchema = z
   .object({
     nativeSessionId: harnessSessionImportIdSchema,

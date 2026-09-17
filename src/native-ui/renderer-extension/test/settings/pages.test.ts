@@ -5,7 +5,7 @@ import {
   type HarnessSessionListParams,
   type UpdateCheckResult,
   type UpdateStatus,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/settings/icons.js", () => ({
@@ -18,10 +18,10 @@ import { mountHarnessAccounts } from "../../src/settings/harness-accounts.js";
 import { rendererSettingsMessages } from "../../src/settings/localization.js";
 import { createRendererModelClient } from "../../src/renderer-model-client.js";
 import { RendererSessionImportUnavailableError } from "../../src/renderer-session-import-client.js";
-const HARNESS_SESSION_LIST_METHOD = "codexhost/harness/session-import/list";
-const HARNESS_SESSION_IMPORT_METHOD = "codexhost/harness/session-import/import";
+const HARNESS_SESSION_LIST_METHOD = "harnessmix/harness/session-import/list";
+const HARNESS_SESSION_IMPORT_METHOD = "harnessmix/harness/session-import/import";
 import {
-  CODEXHOST_RELEASES_LATEST_URL,
+  HARNESSMIX_RELEASES_LATEST_URL,
   createDefaultRendererSettingsPages,
 } from "../../src/settings/pages.js";
 import type {
@@ -1110,7 +1110,7 @@ describe("Renderer Updates page", () => {
         visibleNotesText(candidate).includes("Download from GitHub Releases"),
     );
     if (!releaseLink) throw new Error("GitHub Releases link is not rendered");
-    expect(releaseLink.href).toBe(CODEXHOST_RELEASES_LATEST_URL);
+    expect(releaseLink.href).toBe(HARNESSMIX_RELEASES_LATEST_URL);
     expect(releaseLink.target).toBe("_blank");
     expect(releaseLink.rel).toBe("noopener noreferrer");
 

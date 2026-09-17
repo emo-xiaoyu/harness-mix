@@ -23,7 +23,7 @@ function itemIdCount(node: Element): number {
 
 /**
  * Codex renders transcript text for the Command Execution lane only, and it is
- * the lane codexhost projects external Harness Reasoning through. This records
+ * the lane harnessmix projects external Harness Reasoning through. This records
  * bounded structural counts so a Desktop update that drops the lane, or stops
  * publishing Item ids, is detected instead of silently hiding projected text.
  */

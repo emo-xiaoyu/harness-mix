@@ -48,7 +48,7 @@ export function installDraftPrewarmPolicyBridge(
   target: DraftPrewarmPolicyTarget,
   prewarmedThreadManager: RendererPrewarmedThreadManager,
 ): { state: "ready"; reason: "owned-request-bridge" } {
-  const existing = target.__codexhostDraftPrewarmPolicyV1 as
+  const existing = target.__harnessmixDraftPrewarmPolicyV1 as
     | {
         owns?: (
           candidateManager: RendererHostRequestManager,
@@ -83,15 +83,15 @@ export function installDraftPrewarmPolicyBridge(
   const knownOfficialThreadIds = new Set<string>();
   const threadOwnershipResolutions = new Map<string, Promise<"external" | "codex">>();
   const createBridgeProcessHandle = (): string =>
-    `codexhost-${
+    `harnessmix-${
       typeof crypto?.randomUUID === "function"
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`
     }`;
   let bridgeProcessHandle = createBridgeProcessHandle();
-  const bridgeReadyMethod = "codexhost/remote-control-bridge/ready";
+  const bridgeReadyMethod = "harnessmix/remote-control-bridge/ready";
   const bridgeRequests = new Map<unknown, { method: string; parameters: unknown }>();
-  const bridgeServerRequestIdPrefix = "codexhost/remote-control-bridge/server-request/";
+  const bridgeServerRequestIdPrefix = "harnessmix/remote-control-bridge/server-request/";
   const bridgeServerRequests = new Map<string, unknown>();
   let nextBridgeServerRequestOrdinal = 1;
   let outputDecoders = {
@@ -108,7 +108,7 @@ export function installDraftPrewarmPolicyBridge(
   let writeTail = Promise.resolve();
 
   const transportError = (message: string, cause?: unknown): Error => {
-    const error = new Error(`codexhost Remote Control bridge: ${message}`);
+    const error = new Error(`harnessmix Remote Control bridge: ${message}`);
     if (cause !== undefined) Object.assign(error, { cause });
     return error;
   };
@@ -168,7 +168,7 @@ export function installDraftPrewarmPolicyBridge(
   };
   const rememberExternalThread = (value: unknown): void => {
     if (!isRecord(value) || typeof value.id !== "string") return;
-    if (value.modelProvider === "codexhost" || value.cliVersion === "codexhost") {
+    if (value.modelProvider === "harnessmix" || value.cliVersion === "harnessmix") {
       knownExternalThreadIds.add(value.id);
       knownOfficialThreadIds.delete(value.id);
     }
@@ -191,7 +191,7 @@ export function installDraftPrewarmPolicyBridge(
       return;
     }
     if (
-      request.method === "codexhost/thread/inspect" &&
+      request.method === "harnessmix/thread/inspect" &&
       isRecord(request.parameters) &&
       typeof request.parameters.threadId === "string"
     ) {
@@ -331,16 +331,16 @@ export function installDraftPrewarmPolicyBridge(
     // opaque UTF-16LE argument across the Remote Control process boundary.
     const powershellScript =
       "$ErrorActionPreference = 'Stop'; " +
-      "$descriptorPath = Join-Path $env:LOCALAPPDATA 'codexhost\\remote-control-bridge-v1.json'; " +
+      "$descriptorPath = Join-Path $env:LOCALAPPDATA 'harnessmix\\remote-control-bridge-v1.json'; " +
       "$descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json; " +
-      "if ($descriptor.schemaVersion -ne 1) { throw 'Unsupported codexhost Remote Control descriptor' }; " +
+      "if ($descriptor.schemaVersion -ne 1) { throw 'Unsupported harnessmix Remote Control descriptor' }; " +
       "$nodePath = [string]$descriptor.nodePath; " +
       "$runtimePath = [string]$descriptor.runtimePath; " +
-      "if (-not [System.IO.Path]::IsPathRooted($nodePath) -or -not [System.IO.Path]::IsPathRooted($runtimePath)) { throw 'Invalid codexhost Remote Control runtime path' }; " +
+      "if (-not [System.IO.Path]::IsPathRooted($nodePath) -or -not [System.IO.Path]::IsPathRooted($runtimePath)) { throw 'Invalid harnessmix Remote Control runtime path' }; " +
       "$owner = Get-Process -Id ([int]$descriptor.ownerPid) -ErrorAction SilentlyContinue; " +
-      "if ($null -eq $owner) { throw 'CodexHost Remote Control runtime is not running' }; " +
-      "$env:CODEXHOST_REMOTE_CONTROL_BRIDGE_PIPE = [string]$descriptor.pipePath; " +
-      "& $nodePath $runtimePath '--codexhost-remote-control-bridge'; " +
+      "if ($null -eq $owner) { throw 'HarnessMix Remote Control runtime is not running' }; " +
+      "$env:HARNESSMIX_REMOTE_CONTROL_BRIDGE_PIPE = [string]$descriptor.pipePath; " +
+      "& $nodePath $runtimePath '--harnessmix-remote-control-bridge'; " +
       "exit $LASTEXITCODE";
     const command = [
       "powershell.exe",
@@ -390,8 +390,8 @@ export function installDraftPrewarmPolicyBridge(
   const initializeBridgeProtocol = (): Promise<unknown> => {
     const initialization = enqueueBridgeRequest("initialize", {
       clientInfo: {
-        name: "codexhost_remote_control_bridge",
-        title: "codexhost Remote Control bridge",
+        name: "harnessmix_remote_control_bridge",
+        title: "harnessmix Remote Control bridge",
         version: "1",
       },
       capabilities: {
@@ -440,7 +440,7 @@ export function installDraftPrewarmPolicyBridge(
     const resolution = initializeBridge()
       .then(
         () =>
-          enqueueBridgeRequest("codexhost/thread/ownership/list", {
+          enqueueBridgeRequest("harnessmix/thread/ownership/list", {
             threadIds: [threadId],
           }) as Promise<unknown>,
       )
@@ -475,7 +475,7 @@ export function installDraftPrewarmPolicyBridge(
     return resolution;
   };
   const shouldResolveThreadOwnership = (method: string, parameters: unknown): string | null => {
-    if (!isRemoteControlHost || method.startsWith("codexhost/") || !isThreadScopedMethod(method)) {
+    if (!isRemoteControlHost || method.startsWith("harnessmix/") || !isThreadScopedMethod(method)) {
       return null;
     }
     const threadId = threadIdFromParameters(parameters);
@@ -486,13 +486,13 @@ export function installDraftPrewarmPolicyBridge(
   };
   const shouldUseBridge = (method: string, parameters: unknown): boolean => {
     if (!isRemoteControlHost) return false;
-    if (method.startsWith("codexhost/")) return true;
+    if (method.startsWith("harnessmix/")) return true;
     if (method === "thread/list") return true;
     if (method === "thread/start") {
       return (
         isRecord(parameters) &&
-        ((typeof parameters.model === "string" && parameters.model.startsWith("codexhost/")) ||
-          typeof parameters.__codexhostAccountId === "string")
+        ((typeof parameters.model === "string" && parameters.model.startsWith("harnessmix/")) ||
+          typeof parameters.__harnessmixAccountId === "string")
       );
     }
     const threadId = threadIdFromParameters(parameters);
@@ -510,7 +510,7 @@ export function installDraftPrewarmPolicyBridge(
     const routed = {
       ...parameters,
       ...(selectedModel === null ? {} : { model: selectedModel }),
-      ...(selectedCodexAccountId === null ? {} : { __codexhostAccountId: selectedCodexAccountId }),
+      ...(selectedCodexAccountId === null ? {} : { __harnessmixAccountId: selectedCodexAccountId }),
     };
     selectedCodexAccountId = null;
     return routed;
@@ -610,8 +610,8 @@ export function installDraftPrewarmPolicyBridge(
       return manager;
     },
     select(model: string | null): boolean {
-      if (model !== null && (typeof model !== "string" || !model.startsWith("codexhost/"))) {
-        throw new Error("Draft route Model must be a codexhost transport carrier");
+      if (model !== null && (typeof model !== "string" || !model.startsWith("harnessmix/"))) {
+        throw new Error("Draft route Model must be a harnessmix transport carrier");
       }
       if (selectedModel === model) return false;
       selectedModel = model;
@@ -662,12 +662,12 @@ export function installDraftPrewarmPolicyBridge(
       selectedCodexAccountId = null;
     },
   });
-  Object.defineProperty(target, "__codexhostDraftPrewarmPolicyV1", {
+  Object.defineProperty(target, "__harnessmixDraftPrewarmPolicyV1", {
     configurable: true,
     value: policy,
   });
   if (typeof target.dispatchEvent === "function" && typeof CustomEvent === "function") {
-    target.dispatchEvent(new CustomEvent("codexhost:draft-prewarm-policy-changed"));
+    target.dispatchEvent(new CustomEvent("harnessmix:draft-prewarm-policy-changed"));
   }
   return { state: "ready", reason: "owned-request-bridge" };
 }

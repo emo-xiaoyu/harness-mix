@@ -1,5 +1,5 @@
 import type { ExternalRendererAgent } from "./agent-selection-state.js";
-import type { HarnessHandoffIncludes, HarnessHandoffIntent } from "@codexhost/shared-contracts";
+import type { HarnessHandoffIncludes, HarnessHandoffIntent } from "@harnessmix/shared-contracts";
 import { createRendererAgentIcon, RENDERER_AGENT_LABELS } from "./renderer-agent-icon.js";
 import type { RendererSettingsLocale } from "./settings/localization.js";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HarnessCommandDescriptor } from "@codexhost/shared-contracts";
+import type { HarnessCommandDescriptor } from "@harnessmix/shared-contracts";
 
 import {
   rendererHarnessCommandPresentation,

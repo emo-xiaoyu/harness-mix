@@ -18,7 +18,7 @@ import {
   threadThinkingSelectParamsSchema,
   threadOwnershipListParamsSchema,
   threadOwnershipListResultSchema,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 const firstRef = { id: "pi-model-v1.cHJvdmlkZXI6bW9kZWw" };
 const secondRef = { id: "pi-model-v1.b3RoZXI6bW9kZWw" };
@@ -285,7 +285,7 @@ describe("Harness Model runtime contracts", () => {
       threadInspectionSchema.parse({
         owner: "external",
         harnessId: "pi",
-        transportModelId: "codexhost/pi-native",
+        transportModelId: "harnessmix/pi-native",
         effectiveModel: firstRef,
         resolvedModelLabel: "runtime/model-v1",
         effectiveThinkingOptionId: "high",
@@ -305,7 +305,7 @@ describe("Harness Model runtime contracts", () => {
       threadInspectionSchema.safeParse({
         owner: "external",
         harnessId: "pi",
-        transportModelId: "codexhost/pi-native",
+        transportModelId: "harnessmix/pi-native",
         history: { fork: true, forkAcrossCwd: true, rollbackLastTurn: false },
         locked: true,
         nativeSessionRef: { nativeSessionId: "secret" },

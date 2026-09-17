@@ -1,4 +1,4 @@
-import type { CodexAccountSummary } from "@codexhost/shared-contracts";
+import type { CodexAccountSummary } from "@harnessmix/shared-contracts";
 
 import { codexAccountDisplayName } from "../renderer-codex-account-options.js";
 import {

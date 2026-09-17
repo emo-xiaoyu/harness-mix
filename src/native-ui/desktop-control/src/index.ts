@@ -1,4 +1,4 @@
-import { WORKSPACE_CONTRACT_VERSION } from "@codexhost/shared-contracts";
+import { WORKSPACE_CONTRACT_VERSION } from "@harnessmix/shared-contracts";
 
 export {
   CdpClient,
@@ -86,6 +86,6 @@ export type {
 } from "./production-controller.js";
 
 export const packageMetadata = {
-  name: "@codexhost/desktop-control",
+  name: "@harnessmix/desktop-control",
   contractVersion: WORKSPACE_CONTRACT_VERSION,
 } as const;

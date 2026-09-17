@@ -1,7 +1,7 @@
 import {
   HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE,
   type HarnessSessionListParams,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 import type { RendererSettingsMessages } from "./localization.js";
 
 /** Search submission and pagination state; native discovery and import are owned elsewhere. */

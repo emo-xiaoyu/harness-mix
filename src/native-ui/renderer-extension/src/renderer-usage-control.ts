@@ -1,4 +1,4 @@
-import type { ThreadUsageSnapshot } from "@codexhost/shared-contracts";
+import type { ThreadUsageSnapshot } from "@harnessmix/shared-contracts";
 
 import type { RendererSettingsLocale } from "./settings/localization.js";
 
@@ -400,7 +400,7 @@ export function mountRendererUsageControl(
   const messages = rendererUsageMessages(locale);
 
   const root = document.createElement("div");
-  root.dataset.codexhostUsageControl = composerId;
+  root.dataset.harnessmixUsageControl = composerId;
   root.className = "relative min-w-0";
   root.style.display = "none";
   root.style.alignItems = "center";
@@ -436,7 +436,7 @@ export function mountRendererUsageControl(
   trigger.style.letterSpacing = "0";
 
   const ringSlot = document.createElement("span");
-  ringSlot.dataset.codexhostUsageRing = "";
+  ringSlot.dataset.harnessmixUsageRing = "";
   ringSlot.style.display = "inline-flex";
   ringSlot.style.flex = "0 0 auto";
   ringSlot.style.alignItems = "center";
@@ -567,7 +567,7 @@ export function renderRendererUsageControl(
     return false;
   }
 
-  const ringSlot = control.trigger.querySelector<HTMLElement>("[data-codexhost-usage-ring]");
+  const ringSlot = control.trigger.querySelector<HTMLElement>("[data-harnessmix-usage-ring]");
   const contextPercent =
     usage?.contextUsagePercent !== undefined
       ? usage.contextUsagePercent

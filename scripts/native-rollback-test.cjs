@@ -20,7 +20,7 @@ const wait = async fn => { for (let n = 0; n < 400; n++) { if (fn()) return; awa
   runtime.adapters.set('pi', adapter); runtime.status.pi = { available: true };
   const bridge = new NativeProtocol(runtime, () => {});
   try {
-    const { thread } = await bridge.request('thread/start', { cwd: root, model: 'codexhost/pi-native' });
+    const { thread } = await bridge.request('thread/start', { cwd: root, model: 'harnessmix/pi-native' });
     for (const text of ['kept', 'removed']) {
       await bridge.request('turn/start', { threadId: thread.id, input: [{ type: 'text', text }] });
       await wait(() => !runtime.execution.isRunning(thread.id) && !runtime.threads[0].reviewPending);

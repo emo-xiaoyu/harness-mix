@@ -4,7 +4,7 @@ import { packageMetadata } from "../src/index.js";
 describe("desktop-control package", () => {
   it("builds without implementing Desktop integration", () => {
     expect(packageMetadata).toEqual({
-      name: "@codexhost/desktop-control",
+      name: "@harnessmix/desktop-control",
       contractVersion: 1,
     });
   });
