@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-09-17
 
+- **Agent Team**：新增持久的多 Harness 智能体团队 —— 一个 Lead 可组织最多六个并发的具名 Harness 成员，共享依赖感知的任务图、成员邮箱与直接会话投递，并配备会话内实时 Team Workbench（明确职责、按成员的任务泳道、Harness 图标、成员会话跳转与可回放的状态历史）。Added durable multi-Harness Agent Teams: one Lead orchestrates up to six concurrent named Harness members with a dependency-aware shared task graph, teammate mailboxes/direct session delivery, and a live in-conversation Team Workbench with explicit responsibilities, per-member task lanes, Harness icons, member-session navigation, and replayable state history.
+- Antigravity: agy 1.2.x intermittently settles a turn with `SUCCESS` but no assistant text at all (tools ran, final answer lost). The adapter now automatically issues one nudge prompt in the same native conversation instead of failing the turn, and only reports the empty result when the retry also comes back empty (`HARNESSMIX_ANTIGRAVITY_EMPTY_RESULT_RETRIES`, default 1).
+- Collaboration: inspecting a thread's team without an explicit `teamId` (the renderer's per-thread poll) now answers `{ team: null, snapshots: [] }` instead of throwing an internal error for every ordinary thread; an explicit `teamId` remains an ownership check.
 - The README is now fully bilingual (中文 + English), and Harness Mix is dual-licensed under Apache-2.0 OR MIT: `LICENSE-MIT` was added, and `package.json`, the Rust crates and the native-package publisher now declare `(Apache-2.0 OR MIT)`.
 
 - Renamed the kernel's internal legacy identifiers to `harnessmix`: data directory, environment variables, protocol method namespaces, DOM hooks, and the `@harnessmix/*` package scope. Deployed Shim and protocol binaries must be rebuilt (`npm run build:native`) so the Rust and JavaScript layers agree on the environment contract.
@@ -16,7 +19,6 @@
 
 - Aligned all six `@harness-mix/native-*` runtime packages at 0.1.11 with the CLI; native binaries are unchanged from 0.1.9.
 - Supersedes 0.1.10, whose manifest kept native pins at 0.1.9 (functionally identical binaries).
-- Added durable multi-Harness Agent Teams with one Lead, up to six concurrent specialist members, a dependency-aware shared task graph, teammate mailboxes/direct session delivery, and a live in-conversation Team Workbench with explicit responsibilities, per-member task lanes, Harness icons, member-session navigation, and replayable state history.
 - Unified Host-owned Git inspection, strict Worktree isolation, and final snapshot Diff across all registered Harness adapters without changing native models, sessions, tools, approvals, or credentials.
 
 ## 0.1.10 — 2026-09-16
