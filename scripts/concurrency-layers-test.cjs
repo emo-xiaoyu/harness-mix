@@ -124,6 +124,11 @@ const until = async (predicate, timeoutMs = 4000) => {
   // Test 2: 第三层 —— 基于 Git Worktree 的物理隔离 (Worktree Isolation)
   // -------------------------------------------------------------
   console.log('--- Testing Layer 3: Git Worktree Physical Isolation ---');
+  await assert.rejects(
+    rt.createThread({ harnessId: 'mock-worker', cwd: sharedDir, worktree: true }),
+    /无法建立隔离工作区|not a git repository/i,
+    'An explicit Worktree request must never silently fall back to the shared directory'
+  );
   const gitRepo = path.join(tmpDir, 'git-project');
   await fs.mkdir(gitRepo);
   await git(gitRepo, ['init']);

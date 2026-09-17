@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { codexhostErrorSchema } from "./errors.js";
+import { harnessmixErrorSchema } from "./errors.js";
 import {
   harnessPermissionModeCatalogSchema,
   harnessPermissionModeIdSchema,
@@ -171,6 +171,16 @@ export const harnessSessionCapabilitiesSchema = z
       })
       .strict(),
     history: harnessHistoryCapabilitiesSchema,
+    workspace: z
+      .object({
+        git: z.literal(true),
+        worktree: z.literal(true),
+        finalDiff: z.literal(true),
+        nativeDiff: z.boolean(),
+        nativePatch: z.boolean(),
+      })
+      .strict()
+      .optional(),
     subagents: z
       .object({
         observe: z.boolean(),
@@ -250,7 +260,7 @@ const readyHarnessInspectionSchema = z
 const failedHarnessInspectionSchema = z
   .object({
     status: z.enum(["notInstalled", "unavailable", "error"]),
-    error: codexhostErrorSchema,
+    error: harnessmixErrorSchema,
   })
   .strict();
 
@@ -328,6 +338,17 @@ const externalThreadInspectionSchema = z
     availableThinkingOptions: harnessThinkingOptionsSchema.optional(),
     effectivePermissionModeId: harnessPermissionModeIdSchema.optional(),
     history: harnessHistoryCapabilitiesSchema,
+    workspace: z
+      .object({
+        hostManaged: z.literal(true),
+        git: z.object({ available: z.boolean(), root: z.string().optional(), head: z.string().optional(), branch: z.string().nullable().optional(), dirty: z.boolean().optional(), reason: z.enum(["not-a-git-repository", "git-unavailable"]).optional() }).strict(),
+        worktree: z.object({ available: z.boolean(), active: z.boolean(), branch: z.string().optional(), root: z.string().optional() }).strict(),
+        finalDiff: z.object({ available: z.literal(true), source: z.literal("snapshot") }).strict(),
+        nativeDiff: z.boolean(),
+        nativePatch: z.boolean(),
+      })
+      .strict()
+      .optional(),
     usage: threadUsageSnapshotSchema.optional(),
     accountCredits: accountCreditsSnapshotSchema.optional(),
     locked: z.literal(true),

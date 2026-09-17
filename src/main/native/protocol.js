@@ -31,8 +31,8 @@ const externalId = id => ({ workbuddy: 'codebuddy', claude: 'claude-code', dsh: 
 const { errorActions } = require('../harness-adapter/error-kind');
 const modelRef = model => ({ id: Buffer.from(JSON.stringify({ id: model.id, provider: model.provider })).toString('base64url') });
 const routeModel = harnessId => ['pi', 'claude-code', 'deepseek-harness', 'antigravity', 'omp', 'opencode', 'grok'].includes(harnessId)
-  ? `codexhost/${harnessId}-native`
-  : `codexhost/plugin-v1@${Buffer.from(JSON.stringify({ harnessId })).toString('hex')}`;
+  ? `harnessmix/${harnessId}-native`
+  : `harnessmix/plugin-v1@${Buffer.from(JSON.stringify({ harnessId })).toString('hex')}`;
 const terminal = status => ['completed', 'cancelled', 'error', 'failed'].includes(status);
 const turnStatus = status => ({ cancelled: 'interrupted', error: 'failed', failed: 'failed', completed: 'completed' }[status] || 'inProgress');
 const HARNESS_INSTALL_COMMANDS = {
@@ -114,14 +114,14 @@ function decodePositional(harnessId, fields, parts) {
 
 function decodeRoute(model) {
   if (typeof model !== 'string') return null;
-  if (model.startsWith('codexhost/plugin-v1@')) {
-    const hex = model.slice('codexhost/plugin-v1@'.length);
+  if (model.startsWith('harnessmix/plugin-v1@')) {
+    const hex = model.slice('harnessmix/plugin-v1@'.length);
     if (model.length > 4096 || !/^(?:[a-f0-9]{2})+$/.test(hex)) throw new Error('Invalid native Harness route');
     const route = JSON.parse(Buffer.from(hex, 'hex').toString());
     if (!route.harnessId || route.harnessId === 'codex') throw new Error('Invalid external Harness');
     return route;
   }
-  const legacy = /^codexhost\/(pi|claude-code|deepseek-harness|antigravity|omp|opencode|grok)-native(?:@(.+))?$/.exec(model);
+  const legacy = /^harnessmix\/(pi|claude-code|deepseek-harness|antigravity|omp|opencode|grok)-native(?:@(.+))?$/.exec(model);
   if (!legacy) return null;
   return legacy[2] === undefined ? { harnessId: legacy[1] } : decodeLegacySuffix(legacy[1], legacy[2]);
 }
@@ -260,7 +260,7 @@ class NativeProtocol {
     this.emit = emit;
     this.requestOfficial = requestOfficial;
     this.codexAccounts = new CodexAccountManager({
-      dataDirectory: nativeEnvironment().CODEXHOST_DATA_DIR,
+      dataDirectory: nativeEnvironment().HARNESSMIX_DATA_DIR,
       requestOfficial,
       emit,
     });
@@ -317,16 +317,16 @@ class NativeProtocol {
       items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) };
   }
   projectThread(thread, includeTurns = true) {
-    // Projection shape mirrors the upstream codexhost external-thread contract: every
+    // Projection shape mirrors the upstream harnessmix external-thread contract: every
     // field the Desktop sidebar/composer reads must be present with the same defaults.
     const updatedAt = Math.floor((thread.updatedAt || thread.createdAt) / 1000);
     return { id: thread.id, preview: thread.messages?.find(m => m.role === 'user')?.text || thread.preview || thread.title,
-      ephemeral: thread.ephemeral === true, modelProvider: 'codexhost', model: routeModel(externalId(thread.harnessId)), reasoningEffort: null,
+      ephemeral: thread.ephemeral === true, modelProvider: 'harnessmix', model: routeModel(externalId(thread.harnessId)), reasoningEffort: null,
       section: thread.section ?? null, sectionEnteredAt: thread.sectionEnteredAt ?? null, projectId: thread.projectId ?? null,
       createdAt: Math.floor(thread.createdAt / 1000),
       updatedAt, recencyAt: updatedAt,
       status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
-      path: null, cwd: thread.cwd, cliVersion: 'codexhost', source: 'vscode', threadSource: null,
+      path: null, cwd: thread.cwd, cliVersion: 'harnessmix', source: 'vscode', threadSource: null,
       name: thread.title || null, agentNickname: thread.parentThreadId ? this.runtime.adapters.get(thread.harnessId)?.manifest.name || thread.harnessId : null,
       agentRole: thread.parentThreadId ? 'worker' : null, gitInfo: thread.gitInfo || null,
       sessionId: thread.id, forkedFromId: thread.forkedFrom ?? null, parentThreadId: thread.parentThreadId ?? null,
@@ -349,7 +349,8 @@ class NativeProtocol {
     const cap = this.runtime.getCapabilities(id);
     return { configuration: { selectModel: Boolean(cap.model?.selection), selectThinkingOption: Boolean(cap.model?.thinkingLevel),
       selectPermissionMode: Boolean(catalog.permissionModes?.length), permissionModeScope: 'live' },
-    history: { fork: Boolean(cap.session?.fork), forkAcrossCwd: false, rollbackLastTurn: Boolean(cap.session?.forkFromMessage) } };
+    history: { fork: Boolean(cap.session?.fork), forkAcrossCwd: false, rollbackLastTurn: Boolean(cap.session?.forkFromMessage) },
+    workspace: { git: true, worktree: true, finalDiff: true, nativeDiff: Boolean(cap.workspace?.nativeDiff), nativePatch: Boolean(cap.workspace?.nativePatch) } };
   }
   async inspect(id) {
     const local = ALIASES[id] || id;
@@ -431,24 +432,24 @@ class NativeProtocol {
     return model;
   }
   async request(method, params = {}) {
-    if (method === 'codexhost/integrations/catalog') return this.runtime.integrations.catalog();
-    if (method === 'codexhost/integrations/list') return this.runtime.integrations.list(params);
-    if (method === 'codexhost/integrations/mcp/save') return this.runtime.integrations.save(params);
-    if (method === 'codexhost/integrations/mcp/remove') return this.runtime.integrations.remove(params);
-    if (method === 'codexhost/integrations/skill/change') return this.runtime.integrations.skillChange(params);
-    if (method === 'codexhost/harness/session-import/sources') return this.runtime.history.sources();
-    if (method === 'codexhost/harness/session-import/list') return this.runtime.history.list(params);
-    if (method === 'codexhost/harness/session-import/import') return this.runtime.history.import(params);
-    if (method === 'codexhost/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
+    if (method === 'harnessmix/integrations/catalog') return this.runtime.integrations.catalog();
+    if (method === 'harnessmix/integrations/list') return this.runtime.integrations.list(params);
+    if (method === 'harnessmix/integrations/mcp/save') return this.runtime.integrations.save(params);
+    if (method === 'harnessmix/integrations/mcp/remove') return this.runtime.integrations.remove(params);
+    if (method === 'harnessmix/integrations/skill/change') return this.runtime.integrations.skillChange(params);
+    if (method === 'harnessmix/harness/session-import/sources') return this.runtime.history.sources();
+    if (method === 'harnessmix/harness/session-import/list') return this.runtime.history.list(params);
+    if (method === 'harnessmix/harness/session-import/import') return this.runtime.history.import(params);
+    if (method === 'harnessmix/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     // 桌宠市场：官方预载（Codex 安装包 asar 提取）与 ~/.codex/pets 安装管理
-    if (method === 'codexhost/pets/catalog') return this.pets.catalog();
-    if (method === 'codexhost/pets/community') return this.pets.community(params);
-    if (method === 'codexhost/pets/preview') return this.pets.preview(params);
-    if (method === 'codexhost/pets/install') return this.pets.install(params);
-    if (method === 'codexhost/pets/uninstall') return this.pets.uninstall(params);
+    if (method === 'harnessmix/pets/catalog') return this.pets.catalog();
+    if (method === 'harnessmix/pets/community') return this.pets.community(params);
+    if (method === 'harnessmix/pets/preview') return this.pets.preview(params);
+    if (method === 'harnessmix/pets/install') return this.pets.install(params);
+    if (method === 'harnessmix/pets/uninstall') return this.pets.uninstall(params);
     const thread = this.thread(params.threadId);
     // 失败回合分类查询：Renderer 据此在输入框下方渲染只真正帮得上忙的动作按钮
-    if (method === 'codexhost/harness/turn-error') {
+    if (method === 'harnessmix/harness/turn-error') {
       if (!thread) throw new Error('Unknown thread');
       const kind = thread.errorKind ?? null;
       const meta = HARNESS_AUTH_INFO[externalId(thread.harnessId)] || HARNESS_AUTH_INFO[thread.harnessId];
@@ -477,8 +478,8 @@ class NativeProtocol {
       return { version };
     }
     // Updates
-    if (method === 'codexhost/update/check') {
-      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+    if (method === 'harnessmix/update/check') {
+      const dataDir = nativeEnvironment().HARNESSMIX_DATA_DIR;
       let currentVersion = '0.1.2';
       try {
         currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2';
@@ -528,8 +529,8 @@ class NativeProtocol {
         error: checkError ? `更新检查失败: ${checkError.slice(0, 450)}` : null,
       };
     }
-    if (method === 'codexhost/update/start') {
-      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+    if (method === 'harnessmix/update/start') {
+      const dataDir = nativeEnvironment().HARNESSMIX_DATA_DIR;
       const channel = detectChannel(REPO_ROOT);
       let currentVersion = '0.1.2';
       try { currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2'; } catch {}
@@ -561,8 +562,8 @@ class NativeProtocol {
         };
       }
     }
-    if (method === 'codexhost/update/status') {
-      const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+    if (method === 'harnessmix/update/status') {
+      const dataDir = nativeEnvironment().HARNESSMIX_DATA_DIR;
       const state = readState(dataDir);
       const channel = detectChannel(REPO_ROOT);
       let currentVersion = '0.1.2';
@@ -583,21 +584,21 @@ class NativeProtocol {
 
     // Each extra Account is an isolated native CODEX_HOME. Harness Mix stores
     // only the profile label/path; auth.json and token refresh remain owned by Codex.
-    if (method === 'codexhost/account/list') return this.codexAccounts.list(false);
-    if (method === 'codexhost/account/refresh') return this.codexAccounts.list(true);
-    if (method === 'codexhost/account/create') return this.codexAccounts.create(params.label);
-    if (method === 'codexhost/account/delete') return this.codexAccounts.delete(params.accountId);
-    if (method === 'codexhost/account/activate') return this.codexAccounts.activate(params.accountId);
-    if (method === 'codexhost/account/usage/inspect') return this.codexAccounts.usage(params.accountId);
-    if (method === 'codexhost/account/login/start') return this.codexAccounts.startLogin(params.accountId);
-    if (method === 'codexhost/account/login/cancel') return this.codexAccounts.cancelLogin(params.loginId);
-    if (method === 'codexhost/account/logout') {
+    if (method === 'harnessmix/account/list') return this.codexAccounts.list(false);
+    if (method === 'harnessmix/account/refresh') return this.codexAccounts.list(true);
+    if (method === 'harnessmix/account/create') return this.codexAccounts.create(params.label);
+    if (method === 'harnessmix/account/delete') return this.codexAccounts.delete(params.accountId);
+    if (method === 'harnessmix/account/activate') return this.codexAccounts.activate(params.accountId);
+    if (method === 'harnessmix/account/usage/inspect') return this.codexAccounts.usage(params.accountId);
+    if (method === 'harnessmix/account/login/start') return this.codexAccounts.startLogin(params.accountId);
+    if (method === 'harnessmix/account/login/cancel') return this.codexAccounts.cancelLogin(params.loginId);
+    if (method === 'harnessmix/account/logout') {
       if (!this.requestOfficial) throw new Error('Official Codex logout is unavailable');
       await this.requestOfficial('account/logout', undefined);
       return this.codexAccounts.signedOutOfficial();
     }
-    if (method === 'codexhost/account/rate-limit-reset/consume') return this.codexAccounts.consumeReset(params.accountId, params.idempotencyKey);
-    if (method === 'codexhost/harness/account/login') {
+    if (method === 'harnessmix/account/rate-limit-reset/consume') return this.codexAccounts.consumeReset(params.accountId, params.idempotencyKey);
+    if (method === 'harnessmix/harness/account/login') {
       const extId = params.harnessId;
       const meta = HARNESS_AUTH_INFO[extId] || HARNESS_AUTH_INFO[ALIASES[extId]];
       const cmd = meta?.loginCommand;
@@ -607,7 +608,7 @@ class NativeProtocol {
       exec(execCmd, { windowsHide: false });
       return { success: true, command: cmd };
     }
-    if (method === 'codexhost/harness/accounts/list') {
+    if (method === 'harnessmix/harness/accounts/list') {
       const accounts = [];
       for (const adapter of this.runtime.adapters.values()) {
         const id = adapter.manifest.id;
@@ -683,11 +684,11 @@ class NativeProtocol {
       }
       return { accounts };
     }
-    if (method === 'codexhost/harness/plugins/list') return { plugins: this.runtime.snapshot().adapters.map(a => ({ id: externalId(a.id), name: a.id === 'codex' ? 'Codex（协作）' : a.name, version: '0.1.0', icon: `data:image/svg+xml;base64,${Buffer.from(getHarnessSvg(a.id)).toString('base64')}` })) };
-    if (method === 'codexhost/storage/inspect') return this.runtime.inspectStorage();
-    if (method === 'codexhost/storage/optimize') return this.runtime.optimizeStorage();
-    if (method === 'codexhost/harness/inspect') return this.inspect(params.harnessId);
-    if (method === 'codexhost/harness/install') {
+    if (method === 'harnessmix/harness/plugins/list') return { plugins: this.runtime.snapshot().adapters.map(a => ({ id: externalId(a.id), name: a.id === 'codex' ? 'Codex（协作）' : a.name, version: '0.1.0', icon: `data:image/svg+xml;base64,${Buffer.from(getHarnessSvg(a.id)).toString('base64')}` })) };
+    if (method === 'harnessmix/storage/inspect') return this.runtime.inspectStorage();
+    if (method === 'harnessmix/storage/optimize') return this.runtime.optimizeStorage();
+    if (method === 'harnessmix/harness/inspect') return this.inspect(params.harnessId);
+    if (method === 'harnessmix/harness/install') {
       const local = ALIASES[params.harnessId] || params.harnessId;
       const entry = HARNESS_INSTALL_COMMANDS[params.harnessId] || HARNESS_INSTALL_COMMANDS[local];
       if (!entry) throw new Error(`No installation command available for harness: ${params.harnessId}`);
@@ -720,12 +721,13 @@ class NativeProtocol {
         });
       });
     }
-    if (method === 'codexhost/harness/commands/inspect' || method === 'codexhost/thread/commands/inspect') {
+    if (method === 'harnessmix/harness/commands/inspect' || method === 'harnessmix/thread/commands/inspect') {
       const commands = await this.runtime.listCommands({ threadId: params.threadId, harnessId: ALIASES[params.harnessId] || params.harnessId });
       return { commands: commands.map(c => ({ id: c.id, invocation: '/' + c.id, label: c.label || c.id, ...(c.description ? { description: c.description.slice(0, 512) } : {}), argumentMode: c.action === 'insert' ? 'text' : 'none' })) };
     }
-    if (method === 'codexhost/thread/ownership/list') return { threads: params.threadIds.map(id => ({ threadId: id, owner: this.owns(id) ? 'external' : 'codex', ...(this.owns(id) ? { harnessId: externalId(this.thread(id).harnessId) } : {}) })) };
-    if (method === 'codexhost/thread/inspect') {
+    if (method === 'harnessmix/thread/ownership/list') return { threads: params.threadIds.map(id => ({ threadId: id, owner: this.owns(id) ? 'external' : 'codex', ...(this.owns(id) ? { harnessId: externalId(this.thread(id).harnessId) } : {}) })) };
+    if (method === 'harnessmix/thread/team/inspect') return this.runtime.collaboration.inspectTeam(params.threadId, params.teamId);
+    if (method === 'harnessmix/thread/inspect') {
       if (!thread) return { owner: 'codex', locked: true };
       const catalog = await this.runtime.describe(thread.harnessId);
       const usage = typeof this.runtime.core?.getThread === 'function' ? this.runtime.core.getThread(thread.id)?.usage : undefined;
@@ -734,13 +736,14 @@ class NativeProtocol {
       const credits = projectAccountCredits(rawCredits);
       return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: routeModel(externalId(thread.harnessId)), locked: true,
         ...this.configuration(thread), history: this.capabilities(thread.harnessId, catalog).history,
+        workspace: await this.runtime.inspectThreadWorkspace(thread.id),
         ...(usage ? { usage: projectUsage(usage) } : {}),
         ...(credits ? { accountCredits: credits } : {}) };
     }
     if (method === 'thread/start') {
       const route = decodeRoute(params.model);
-      const accountContext = typeof params.__codexhostAccountId === 'string'
-        ? this.codexAccounts.executionContext(params.__codexhostAccountId) : null;
+      const accountContext = typeof params.__harnessmixAccountId === 'string'
+        ? this.codexAccounts.executionContext(params.__harnessmixAccountId) : null;
       if (!route && !accountContext) return undefined;
       const effectiveRoute = route || { harnessId: 'codex-harness', ...(typeof params.model === 'string' ? { model: { id: params.model } } : {}) };
       const id = ALIASES[effectiveRoute.harnessId] || effectiveRoute.harnessId;
@@ -764,15 +767,15 @@ class NativeProtocol {
       // thread/started 已由 runtime 的 thread-created 监听统一发出（含协作子任务路径）
       return result;
     }
-    if (method === 'codexhost/thread/workspace/review') return this.runtime.reviewThreadWorkspace(params.threadId);
-    if (method === 'codexhost/thread/workspace/apply') return this.runtime.applyThreadWorkspace(params.threadId, params.digest);
-    if (method === 'codexhost/thread/workspace/discard') return this.runtime.discardThreadWorkspace(params.threadId);
-    if (method === 'codexhost/thread/workspace/push') return this.runtime.pushThreadWorkspace(params.threadId, params);
-    if (method === 'codexhost/thread/verification/get') return this.runtime.verificationState(params.threadId);
-    if (method === 'codexhost/thread/verification/configure') return this.runtime.configureVerification(params.threadId, params.policy);
-    if (method === 'codexhost/thread/verification/run') return this.runtime.runVerification(params.threadId);
+    if (method === 'harnessmix/thread/workspace/review') return this.runtime.reviewThreadWorkspace(params.threadId);
+    if (method === 'harnessmix/thread/workspace/apply') return this.runtime.applyThreadWorkspace(params.threadId, params.digest);
+    if (method === 'harnessmix/thread/workspace/discard') return this.runtime.discardThreadWorkspace(params.threadId);
+    if (method === 'harnessmix/thread/workspace/push') return this.runtime.pushThreadWorkspace(params.threadId, params);
+    if (method === 'harnessmix/thread/verification/get') return this.runtime.verificationState(params.threadId);
+    if (method === 'harnessmix/thread/verification/configure') return this.runtime.configureVerification(params.threadId, params.policy);
+    if (method === 'harnessmix/thread/verification/run') return this.runtime.runVerification(params.threadId);
     if (!thread) {
-      if (method.startsWith('codexhost/')) throw new Error(`Harness Mix does not implement ${method}`);
+      if (method.startsWith('harnessmix/')) throw new Error(`Harness Mix does not implement ${method}`);
       return undefined;
     }
     if (method === 'thread/read') return { thread: this.projectThread(thread, params.includeTurns !== false) };
@@ -901,13 +904,13 @@ class NativeProtocol {
     }
     if (method === 'turn/interrupt') { await this.runtime.cancel(thread.id); return {}; }
     // 跨 Harness 任务协作：委派新子任务 / 跟进既有子任务，等待链由父线程协作 Turn 承载
-    if (method === 'codexhost/thread/delegate' || method === 'codexhost/thread/message') {
+    if (method === 'harnessmix/thread/delegate' || method === 'harnessmix/thread/message') {
       const task = params.task ?? params.text;
       if (typeof task !== 'string' || !task.trim()) throw new Error('Delegation requires a non-empty task');
       const { child, turn } = await this.runtime.delegateTask({
         fromThreadId: thread.id,
-        harnessId: method === 'codexhost/thread/delegate' ? (ALIASES[params.harnessId] || params.harnessId) : undefined,
-        childThreadId: method === 'codexhost/thread/message' ? params.childThreadId : undefined,
+        harnessId: method === 'harnessmix/thread/delegate' ? (ALIASES[params.harnessId] || params.harnessId) : undefined,
+        childThreadId: method === 'harnessmix/thread/message' ? params.childThreadId : undefined,
         task,
       });
       return { turn: this.turn(turn), childThreadId: child.id };
@@ -926,7 +929,7 @@ class NativeProtocol {
       return { thread: projected };
     }
     if (method === 'thread/loaded/list') return { data: [...this.runtime.sessions.keys()] };
-    if (method === 'codexhost/thread/usage/inspect') {
+    if (method === 'harnessmix/thread/usage/inspect') {
       const usage = params.refresh === 'exact' ? await this.runtime.refreshUsage(thread.id) : this.runtime.core.getThread(thread.id)?.usage;
       const adapter = this.runtime.adapters.get(thread.harnessId);
       let rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
@@ -943,14 +946,14 @@ class NativeProtocol {
         ...(credits ? { accountCredits: credits } : {}),
       };
     }
-    if (method === 'codexhost/thread/command/execute') {
+    if (method === 'harnessmix/thread/command/execute') {
       if (params.arguments && Object.keys(params.arguments).length) throw new Error('This command does not accept arguments');
       const turn = await this.startNativeTurn(thread, '', undefined, params.commandId);
       return { accepted: true, turnId: turn.id };
     }
-    if (method === 'codexhost/thread/model/select') { await this.runtime.setModel(thread.id, await this.resolveModel(thread.harnessId, params.model)); return this.configuration(thread); }
-    if (method === 'codexhost/thread/thinking/select') { await this.runtime.setThinking(thread.id, params.thinkingOptionId); return this.configuration(thread); }
-    if (method === 'codexhost/thread/permission-mode/select') {
+    if (method === 'harnessmix/thread/model/select') { await this.runtime.setModel(thread.id, await this.resolveModel(thread.harnessId, params.model)); return this.configuration(thread); }
+    if (method === 'harnessmix/thread/thinking/select') { await this.runtime.setThinking(thread.id, params.thinkingOptionId); return this.configuration(thread); }
+    if (method === 'harnessmix/thread/permission-mode/select') {
       await this.runtime.setOptions(thread.id, { permissionMode: params.permissionModeId });
       const session = this.runtime.sessions.get(thread.id);
       const adapter = this.runtime.adapters.get(thread.harnessId);
@@ -960,7 +963,7 @@ class NativeProtocol {
       return this.configuration(thread);
     }
     // 原地切换 Harness：会话历史保留，下条消息携带一次性上下文信封（/switch 指令的 RPC 等价物）
-    if (method === 'codexhost/thread/harness/switch') {
+    if (method === 'harnessmix/thread/harness/switch') {
       const result = await this.runtime.switchHarness(thread.id, ALIASES[params.harnessId] || params.harnessId, {
         note: typeof params.note === 'string' ? params.note : undefined,
         intent: params.intent,
@@ -968,14 +971,14 @@ class NativeProtocol {
       });
       return { ...result, fromHarnessId: externalId(result.fromHarnessId), toHarnessId: externalId(result.toHarnessId) };
     }
-    if (method === 'thread/fork' || method === 'codexhost/thread/fork') {
+    if (method === 'thread/fork' || method === 'harnessmix/thread/fork') {
       if (params.ephemeral || params.threadSource || params.excludeTurns) {
         throw new Error('Ephemeral fork is not supported');
       }
       const messageId = params.lastTurnId ? thread.messages.find(m => m.coreTurnId === params.lastTurnId)?.id : params.messageId;
       if (params.lastTurnId && !messageId) throw new Error('Unknown fork turn');
       const fork = await this.runtime.forkThread(thread.id, messageId);
-      return method === 'codexhost/thread/fork' ? { threadId: fork.id } : { thread: this.projectThread(fork) };
+      return method === 'harnessmix/thread/fork' ? { threadId: fork.id } : { thread: this.projectThread(fork) };
     }
     throw new Error(`Harness Mix native bridge does not support ${method} for this thread`);
   }
@@ -983,7 +986,7 @@ class NativeProtocol {
     const { threadId, turnId } = event;
     const item = projected.item;
     const notify = (method, extra) => this.emit({ method, params: { threadId, turnId, ...extra } });
-    if (event.type === 'usage.updated') this.emit({ method: 'codexhost/thread/usage/updated', params: { threadId, usage: projectUsage(projected.thread?.usage) } });
+    if (event.type === 'usage.updated') this.emit({ method: 'harnessmix/thread/usage/updated', params: { threadId, usage: projectUsage(projected.thread?.usage) } });
     if (projected.items) {
       for (const file of projected.items) this.onCore({ ...event, type: 'item.updated' }, { item: file });
       notify('turn/diff/updated', { diff: projected.items.map(i => projectItem(i)?.changes?.map(c => c.diff).filter(Boolean).join('\n')).filter(Boolean).join('\n') });

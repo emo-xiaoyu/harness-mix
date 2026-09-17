@@ -6,13 +6,14 @@ async function projectReview(runtime, thread, message, record) {
   if (!core?.getTurn(message.coreTurnId)) throw new Error('审查记录缺少 Core Turn，请重新加载任务完成历史迁移');
 
   const hasNativePatch = Boolean(
-    runtime.getCapabilities?.(thread.harnessId)?.conversation?.nativePatch ||
+    runtime.getCapabilities?.(thread.harnessId)?.workspace?.nativePatch ||
     runtime.adapters?.get(thread.harnessId)?.manifest?.capabilities?.nativePatch
   );
 
   let changes = record.changes;
-  if (hasNativePatch) {
-    // 原生 Codex 协议直通：若该会话有原生 patch 能力，当前轮次文件变更以原生汇报为准，消除同目录并发干扰
+  if (hasNativePatch && record.concurrent) {
+    // 同目录并发时，原生 patch 是唯一能归属到本轮的边界。无并发时始终
+    // 保留 Host 最终快照，补齐原生 Harness 没有上报或漏报的文件。
     const nativeItems = core.getItemsForTurn(message.coreTurnId).filter(item => item.type === 'file_change' && item.source === 'native');
     const nativePaths = new Set(nativeItems.map(item => item.path));
     changes = changes.filter(change => nativePaths.has(change.path));
