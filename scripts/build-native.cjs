@@ -19,9 +19,18 @@ function cargoCommand() {
   throw new Error('Rust toolchain (cargo) not found; install via https://rustup.rs (use the x86_64-pc-windows-gnu host when Visual Studio Build Tools are absent)');
 }
 
+// A byte comparison is the only honest way to tell "the running executable is
+// already current" apart from "the running executable is stale".
+function sameContents(left, right) {
+  try {
+    if (fs.statSync(left).size !== fs.statSync(right).size) return false;
+    return fs.readFileSync(left).equals(fs.readFileSync(right));
+  } catch { return false; }
+}
+
 async function main() {
   fs.mkdirSync(out, { recursive: true });
-  const alias = { '@codexhost/shared-contracts': path.join(root, 'src/native-ui/shared-contracts/src/index.ts') };
+  const alias = { '@harnessmix/shared-contracts': path.join(root, 'src/native-ui/shared-contracts/src/index.ts') };
   const common = { bundle: true, alias, logLevel: 'warning', target: 'es2024' };
   const icons = getAllIconsDictionary();
   icons.harnesses['claude-code'] = icons.harnesses.claude;
@@ -38,13 +47,22 @@ async function main() {
   for (const exe of process.platform === 'win32' ? ['harness-mix-shim.exe', 'harness-mix-appx.exe', 'harness-mix-secret.exe'] : ['harness-mix-shim']) {
     const source = path.join(target, exe);
     const destination = path.join(out, exe);
-    // An unchanged executable may be running while UI-only fixes are built.
     try {
       fs.copyFileSync(source, destination);
       if (process.platform !== 'win32') fs.chmodSync(destination, 0o755);
     } catch (err) {
       if (err && err.code === 'EBUSY') {
-        console.warn(`[build:native] Notice: ${exe} is in use, keeping existing binary.`);
+        // A running Codex Desktop holds the deployed binary. Keeping it is only
+        // safe when it is byte-identical: an unchanged executable may be running
+        // while UI-only fixes are built, but a changed one would leave the Shim
+        // and the kernel speaking different environments.
+        if (sameContents(source, destination)) {
+          console.warn(`[build:native] Notice: ${exe} is in use, keeping the identical deployed binary.`);
+        } else {
+          throw new Error(`[build:native] ${exe} is locked by a running Codex Desktop and its contents changed. ` +
+            'Close Codex Desktop (or run npm start from an external terminal) and build again, ' +
+            'otherwise the deployed Shim keeps speaking the previous protocol.');
+        }
       } else {
         throw err;
       }
