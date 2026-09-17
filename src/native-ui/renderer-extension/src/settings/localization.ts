@@ -510,6 +510,7 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
   aboutRepository: "Open-source repository",
   pageLabels: Object.freeze({
     connections: "Connections",
+    collaboration: "Collaboration",
     accounts: "Accounts",
     mcp: 'MCP',
     skills: 'Skills',
@@ -770,6 +771,7 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
   aboutRepository: "开源仓库",
   pageLabels: Object.freeze({
     connections: "连接",
+    collaboration: "协作",
     accounts: "账号",
     mcp: 'MCP',
     skills: 'Skills',

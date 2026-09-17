@@ -22,6 +22,7 @@ describe("Renderer settings foundation", () => {
     expect(pages.map(({ id }) => id)).toEqual(DEFAULT_RENDERER_SETTINGS_PAGE_IDS);
     expect(pages.map(({ label }) => label)).toEqual([
       "Connections",
+      "Collaboration",
       "Accounts",
       "MCP",
       "Skills",
@@ -34,6 +35,7 @@ describe("Renderer settings foundation", () => {
     ]);
     expect(pages.map(({ icon }) => icon)).toEqual([
       "connections",
+      "collaboration",
       "accounts",
       "connections",
       "session-import",
@@ -72,6 +74,7 @@ describe("Renderer settings foundation", () => {
 
     expect(pages.map(({ id }) => id)).toEqual([
       "connections",
+      "collaboration",
       "accounts",
       "mcp",
       "skills",

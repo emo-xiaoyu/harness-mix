@@ -34,6 +34,7 @@ export interface RendererSettingsLifecycleOptions {
   getSessionImportClient?(): RendererSessionImportClient | null;
   getStorageClient?(): RendererStorageClient | null;
   getPetClient?(): RendererPetsClient | null;
+  getCollaborationClient?(): import('./settings/pages.js').RendererCollaborationClient | null;
   openImportedThread?: RendererImportedThreadOpener;
   onLocaleChange?(locale: RendererSettingsLocale): void;
 }
@@ -84,6 +85,7 @@ export function installRendererSettingsLifecycle(
       options.getIntegrationsClient,
       options.getStorageClient,
       options.getPetClient,
+      options.getCollaborationClient,
     );
     const nextShell = installRendererSettingsShell(definitions, messages, ownerWindow.document);
     const nextTrigger = installRendererSettingsHeaderTrigger({

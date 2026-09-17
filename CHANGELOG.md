@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Settings → Collaboration is a new page with two independent switches (both on by default): **Multi-Agent collaboration** (the `#` mention menu, delegation tools and coordinator prompt are fully disabled when off) and **Agent Team** (`create_agent_team` and the other team tools are hidden from the injected MCP server and rejected Host-side when off, while one-shot delegation stays available). Preferences persist across Host restarts.
+
 ## 0.2.0 — 2026-09-17
 
 - **Agent Team**：新增持久的多 Harness 智能体团队 —— 一个 Lead 可组织最多六个并发的具名 Harness 成员，共享依赖感知的任务图、成员邮箱与直接会话投递，并配备会话内实时 Team Workbench（明确职责、按成员的任务泳道、Harness 图标、成员会话跳转与可回放的状态历史）。Added durable multi-Harness Agent Teams: one Lead orchestrates up to six concurrent named Harness members with a dependency-aware shared task graph, teammate mailboxes/direct session delivery, and a live in-conversation Team Workbench with explicit responsibilities, per-member task lanes, Harness icons, member-session navigation, and replayable state history.

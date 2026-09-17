@@ -77,6 +77,7 @@ describe("Renderer settings localization", () => {
       ),
     ).toEqual([
       "连接",
+      "协作",
       "账号",
       "MCP",
       "Skills",

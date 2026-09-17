@@ -34,6 +34,10 @@ import { createStorageSettingsPage, type RendererStorageClient } from './storage
 import { createSkinSettingsPage } from "./skin-market.js";
 import { createPetSettingsPage } from "./pet-market.js";
 import type { RendererPetsClient } from "./pets-client.js";
+import {
+  createCollaborationSettingsPage,
+  type RendererCollaborationClient,
+} from "./collaboration-page.js";
 
 export type {
   RendererConnectionAgentSnapshot,
@@ -77,6 +81,7 @@ function windowsInstallerDownloadUrl(window: Window | null | undefined, version:
 
 export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "connections",
+  "collaboration",
   "accounts",
   "mcp",
   "skills",
@@ -635,9 +640,11 @@ export function createDefaultRendererSettingsPages(
   getIntegrationsClient: () => RendererIntegrationsClient | null = () => null,
   getStorageClient: () => RendererStorageClient | null = () => null,
   getPetClient: () => RendererPetsClient | null = () => null,
+  getCollaborationClient: () => RendererCollaborationClient | null = () => null,
 ): readonly RendererSettingsPageDefinition[] {
   return Object.freeze([
     createConnectionsSettingsPage(messages, getDiagnostics),
+    createCollaborationSettingsPage(messages, getCollaborationClient),
     createAccountsSettingsPage(messages, getAccountClient),
     createMcpSettingsPage(messages, getIntegrationsClient),
     createSkillsSettingsPage(messages, getIntegrationsClient),
@@ -660,6 +667,7 @@ export function createDefaultRendererSettingsRegistry(
   getIntegrationsClient?: () => RendererIntegrationsClient | null,
   getStorageClient?: () => RendererStorageClient | null,
   getPetClient?: () => RendererPetsClient | null,
+  getCollaborationClient?: () => RendererCollaborationClient | null,
 ): RendererSettingsPageRegistry {
   return createRendererSettingsPageRegistry(
     createDefaultRendererSettingsPages(
@@ -672,6 +680,7 @@ export function createDefaultRendererSettingsRegistry(
       getIntegrationsClient,
       getStorageClient,
       getPetClient,
+      getCollaborationClient,
     ),
   );
 }
@@ -679,3 +688,7 @@ export function createDefaultRendererSettingsRegistry(
 export type { RendererCodexAccountClient } from "./accounts-page.js";
 export type { RendererStorageClient, RendererStorageInspection } from './storage-page.js';
 export type { RendererPetsClient } from "./pets-client.js";
+export type {
+  RendererCollaborationClient,
+  RendererCollaborationPreferences,
+} from "./collaboration-page.js";

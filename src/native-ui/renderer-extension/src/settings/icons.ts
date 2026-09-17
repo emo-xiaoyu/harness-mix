@@ -76,6 +76,7 @@ export const RENDERER_SETTINGS_ICON_NAMES = [
   "shield",
   "storage",
   "pets",
+  "collaboration",
 ] as const;
 
 export type RendererSettingsIconName = (typeof RENDERER_SETTINGS_ICON_NAMES)[number];
@@ -118,6 +119,7 @@ const iconNodes = {
   shield: ShieldCheck,
   storage: Database,
   pets: PawPrint,
+  collaboration: Users,
 } satisfies Record<RendererSettingsIconName, IconNode>;
 
 export function isRendererSettingsIconName(value: string): value is RendererSettingsIconName {

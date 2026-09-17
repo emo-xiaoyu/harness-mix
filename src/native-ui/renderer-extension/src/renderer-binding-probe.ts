@@ -742,11 +742,13 @@ export function installRendererBindingProbe(
     if (!composer) return { agents: [], sessions: [] };
     const state = controller.get(composer);
     const client = modelClientForHost(modelControl?.currentHostId?.() ?? 'local');
-    const [agentResult, sessionResult] = await Promise.allSettled([
+    const [agentResult, sessionResult, prefsResult] = await Promise.allSettled([
       client?.listCollaborationAgents?.() ?? Promise.resolve([]),
       client?.listHarnessSessions?.({ harnessId: harnessIdSchema.parse('all-harnesses'), query, offset: 0, limit: 12 }) ?? Promise.resolve({ candidates: [], total: 0 }),
+      client?.getCollaborationPreferences?.() ?? Promise.resolve({ collaboration: true, agentTeam: true }),
     ]);
-    const agents = agentResult.status === 'fulfilled' ? agentResult.value : [];
+    const collaborationEnabled = prefsResult.status === 'fulfilled' ? prefsResult.value.collaboration !== false : true;
+    const agents = collaborationEnabled && agentResult.status === 'fulfilled' ? agentResult.value : [];
     (window as any).__lastMentionDebug = {
       hasClient: !!client,
       agentStatus: agentResult.status,
@@ -819,6 +821,14 @@ export function installRendererBindingProbe(
     getPetClient: () => {
       const client = modelClientForHost("local");
       return client?.petsClient ?? null;
+    },
+    getCollaborationClient: () => {
+      const client = modelClientForHost("local");
+      if (!client?.getCollaborationPreferences || !client?.saveCollaborationPreferences) return null;
+      return {
+        getCollaborationPreferences: () => client.getCollaborationPreferences!(),
+        saveCollaborationPreferences: (input) => client.saveCollaborationPreferences!(input),
+      };
     },
     openImportedThread: (threadId, signal) =>
       openRendererThread(threadId, { hostId: "local", signal }),

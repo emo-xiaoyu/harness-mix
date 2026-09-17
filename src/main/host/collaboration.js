@@ -1,5 +1,6 @@
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
 const path = require('node:path');
 const { tools } = require('./collaboration-tools');
 const { z } = require('zod');
@@ -9,6 +10,12 @@ const validators = new Map(tools.map(tool => [tool.name, z.fromJSONSchema(tool.i
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const MAX_CONCURRENT_SUBTASKS = 6;
 const MAX_SUBTASKS_PER_TURN = 16;
+
+// Settings → Collaboration 开关：两者默认开启。collaboration 关闭时不再注入协作
+// MCP、不解析 # 提及、拒绝一切协作工具调用；agentTeam 关闭时保留一次性委派，
+// 但隐藏并拒绝 create_agent_team 等团队工具。
+const DEFAULT_PREFERENCES = Object.freeze({ collaboration: true, agentTeam: true });
+const TEAM_TOOL_NAMES = new Set(['create_agent_team', 'assign_team_task', 'get_team_state', 'update_team_task', 'send_team_message']);
 
 // Dependency depth of each task: the longest chain of prerequisites, used to
 // lay the team board out in lanes.
@@ -79,10 +86,40 @@ class Collaboration {
     this.store = new Store(path.join(runtime.store.directory, 'collaboration'));
     this.teamStore = new Store(path.join(runtime.store.directory, 'collaboration'), 'teams.json');
     this.teams = new Map();
+    this.prefFile = path.join(runtime.store.directory, 'collaboration', 'preferences.json');
+    this.prefs = { ...DEFAULT_PREFERENCES };
+  }
+
+  async loadPreferences() {
+    try {
+      const parsed = JSON.parse(await fs.promises.readFile(this.prefFile, 'utf8'));
+      // 只认显式的 false：缺失字段/旧文件一律回落到默认开启
+      this.prefs = {
+        collaboration: parsed?.collaboration !== false,
+        agentTeam: parsed?.agentTeam !== false,
+      };
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+
+  getPreferences() {
+    return { ...this.prefs };
+  }
+
+  async setPreferences(patch = {}) {
+    await this.initialize();
+    if (typeof patch.collaboration === 'boolean') this.prefs.collaboration = patch.collaboration;
+    if (typeof patch.agentTeam === 'boolean') this.prefs.agentTeam = patch.agentTeam;
+    await fs.promises.mkdir(path.dirname(this.prefFile), { recursive: true });
+    const tmp = `${this.prefFile}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.promises.writeFile(tmp, JSON.stringify(this.prefs, null, 2));
+    await fs.promises.rename(tmp, this.prefFile);
+    return this.getPreferences();
   }
 
   async initialize() {
-    if (!this.loading) this.loading = Promise.all([this.store.load(), this.teamStore.load()]).then(async ([rows, teams]) => {
+    if (!this.loading) this.loading = this.loadPreferences().then(() => Promise.all([this.store.load(), this.teamStore.load()])).then(async ([rows, teams]) => {
       for (const row of rows) {
         if (!row.id || !row.owner || !row.agent) throw new Error('Invalid collaboration history');
         this.jobs.set(row.id, { ...row, ...(row.status === 'running' ? { status: 'interrupted', error: 'Host restarted; resume this native session explicitly.' } : {}) });
@@ -250,7 +287,7 @@ class Collaboration {
     let key = this.keys.get(thread.id);
     if (!key) { key = randomUUID(); this.keys.set(thread.id, key); }
     return { command: process.execPath, args: [path.join(__dirname, 'collaboration-mcp.cjs')],
-      env: { HARNESS_MIX_COLLAB_URL: `http://127.0.0.1:${this.server.address().port}`, HARNESS_MIX_COLLAB_KEY: key } };
+      env: { HARNESS_MIX_COLLAB_URL: `http://127.0.0.1:${this.server.address().port}`, HARNESS_MIX_COLLAB_KEY: key, HARNESS_MIX_COLLAB_TEAM: this.prefs.agentTeam ? '1' : '0' } };
   }
 
   async handle(req, res) {
@@ -360,13 +397,19 @@ class Collaboration {
     await this.initialize();
     if (this.closing) throw new Error('Host is closing');
     if (!validators.has(name)) throw new Error('Unknown collaboration tool');
+    if (!this.prefs.collaboration) {
+      throw new Error('多 Agent 协作已在设置中停用（设置 → 协作）。Multi-Agent collaboration is disabled in Settings → Collaboration.');
+    }
     args = validators.get(name).parse(args);
     const rt = this.runtime;
-    const teamTools = new Set(['create_agent_team', 'assign_team_task', 'get_team_state', 'update_team_task', 'send_team_message']);
+    const teamTools = TEAM_TOOL_NAMES;
     const participant = this.participant(principal, args.team_id);
     const owner = participant?.team.owner ?? principal;
     const parent = rt.threads.find(t => t.id === owner);
     if (teamTools.has(name)) {
+      if (name === 'create_agent_team' && !this.prefs.agentTeam) {
+        throw new Error('Agent Team 已在设置中停用（设置 → 协作）。Agent Team is disabled in Settings → Collaboration; one-shot delegation remains available.');
+      }
       if (!rt.execution.isRunning(principal) || (principal === owner && this.cancelling.has(owner))) throw new Error('Collaboration turn is no longer active');
       return this.teamCall(principal, name, args);
     }
@@ -407,8 +450,16 @@ class Collaboration {
       const jobs = [...this.jobs.values()].filter(j => j.owner === owner);
       if (jobs.filter(j => j.status === 'running').length >= MAX_CONCURRENT_SUBTASKS) throw new Error('At most six concurrent subtasks; collect existing results first');
       if (jobs.filter(j => j.turnId === rt.execution.lastTurn(owner)?.id).length >= MAX_SUBTASKS_PER_TURN) throw new Error('At most sixteen subtasks per lead turn');
+      // Risk-aware default: while another session outside this collaboration group is
+      // actively running in the lead directory, a shared workspace would let both sides
+      // silently overwrite each other — start new workers isolated ('auto' isolates Git
+      // projects into a worktree and falls back to shared only outside Git). A teammate's
+      // inherited workspace and an explicit isolation argument still win over the default.
+      const externalActive = rt.threads.some(t => t.id !== owner && t.parentThreadId !== owner && !this.isParticipant(t, owner)
+        && String(t.cwd).toLowerCase() === String(parent.cwd).toLowerCase()
+        && (rt.execution.isRunning(t.id) || t.reviewPending));
       const job = { id: randomUUID(), owner, agent, turnId: rt.execution.lastTurn(owner).id, status: 'running', task: args.task,
-        isolation: previousMemberJob?.isolation ?? args.isolation ?? 'shared',
+        isolation: previousMemberJob?.isolation ?? args.isolation ?? (externalActive ? 'auto' : 'shared'),
         ...(previousMemberJob?.workspace ? { workspace: previousMemberJob.workspace } : {}),
         ...(team ? { teamId: team.id, memberId: member.id, teamTaskId: teamTask.id, ...(member.childId ? { childId: member.childId } : {}) } : {}) };
       this.jobs.set(job.id, job);

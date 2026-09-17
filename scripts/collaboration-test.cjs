@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { HostRuntime } = require('../src/main/host/runtime');
 const { mentionedAgents, teamTaskDepths, teamPhase, teamProgress } = require('../src/main/host/collaboration');
@@ -194,6 +195,62 @@ async function main() {
     await wait(() => !pending.size);
     assert.equal(rt.execution.lastTurn(parent.id).status, 'cancelled');
     await assert.rejects(call('list_agents', {}), /no longer active/);
+
+    // Settings → Collaboration 开关：默认开启；关闭后服务端硬拒绝，并持久化到磁盘
+    const prefsRoot = await fs.mkdtemp(path.resolve('output/collaboration-prefs-'));
+    const prefsRt = new HostRuntime({ dataDirectory: path.join(prefsRoot, 'data') });
+    try {
+      await prefsRt.collaboration.initialize();
+      assert.deepEqual(prefsRt.collaboration.getPreferences(), { collaboration: true, agentTeam: true }, 'Both collaboration switches default to on');
+      await prefsRt.collaboration.setPreferences({ collaboration: false });
+      await assert.rejects(prefsRt.collaboration.call('any-thread', 'list_agents', {}), /停用.*disabled/, 'Collaboration tools are hard-rejected while the switch is off');
+      await prefsRt.collaboration.setPreferences({ collaboration: true, agentTeam: false });
+      await assert.rejects(
+        prefsRt.collaboration.call('any-thread', 'create_agent_team', { name: 't', goal: 'g', members: [{ name: 'A', role: 'r', agent_type: 'worker' }] }),
+        /Agent Team 已在设置中停用/,
+        'create_agent_team is rejected while the Agent Team switch is off, before any turn-state check',
+      );
+      const reloaded = new HostRuntime({ dataDirectory: path.join(prefsRoot, 'data') });
+      await reloaded.collaboration.initialize();
+      assert.deepEqual(reloaded.collaboration.getPreferences(), { collaboration: true, agentTeam: false }, 'Preferences survive a Host restart');
+      await reloaded.close();
+      const onAgain = await prefsRt.collaboration.setPreferences({ agentTeam: true });
+      assert.deepEqual(onAgain, { collaboration: true, agentTeam: true });
+    } finally { await prefsRt.close(); }
+
+    // 同目录外部并发（另一个独立会话正在运行）→ 用户收到 toast 警告，
+    // 且新委派的 worker 默认升级为隔离模式（auto）；非 Git 目录下 auto 回落 shared。
+    // 用系统临时目录：output/ 位于本仓库内，auto 在仓库内会真实创建 worktree。
+    const isoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'harness-mix-iso-'));
+    const isoRt = new HostRuntime({ dataDirectory: path.join(isoRoot, 'data') });
+    try {
+      await isoRt.store.load();
+      const isoToasts = [];
+      isoRt.subscribe(event => { if (event.type === 'toast') isoToasts.push(event); });
+      const isoPending = new Map();
+      const isoLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send() {}, async cancel() {}, async close() {} };
+      const isoWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s) { isoPending.set(s.id, s); }, async cancel() {}, async close() {} };
+      isoRt.adapters.set('lead', isoLead); isoRt.status.lead = { available: true };
+      isoRt.adapters.set('worker', isoWorker); isoRt.status.worker = { available: true };
+      const isoParent = await isoRt.createThread({ harnessId: 'lead', cwd: isoRoot });
+      await isoRt.send(isoParent.id, '#worker build something');
+      const isoOutsider = await isoRt.createThread({ harnessId: 'worker', cwd: isoRoot });
+      await isoRt.send(isoOutsider.id, 'other session');
+      await wait(() => isoPending.has(isoOutsider.id));
+      assert.equal(isoOutsider.messages.at(-1).concurrent, true, 'Concurrent turn is still marked');
+      assert.ok(isoToasts.some(t => t.threadId === isoOutsider.id && /同一目录/.test(t.text)), 'Concurrent same-directory sessions warn the user');
+      const isoJob = await isoRt.collaboration.call(isoParent.id, 'delegate_to_agent', { agent_type: 'worker', task: 'auto-isolated under concurrency' });
+      assert.equal(isoRt.collaboration.jobs.get(isoJob.task_id).isolation, 'auto', 'A new worker defaults to isolated mode while another session runs in the same directory');
+      await wait(() => isoRt.collaboration.jobs.get(isoJob.task_id).workspace);
+      assert.equal(isoRt.collaboration.jobs.get(isoJob.task_id).workspace.mode, 'shared', 'Auto falls back to shared outside Git projects');
+      await isoRt.cancel(isoOutsider.id);
+      const quietJob = await isoRt.collaboration.call(isoParent.id, 'delegate_to_agent', { agent_type: 'worker', task: 'shared again once quiet' });
+      assert.equal(isoRt.collaboration.jobs.get(quietJob.task_id).isolation, 'shared', 'Default returns to shared once the directory is quiet');
+    } finally { await isoRt.close(); }
     console.log('PASS: real MCP stdio → authenticated Host → parallel native-session adapters → results/follow-up/cancellation, ownership and shared review');
   } finally { transport.stop(); await rt.close(); }
 }
