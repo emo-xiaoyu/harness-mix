@@ -128,7 +128,14 @@ class Collaboration {
   async inspectTeam(threadId, teamId) {
     await this.initialize();
     const participant = this.participant(threadId, teamId);
-    if (!participant) throw new Error('Unknown team or caller is not a team participant');
+    if (!participant) {
+      // An explicit teamId is an ownership check: outsiders are denied. Without
+      // one the caller only asks "does this thread belong to a team?" — the
+      // renderer polls exactly that for every active thread, so answer benignly
+      // instead of failing an internal error on every poll.
+      if (teamId) throw new Error('Unknown team or caller is not a team participant');
+      return { team: null, snapshots: [] };
+    }
     return {
       team: this.teamView(participant.team),
       snapshots: (participant.team.history || []).map(snapshot => ({ ...snapshot, team: { ...snapshot.team } })),
