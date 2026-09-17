@@ -51,6 +51,19 @@ const EFFORT_SUFFIX_PATTERN = /^(?<base>.+)-(?<effort>low|medium|high)$/u;
 const EFFORT_LABEL_SUFFIX_PATTERN = /\s*\((?:low|medium|high)\)$/iu;
 const ANTIGRAVITY_RESULT_DRAIN_MS = 250;
 const ANTIGRAVITY_RESULT_DRAIN_MAX_MS = 10_000;
+// agy（1.2.x 起）偶发返回 status=SUCCESS 但 response 为空、且全程没有任何
+// agent_response 步骤的回合：工具实际已执行，只是最终 assistant 文本丢失。
+// 这种回合是可恢复的——在同一个原生会话里补发一轮 nudge，让模型把答案补出来，
+// 而不是直接把错误抛给用户。重试次数可用环境变量覆盖（0 = 禁用自动补问）。
+const ANTIGRAVITY_EMPTY_RESULT_RETRIES = 1;
+const ANTIGRAVITY_EMPTY_RESULT_NUDGE =
+  '[System Instruction: Your previous turn ended WITHOUT any visible assistant response, even though the turn itself completed. The user saw nothing. Do NOT repeat tool calls that already succeeded. Directly write the final answer, or a summary of what you did, as plain assistant text now.]\n\n';
+
+function emptyResultMaxAttempts() {
+  const raw = Number(process.env.HARNESSMIX_ANTIGRAVITY_EMPTY_RESULT_RETRIES);
+  const retries = Number.isInteger(raw) && raw >= 0 ? raw : ANTIGRAVITY_EMPTY_RESULT_RETRIES;
+  return 1 + retries;
+}
 
 function positiveDuration(value, fallback) {
   const duration = Number(value);
@@ -848,15 +861,6 @@ function create(emit, options = {}) {
       if (session.activeTurn) throw new Error('Antigravity 当前回合尚未结束');
 
       const emitEvent = hooks?.emit || emit;
-      const bin = resolveExecutable();
-      const approvals = session.permissionMode === 'desktop' || session.permissionMode === 'desktop-approvals';
-      const bridge = await QuestionBridge.create({
-        approvals,
-        emit: emitEvent,
-        collaboration: session.collaboration,
-        managedMcp: session.managedMcp,
-      });
-      session.bridge = bridge;
 
       let effectivePrompt = prompt ?? '';
       const { imageEntries, extraDirs } = await prepareImageAttachments(attachments?.images, session.cwd);
@@ -871,340 +875,383 @@ function create(emit, options = {}) {
           : `${imageNotice}\n\n请查看并分析上述图片附件。`;
       }
 
-      const logPath = path.join(os.tmpdir(), `harness-mix-antigravity-${randomUUID()}.log`);
-      const args = [
-        '--input-format', 'stream-json',
-        '--output-format', 'stream-json',
-        '--print-timeout', '30m',
-      ];
-      if (session.nativeSessionId) {
-        args.push('--conversation', session.nativeSessionId);
-      }
-      if (session.model?.id) {
-        args.push('--model', session.model.id);
-      }
-      if (session.thinkingLevel && modelSupportsEffort(session.model)) {
-        args.push('--effort', session.thinkingLevel);
-      }
-      if (['skip', 'desktop', 'dangerously-skip-permissions', 'desktop-approvals'].includes(session.permissionMode)) {
-        args.push('--dangerously-skip-permissions');
-      }
-      args.push('--add-dir', session.cwd);
-      args.push('--add-dir', bridge.directory);
-      for (const dir of extraDirs) {
-        args.push('--add-dir', dir);
-      }
-      args.push('--log-file', logPath);
-
-      const child = spawnProcess(bin, args, {
-        cwd: session.cwd,
-        env: { ...process.env, ...bridge.environment },
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      let turnResolve, turnReject;
-      const settled = new Promise((resolve, reject) => {
-        turnResolve = resolve;
-        turnReject = reject;
-      });
-
-      const turn = {
-        child,
-        resolve: turnResolve,
-        reject: turnReject,
-        logPath,
-        resultSeen: false,
-        result: null,
-        completed: false,
-        processClosing: false,
-        processClosed: false,
-        killTimer: null,
-        resultDrainTimer: null,
-        resultDrainMaxTimer: null,
-        pendingSteps: new Map(),
-      };
-      session.activeTurn = turn;
-      let sawTextSinceLastTool = false;
-      let stderrTail = '';
-      child.stderr?.setEncoding('utf8')?.on('data', (chunk) => {
-        stderrTail = (stderrTail + chunk).slice(-8000);
-      });
-
-      // agy 在 stream-json 模式下产出 result 后进程仍常驻（实测 25s+ 不自行退出），
-      // 不主动收尾会让 session.activeTurn 永远悬挂，下一回合 send 被“当前回合尚未结束”拒绝。
-      // 但某些工具（尤其 view_file 图片）会先产生没有 output 字段的 DONE，随后才
-      // 刷出最终 assistant_response。先结算 Turn 再结束 stdin 会把这段迟到文本丢给
-      // 已关闭的 Normalizer，所以空结果时必须先做一个有界 drain。
-      const clearResultDrainTimers = () => {
-        if (turn.resultDrainTimer) clearTimeout(turn.resultDrainTimer);
-        if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
-        turn.resultDrainTimer = null;
-        turn.resultDrainMaxTimer = null;
-      };
-
-      const closeProcess = () => {
-        if (turn.processClosing || turn.processClosed) return;
-        turn.processClosing = true;
-        try { child.stdin.end(); } catch {}
-        turn.killTimer = setTimeout(() => { void terminateTree(child.pid); }, 10000);
-        turn.killTimer.unref?.();
-      };
-
-      const settleResult = () => {
-        if (turn.completed || !turn.result) return;
-        turn.completed = true;
-        clearResultDrainTimers();
-        if (session.activeTurn === turn) session.activeTurn = null;
-        const { res, nativeRef } = turn.result;
-        const completedRef = {
-          ...nativeRef,
-          turnId: res.num_turns != null ? `turn:${res.num_turns}` : undefined,
-          checkpointId: res.num_turns != null ? String(res.num_turns) : undefined,
-        };
-        const successful = resultSucceeded(res);
-        const hasAssistantText = (typeof res.response === 'string'
-          ? Boolean(res.response.trim())
-          : Boolean(res.response)) || sawTextSinceLastTool;
-        if (!successful) {
-          const message = formatAntigravityResultError(res);
-          emitEvent({ kind: 'error', message, nativeRef: completedRef });
-          turnReject?.(new Error(message));
-          closeProcess();
-          return;
-        }
-        if (!hasAssistantText) {
-          const message = 'Antigravity 回合返回 SUCCESS，但没有 assistant 文本';
-          emitEvent({ kind: 'error', message, nativeRef: completedRef });
-          turnReject?.(new Error(message));
-          closeProcess();
-          return;
-        }
-        emitEvent({
-          kind: 'completed',
-          finalAnswer: true,
-          stopReason: 'completed',
-          nativeRef: completedRef,
+      // 单轮执行：spawn agy、转发 stream-json 事件、等待 result 结算。
+      // suppressEmptyResultError 用于自动补问场景——空 SUCCESS 的第一轮不向 UI
+      // 报错，仅在最后一次尝试仍然为空时才发出 error 事件。
+      const runTurn = async (promptText, { suppressEmptyResultError = false } = {}) => {
+        const bin = resolveExecutable();
+        const approvals = session.permissionMode === 'desktop' || session.permissionMode === 'desktop-approvals';
+        const bridge = await QuestionBridge.create({
+          approvals,
+          emit: emitEvent,
+          collaboration: session.collaboration,
+          managedMcp: session.managedMcp,
         });
-        turnResolve?.();
-        closeProcess();
-      };
+        session.bridge = bridge;
 
-      const scheduleResultDrain = () => {
-        if (!turn.resultSeen || turn.completed || !turn.result) return;
-        if (!resultSucceeded(turn.result.res)) {
-          settleResult();
-          return;
+        const logPath = path.join(os.tmpdir(), `harness-mix-antigravity-${randomUUID()}.log`);
+        const args = [
+          '--input-format', 'stream-json',
+          '--output-format', 'stream-json',
+          '--print-timeout', '30m',
+        ];
+        if (session.nativeSessionId) {
+          args.push('--conversation', session.nativeSessionId);
         }
-        const hasAssistantText = (typeof turn.result.res.response === 'string'
-          ? Boolean(turn.result.res.response.trim())
-          : Boolean(turn.result.res.response)) || sawTextSinceLastTool;
-        if (hasAssistantText) {
-          if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
-          turn.resultDrainMaxTimer = null;
+        if (session.model?.id) {
+          args.push('--model', session.model.id);
+        }
+        if (session.thinkingLevel && modelSupportsEffort(session.model)) {
+          args.push('--effort', session.thinkingLevel);
+        }
+        if (['skip', 'desktop', 'dangerously-skip-permissions', 'desktop-approvals'].includes(session.permissionMode)) {
+          args.push('--dangerously-skip-permissions');
+        }
+        args.push('--add-dir', session.cwd);
+        args.push('--add-dir', bridge.directory);
+        for (const dir of extraDirs) {
+          args.push('--add-dir', dir);
+        }
+        args.push('--log-file', logPath);
+
+        const child = spawnProcess(bin, args, {
+          cwd: session.cwd,
+          env: { ...process.env, ...bridge.environment },
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let turnResolve, turnReject;
+        const settled = new Promise((resolve, reject) => {
+          turnResolve = resolve;
+          turnReject = reject;
+        });
+
+        const turn = {
+          child,
+          resolve: turnResolve,
+          reject: turnReject,
+          logPath,
+          resultSeen: false,
+          result: null,
+          completed: false,
+          processClosing: false,
+          processClosed: false,
+          killTimer: null,
+          resultDrainTimer: null,
+          resultDrainMaxTimer: null,
+          pendingSteps: new Map(),
+        };
+        session.activeTurn = turn;
+        let sawTextSinceLastTool = false;
+        let stderrTail = '';
+        child.stderr?.setEncoding('utf8')?.on('data', (chunk) => {
+          stderrTail = (stderrTail + chunk).slice(-8000);
+        });
+
+        // agy 在 stream-json 模式下产出 result 后进程仍常驻（实测 25s+ 不自行退出），
+        // 不主动收尾会让 session.activeTurn 永远悬挂，下一回合 send 被“当前回合尚未结束”拒绝。
+        // 但某些工具（尤其 view_file 图片）会先产生没有 output 字段的 DONE，随后才
+        // 刷出最终 assistant_response。先结算 Turn 再结束 stdin 会把这段迟到文本丢给
+        // 已关闭的 Normalizer，所以空结果时必须先做一个有界 drain。
+        const clearResultDrainTimers = () => {
           if (turn.resultDrainTimer) clearTimeout(turn.resultDrainTimer);
-          turn.resultDrainTimer = setTimeout(settleResult, resultDrainMs);
-          return;
-        }
-        // No text at result time is not proof that the native turn is finished.
-        // Keep the Core turn active until a late assistant response arrives, but
-        // always retain a hard ceiling for a genuinely tool-only/empty turn.
-        if (!turn.resultDrainMaxTimer) {
-          turn.resultDrainMaxTimer = setTimeout(settleResult, resultDrainMaxMs);
-        }
-      };
-
-      const rl = readline.createInterface({ input: child.stdout });
-      rl.on('line', (line) => {
-        let event;
-        try { event = JSON.parse(line.trim()); } catch { return; }
-        recordNative(manifest.id, event);
-
-        const nativeRef = {
-          sessionId: session.nativeSessionId || event.conversation_id || event.result?.conversation_id,
+          if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
+          turn.resultDrainTimer = null;
+          turn.resultDrainMaxTimer = null;
         };
 
-        if (event.event === 'init') {
-          session.nativeSessionId = event.conversation_id;
-          emitEvent({ kind: 'session', nativeSessionId: event.conversation_id, model: session.model });
-          return;
-        }
+        const closeProcess = () => {
+          if (turn.processClosing || turn.processClosed) return;
+          turn.processClosing = true;
+          try { child.stdin.end(); } catch {}
+          turn.killTimer = setTimeout(() => { void terminateTree(child.pid); }, 10000);
+          turn.killTimer.unref?.();
+        };
 
-        if (event.event === 'step_update') {
-          const rawStep = event.step_update || {};
-          const prevStep = turn.pendingSteps.get(rawStep.step_index);
-          const s = mergePendingStep(prevStep, rawStep);
-          if (s.step_index != null) turn.pendingSteps.set(s.step_index, s);
-          const stepRef = { ...nativeRef, itemId: String(s.step_index) };
-
-          if (s.step_type === 'agent_response') {
-            const text = s.text_delta || s.text || s.content || s.message;
-            if (typeof text === 'string' && text) {
-              sawTextSinceLastTool = true;
-              emitEvent({ kind: 'text-delta', text, nativeRef: stepRef });
-              scheduleResultDrain();
+        const settleResult = () => {
+          if (turn.completed || !turn.result) return;
+          turn.completed = true;
+          clearResultDrainTimers();
+          if (session.activeTurn === turn) session.activeTurn = null;
+          const { res, nativeRef } = turn.result;
+          const completedRef = {
+            ...nativeRef,
+            turnId: res.num_turns != null ? `turn:${res.num_turns}` : undefined,
+            checkpointId: res.num_turns != null ? String(res.num_turns) : undefined,
+          };
+          const successful = resultSucceeded(res);
+          const hasAssistantText = (typeof res.response === 'string'
+            ? Boolean(res.response.trim())
+            : Boolean(res.response)) || sawTextSinceLastTool;
+          if (!successful) {
+            const message = formatAntigravityResultError(res);
+            emitEvent({ kind: 'error', message, nativeRef: completedRef });
+            turnReject?.(new Error(message));
+            closeProcess();
+            return;
+          }
+          if (!hasAssistantText) {
+            const message = 'Antigravity 回合返回 SUCCESS，但没有 assistant 文本';
+            const error = new Error(message);
+            // 标记为可自动补问的失败：由 send 的重试循环决定是否向 UI 报错
+            error.code = 'ANTIGRAVITY_EMPTY_ASSISTANT';
+            error.nativeRef = completedRef;
+            if (!suppressEmptyResultError) {
+              emitEvent({ kind: 'error', message, nativeRef: completedRef });
             }
+            turnReject?.(error);
+            closeProcess();
+            return;
+          }
+          emitEvent({
+            kind: 'completed',
+            finalAnswer: true,
+            stopReason: 'completed',
+            nativeRef: completedRef,
+          });
+          turnResolve?.();
+          closeProcess();
+        };
+
+        const scheduleResultDrain = () => {
+          if (!turn.resultSeen || turn.completed || !turn.result) return;
+          if (!resultSucceeded(turn.result.res)) {
+            settleResult();
+            return;
+          }
+          const hasAssistantText = (typeof turn.result.res.response === 'string'
+            ? Boolean(turn.result.res.response.trim())
+            : Boolean(turn.result.res.response)) || sawTextSinceLastTool;
+          if (hasAssistantText) {
+            if (turn.resultDrainMaxTimer) clearTimeout(turn.resultDrainMaxTimer);
+            turn.resultDrainMaxTimer = null;
+            if (turn.resultDrainTimer) clearTimeout(turn.resultDrainTimer);
+            turn.resultDrainTimer = setTimeout(settleResult, resultDrainMs);
+            return;
+          }
+          // No text at result time is not proof that the native turn is finished.
+          // Keep the Core turn active until a late assistant response arrives, but
+          // always retain a hard ceiling for a genuinely tool-only/empty turn.
+          if (!turn.resultDrainMaxTimer) {
+            turn.resultDrainMaxTimer = setTimeout(settleResult, resultDrainMaxMs);
+          }
+        };
+
+        const rl = readline.createInterface({ input: child.stdout });
+        rl.on('line', (line) => {
+          let event;
+          try { event = JSON.parse(line.trim()); } catch { return; }
+          recordNative(manifest.id, event);
+
+          const nativeRef = {
+            sessionId: session.nativeSessionId || event.conversation_id || event.result?.conversation_id,
+          };
+
+          if (event.event === 'init') {
+            session.nativeSessionId = event.conversation_id;
+            emitEvent({ kind: 'session', nativeSessionId: event.conversation_id, model: session.model });
             return;
           }
 
-          if (s.step_type === 'thought' || s.step_type === 'thinking') {
-            const thinkingText = s.text_delta || s.text || s.content;
-            if (thinkingText) {
-              emitEvent({ kind: 'thinking-delta', text: thinkingText, nativeRef: stepRef });
+          if (event.event === 'step_update') {
+            const rawStep = event.step_update || {};
+            const prevStep = turn.pendingSteps.get(rawStep.step_index);
+            const s = mergePendingStep(prevStep, rawStep);
+            if (s.step_index != null) turn.pendingSteps.set(s.step_index, s);
+            const stepRef = { ...nativeRef, itemId: String(s.step_index) };
+
+            if (s.step_type === 'agent_response') {
+              const text = s.text_delta || s.text || s.content || s.message;
+              if (typeof text === 'string' && text) {
+                sawTextSinceLastTool = true;
+                emitEvent({ kind: 'text-delta', text, nativeRef: stepRef });
+                scheduleResultDrain();
+              }
+              return;
             }
-            return;
-          }
 
-          if (s.step_type === 'subagent') {
-            sawTextSinceLastTool = false;
-            const info = s.subagent_info || {};
-            const subagents = Array.isArray(info.subagents) ? info.subagents : [];
-            const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
-            const details = subagents.map((sub) => `[${sub.role || sub.type_name || 'Subagent'}] ID: ${sub.conversation_id || ''}\n${sub.initial_prompt || ''}`.trim()).join('\n\n');
-            emitEvent({
-              kind: 'tool',
-              toolCallId: String(s.step_index),
-              title: '子 Agent',
-              state,
-              input: details || undefined,
-              output: s.state === 'DONE' ? '子 Agent 启动完成' : undefined,
-              nativeRef: stepRef,
-            });
-            return;
-          }
+            if (s.step_type === 'thought' || s.step_type === 'thinking') {
+              const thinkingText = s.text_delta || s.text || s.content;
+              if (thinkingText) {
+                emitEvent({ kind: 'thinking-delta', text: thinkingText, nativeRef: stepRef });
+              }
+              return;
+            }
 
-          if (s.step_type === 'tool') {
-            sawTextSinceLastTool = false;
-            const toolName = s.tool_name || s.tool_info?.name;
-            const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
-            emitEvent({
-              kind: 'tool',
-              toolCallId: String(s.step_index),
-              title: toolTitle(toolName),
-              state,
-              input: toolInput(s),
-              output: toolOutput(s),
-              nativeRef: stepRef,
-            });
+            if (s.step_type === 'subagent') {
+              sawTextSinceLastTool = false;
+              const info = s.subagent_info || {};
+              const subagents = Array.isArray(info.subagents) ? info.subagents : [];
+              const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
+              const details = subagents.map((sub) => `[${sub.role || sub.type_name || 'Subagent'}] ID: ${sub.conversation_id || ''}\n${sub.initial_prompt || ''}`.trim()).join('\n\n');
+              emitEvent({
+                kind: 'tool',
+                toolCallId: String(s.step_index),
+                title: '子 Agent',
+                state,
+                input: details || undefined,
+                output: s.state === 'DONE' ? '子 Agent 启动完成' : undefined,
+                nativeRef: stepRef,
+              });
+              return;
+            }
 
-            // Native file mutations
-            if (s.state === 'DONE' && (toolName === 'write_to_file' || toolName === 'replace_file_content')) {
-              const params = s.tool_info?.parameters || {};
-              // agy stream-json 工具事件只携带 TargetFile，不携带文件内容（实测 ACTIVE/DONE 均如此）。
-              // 保持 complete: false（与 codex.js 同一约定）：仅作实时提示，回合结算时由
-              // 工作区快照（ReviewStore）用权威 before/after 覆盖，UI 才能显示真实增删统计。
-              const target = typeof params.TargetFile === 'string' ? params.TargetFile : null;
-              const relative = target ? path.relative(session.cwd, path.resolve(session.cwd, target)).replace(/\\/g, '/') : '';
-              // 只投影工作区内的变更；脑目录等 --add-dir 目录不属于本轮文件审查
-              if (relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative)) {
-                emitEvent({
-                  kind: 'file-change',
-                  source: 'native',
-                  changes: [{
-                    path: target,
-                    changeType: toolName === 'write_to_file' ? (params.Overwrite ? 'modified' : 'added') : 'modified',
-                    complete: false,
+            if (s.step_type === 'tool') {
+              sawTextSinceLastTool = false;
+              const toolName = s.tool_name || s.tool_info?.name;
+              const state = s.state === 'DONE' ? 'done' : (s.state === 'ERROR' ? 'error' : 'running');
+              emitEvent({
+                kind: 'tool',
+                toolCallId: String(s.step_index),
+                title: toolTitle(toolName),
+                state,
+                input: toolInput(s),
+                output: toolOutput(s),
+                nativeRef: stepRef,
+              });
+
+              // Native file mutations
+              if (s.state === 'DONE' && (toolName === 'write_to_file' || toolName === 'replace_file_content')) {
+                const params = s.tool_info?.parameters || {};
+                // agy stream-json 工具事件只携带 TargetFile，不携带文件内容（实测 ACTIVE/DONE 均如此）。
+                // 保持 complete: false（与 codex.js 同一约定）：仅作实时提示，回合结算时由
+                // 工作区快照（ReviewStore）用权威 before/after 覆盖，UI 才能显示真实增删统计。
+                const target = typeof params.TargetFile === 'string' ? params.TargetFile : null;
+                const relative = target ? path.relative(session.cwd, path.resolve(session.cwd, target)).replace(/\\/g, '/') : '';
+                // 只投影工作区内的变更；脑目录等 --add-dir 目录不属于本轮文件审查
+                if (relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative)) {
+                  emitEvent({
+                    kind: 'file-change',
+                    source: 'native',
+                    changes: [{
+                      path: target,
+                      changeType: toolName === 'write_to_file' ? (params.Overwrite ? 'modified' : 'added') : 'modified',
+                      complete: false,
+                      nativeRef: stepRef,
+                    }],
                     nativeRef: stepRef,
-                  }],
-                  nativeRef: stepRef,
-                });
+                  });
+                }
               }
             }
-          }
 
-          if (s.usage) {
-            const u = parseUsage(s.usage, session.model?.id, cachedQuota);
-            if (u) {
-              session.usage = u;
-              emitEvent({ kind: 'usage', usage: u, nativeRef: stepRef });
+            if (s.usage) {
+              const u = parseUsage(s.usage, session.model?.id, cachedQuota);
+              if (u) {
+                session.usage = u;
+                emitEvent({ kind: 'usage', usage: u, nativeRef: stepRef });
+              }
             }
+            return;
           }
-          return;
-        }
 
-        if (event.event === 'result') {
-          if (turn.resultSeen || turn.completed) return;
-          const res = event.result || {};
-          if (res.conversation_id && !session.nativeSessionId) {
-            session.nativeSessionId = res.conversation_id;
-          }
-          if (res.usage) {
-            const u = parseUsage(res.usage, session.model?.id, cachedQuota);
-            if (u) {
-              session.usage = u;
-              emitEvent({ kind: 'usage', usage: u, nativeRef });
+          if (event.event === 'result') {
+            if (turn.resultSeen || turn.completed) return;
+            const res = event.result || {};
+            if (res.conversation_id && !session.nativeSessionId) {
+              session.nativeSessionId = res.conversation_id;
             }
-          }
-          if (res.response && !sawTextSinceLastTool) {
-            if (typeof res.response === 'string') {
-              sawTextSinceLastTool = true;
-              emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
+            if (res.usage) {
+              const u = parseUsage(res.usage, session.model?.id, cachedQuota);
+              if (u) {
+                session.usage = u;
+                emitEvent({ kind: 'usage', usage: u, nativeRef });
+              }
             }
+            if (res.response && !sawTextSinceLastTool) {
+              if (typeof res.response === 'string') {
+                sawTextSinceLastTool = true;
+                emitEvent({ kind: 'text-delta', text: res.response, nativeRef });
+              }
+            }
+            turn.resultSeen = true;
+            turn.result = { res, nativeRef };
+            scheduleResultDrain();
           }
-          turn.resultSeen = true;
-          turn.result = { res, nativeRef };
-          scheduleResultDrain();
-        }
-      });
+        });
 
-      child.on('error', (err) => {
-        if (turn.resultSeen) {
-          settleResult();
-          return;
-        }
-        if (turn.killTimer) clearTimeout(turn.killTimer);
-        clearResultDrainTimers();
-        turn.completed = true;
-        if (session.activeTurn === turn) session.activeTurn = null;
-        void fs.promises.unlink(logPath).catch(() => {});
-        void bridge.dispose();
-        if (session.bridge === bridge) session.bridge = null;
-        emitEvent({ kind: 'error', message: `Antigravity 进程错误: ${err.message}` });
-        turnReject?.(err);
-      });
-
-      child.on('close', (code) => {
-        turn.processClosed = true;
-        if (turn.killTimer) clearTimeout(turn.killTimer);
-        clearResultDrainTimers();
-        void fs.promises.unlink(logPath).catch(() => {});
-        void bridge.dispose();
-        if (session.bridge === bridge) session.bridge = null;
-        if (turn.resultSeen) {
-          // A real process close means stdout can no longer deliver a late
-          // assistant event; settle the already received result now.
-          settleResult();
-        } else if (!turn.completed) {
+        child.on('error', (err) => {
+          if (turn.resultSeen) {
+            settleResult();
+            return;
+          }
+          if (turn.killTimer) clearTimeout(turn.killTimer);
+          clearResultDrainTimers();
           turn.completed = true;
           if (session.activeTurn === turn) session.activeTurn = null;
-          const cleanErr = stderrTail.trim();
-          const message = cleanErr
-            ? `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）：${cleanErr}`
-            : `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）`;
-          // 进程未产出 result 即退出（崩溃、认证失败或协议中断）：明确失败，
-          // 不能把 code 0 的空 stdout 伪装成成功回合。
+          void fs.promises.unlink(logPath).catch(() => {});
+          void bridge.dispose();
+          if (session.bridge === bridge) session.bridge = null;
+          emitEvent({ kind: 'error', message: `Antigravity 进程错误: ${err.message}` });
+          turnReject?.(err);
+        });
+
+        child.on('close', (code) => {
+          turn.processClosed = true;
+          if (turn.killTimer) clearTimeout(turn.killTimer);
+          clearResultDrainTimers();
+          void fs.promises.unlink(logPath).catch(() => {});
+          void bridge.dispose();
+          if (session.bridge === bridge) session.bridge = null;
+          if (turn.resultSeen) {
+            // A real process close means stdout can no longer deliver a late
+            // assistant event; settle the already received result now.
+            settleResult();
+          } else if (!turn.completed) {
+            turn.completed = true;
+            if (session.activeTurn === turn) session.activeTurn = null;
+            const cleanErr = stderrTail.trim();
+            const message = cleanErr
+              ? `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）：${cleanErr}`
+              : `Antigravity CLI 未返回 result（退出码 ${code ?? 'unknown'}）`;
+            // 进程未产出 result 即退出（崩溃、认证失败或协议中断）：明确失败，
+            // 不能把 code 0 的空 stdout 伪装成成功回合。
+            emitEvent({ kind: 'error', message });
+            turnReject?.(new Error(message));
+          }
+        });
+
+        try {
+          if (child.stdin.writable) {
+            child.stdin.write(JSON.stringify({ event: 'user', message: { content: promptText } }) + '\n');
+          }
+        } catch (err) {
+          const message = `Antigravity 输入失败：${err.message}`;
+          turn.completed = true;
+          if (session.activeTurn === turn) session.activeTurn = null;
+          void bridge.dispose();
+          if (session.bridge === bridge) session.bridge = null;
+          void terminateTree(child.pid);
           emitEvent({ kind: 'error', message });
           turnReject?.(new Error(message));
         }
-      });
 
-      try {
-        const fullPrompt = formatPrompt(effectivePrompt);
-        if (child.stdin.writable) {
-          child.stdin.write(JSON.stringify({ event: 'user', message: { content: fullPrompt } }) + '\n');
+        return settled;
+      };
+
+      const fullPrompt = formatPrompt(effectivePrompt);
+      const maxAttempts = emptyResultMaxAttempts();
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const lastAttempt = attempt === maxAttempts;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          return await runTurn(attempt > 1 ? ANTIGRAVITY_EMPTY_RESULT_NUDGE : fullPrompt, {
+            suppressEmptyResultError: !lastAttempt,
+          });
+        } catch (err) {
+          if (err?.code === 'ANTIGRAVITY_EMPTY_ASSISTANT' && !lastAttempt) {
+            emitEvent({
+              kind: 'status',
+              text: 'Antigravity 回合返回了空结果，正在同一会话中自动补问…',
+              nativeRef: err.nativeRef,
+            });
+            continue;
+          }
+          throw err;
         }
-      } catch (err) {
-        const message = `Antigravity 输入失败：${err.message}`;
-        turn.completed = true;
-        if (session.activeTurn === turn) session.activeTurn = null;
-        void bridge.dispose();
-        if (session.bridge === bridge) session.bridge = null;
-        void terminateTree(child.pid);
-        emitEvent({ kind: 'error', message });
-        turnReject?.(new Error(message));
       }
-
-      return settled;
+      return undefined;
     },
 
     async cancel(session) {
