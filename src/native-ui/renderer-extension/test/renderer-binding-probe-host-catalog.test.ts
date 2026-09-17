@@ -1,5 +1,5 @@
-import { harnessIdSchema } from "@codexhost/shared-contracts";
-import { harnessModelRefSchema } from "@codexhost/shared-contracts";
+import { harnessIdSchema } from "@harnessmix/shared-contracts";
+import { harnessModelRefSchema } from "@harnessmix/shared-contracts";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import type * as RendererComposerDom from "../src/renderer-composer-dom.js";
@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => ({
   getSessionImportClient: null as null | (() => RendererSessionImportClient | null),
   documentListeners: new Map<string, EventListener>(),
   modelTarget: ["conversation", "thread-a"] as readonly unknown[],
+  prepareMentions: vi.fn(),
 }));
 
 vi.mock("../src/renderer-composer-dom.js", async (importOriginal) => {
@@ -89,7 +90,11 @@ vi.mock("../src/renderer-sidebar-agent-icons.js", () => ({
 }));
 
 vi.mock("../src/renderer-harness-mentions.js", () => ({
-  installHarnessMentions: () => ({ dispose: vi.fn() }),
+  installHarnessMentions: () => ({ prepareSubmission: testState.prepareMentions, dispose: vi.fn() }),
+}));
+
+vi.mock("../src/renderer-team-cards.js", () => ({
+  installTeamCards: () => ({ dispose: vi.fn() }),
 }));
 
 vi.mock("../src/harness-mix-settings.js", () => ({
@@ -216,9 +221,9 @@ function installFakeBrowser(): void {
 afterEach(() => {
   const api = (
     globalThis.window as unknown as {
-      __codexhostRendererBindingProbeV1?: { dispose(): void };
+      __harnessmixRendererBindingProbeV1?: { dispose(): void };
     }
-  ).__codexhostRendererBindingProbeV1;
+  ).__harnessmixRendererBindingProbeV1;
   api?.dispose();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -245,7 +250,7 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
         owner: "external" as const,
         harnessId: "claude-code",
         transportModelId:
-          "codexhost/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
+          "harnessmix/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
         effectiveModel: oldModel,
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
         locked: true,
@@ -345,6 +350,7 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
     expect(host.selectThreadModel).toHaveBeenCalledTimes(2);
     expect(probe.lockedSelection()?.model).toEqual(newModel);
     expectSubmissionBlocked(false);
+    expect(testState.prepareMentions).toHaveBeenCalledExactlyOnceWith(testState.composer);
     expect(applyAgent).not.toHaveBeenCalled();
   });
 
@@ -494,7 +500,7 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
         owner: "external" as const,
         harnessId: "claude-code",
         transportModelId:
-          "codexhost/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
+          "harnessmix/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
         effectiveModel: harnessModelRefSchema.parse({ id: "claude-model-v1.b3B1cw" }),
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
         locked: true,
@@ -564,7 +570,7 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
         owner: "external" as const,
         harnessId: "claude-code",
         transportModelId:
-          "codexhost/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
+          "harnessmix/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
         effectiveModel: harnessModelRefSchema.parse({ id: "claude-model-v1.b3B1cw" }),
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
         locked: true,
@@ -663,7 +669,7 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
         owner: "external" as const,
         harnessId: "claude-code",
         transportModelId:
-          "codexhost/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
+          "harnessmix/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
         effectiveModel: harnessModelRefSchema.parse({ id: "claude-model-v1.b3B1cw" }),
         history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
         locked: true,

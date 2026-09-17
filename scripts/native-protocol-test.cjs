@@ -74,22 +74,22 @@ async function main() {
     const schemas = require(schemaPath);
     const version = await bridge.request('harness-mix/runtime/version');
     assert.equal(version.version, require('../package.json').version, 'About page reads the installed package version');
-    const accounts = await bridge.request('codexhost/account/list');
+    const accounts = await bridge.request('harnessmix/account/list');
     schemas.codexAccountListResultSchema.parse(accounts);
     assert.equal(accounts.accounts[0].email, 'native@example.com', 'Official account/read is projected into Account management');
     assert.equal(accounts.accounts[0].authenticated, true);
     assert.equal(accounts.accounts[0].management, 'native');
-    const accountUsage = await bridge.request('codexhost/account/usage/inspect', { accountId: 'official-codex' });
+    const accountUsage = await bridge.request('harnessmix/account/usage/inspect', { accountId: 'official-codex' });
     schemas.codexAccountUsageResultSchema.parse(accountUsage);
     assert.equal(accountUsage.usage.planFiveHourUsedPercent, 33);
     assert.equal(accountUsage.usage.planSevenDayUsedPercent, 29);
     assert.equal(accountUsage.accountCredits.periodType, 'five_hour');
     assert.equal(accountUsage.accountCredits.productUsage[0].product, '7-day window');
-    const login = await bridge.request('codexhost/account/login/start', { accountId: 'official-codex' });
+    const login = await bridge.request('harnessmix/account/login/start', { accountId: 'official-codex' });
     schemas.codexAccountLoginStartResultSchema.parse(login);
     assert.equal(login.userCode, 'ABCD-EFGH');
-    assert.deepEqual(await bridge.request('codexhost/account/login/cancel', { accountId: 'official-codex', loginId: 'native-login' }), { cancelled: true });
-    const loggedOut = await bridge.request('codexhost/account/logout');
+    assert.deepEqual(await bridge.request('harnessmix/account/login/cancel', { accountId: 'official-codex', loginId: 'native-login' }), { cancelled: true });
+    const loggedOut = await bridge.request('harnessmix/account/logout');
     schemas.codexAccountMutationResultSchema.parse(loggedOut);
     assert.equal(loggedOut.account.authenticated, false);
     let openedCodexThread = null;
@@ -109,30 +109,36 @@ async function main() {
       },
       close() {},
     };
-    const isolated = await bridge.request('thread/start', { cwd: root, model: 'gpt-test', __codexhostAccountId: 'account-work' });
+    const isolated = await bridge.request('thread/start', { cwd: root, model: 'gpt-test', __harnessmixAccountId: 'account-work' });
     assert.equal(decodeRoute(isolated.thread.model).harnessId, 'codex-harness', 'An isolated Codex Account becomes an owned Codex adapter Thread');
     assert.equal(openedCodexThread.options.accountId, 'account-work');
     assert.equal(openedCodexThread.options.codexHome, path.join(root, 'isolated-codex-home'));
     assert.equal(openedCodexThread.options.model.id, 'gpt-test');
     const inspection = await bridge.inspect('pi');
     schemas.harnessInspectionSchema.parse(inspection);
+    assert.deepEqual(inspection.capabilities.workspace, { git: true, worktree: true, finalDiff: true, nativeDiff: false, nativePatch: false });
     assert.equal(inspection.catalog.defaultThinkingOptionId, 'high', 'Declared default thinking level projects to the catalog');
     assert.ok(inspection.catalog.models.every(m => m.supportedThinkingOptionIds?.join(',') === 'high,low'), 'Every catalog model carries the selectable thinking set');
-    schemas.harnessPluginListResultSchema.parse(await bridge.request('codexhost/harness/plugins/list'));
+    schemas.harnessPluginListResultSchema.parse(await bridge.request('harnessmix/harness/plugins/list'));
     const started = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
     const threadId = started.thread.id;
+    const threadInspection = await bridge.request('harnessmix/thread/inspect', { threadId });
+    schemas.threadInspectionSchema.parse(threadInspection);
+    assert.equal(threadInspection.workspace.hostManaged, true);
+    assert.equal(threadInspection.workspace.finalDiff.source, 'snapshot');
+    assert.equal(threadInspection.workspace.worktree.available, true);
     assert.equal(started.thread.sessionId, threadId, 'Desktop session identity is the host thread, not a native session id');
-    assert.equal(started.thread.model, 'codexhost/pi-native');
+    assert.equal(started.thread.model, 'harnessmix/pi-native');
     const { includesThread } = require('../src/main/native/thread-list');
     const storedThread = runtime.threads.find(t => t.id === threadId);
-    const hostCommands = await bridge.request('codexhost/thread/commands/inspect', { threadId });
+    const hostCommands = await bridge.request('harnessmix/thread/commands/inspect', { threadId });
     assert.ok(hostCommands.commands.some(command => command.id === 'verify'));
     assert.ok(hostCommands.commands.some(command => command.id === 'gate'));
-    const gate = await bridge.request('codexhost/thread/verification/configure', { threadId, policy: { mode: 'required', checks: { cleanWorkingTree: false } } });
+    const gate = await bridge.request('harnessmix/thread/verification/configure', { threadId, policy: { mode: 'required', checks: { cleanWorkingTree: false } } });
     assert.equal(gate.policy.mode, 'required');
     assert.equal(gate.satisfied, false);
-    assert.equal((await bridge.request('codexhost/thread/verification/get', { threadId })).policy.mode, 'required');
-    const storage = await bridge.request('codexhost/storage/inspect');
+    assert.equal((await bridge.request('harnessmix/thread/verification/get', { threadId })).policy.mode, 'required');
+    const storage = await bridge.request('harnessmix/storage/inspect');
     assert.equal(storage.schemaVersion, 2);
     assert.ok(storage.threadCount >= 1);
     assert.equal(includesThread(storedThread, { sectionId: section.id }), false);
@@ -155,7 +161,7 @@ async function main() {
     await bridge.request('turn/interrupt', { threadId: prewarmed.thread.id });
     await wait(() => !runtime.threads.find(t => t.id === prewarmed.thread.id).reviewPending && !runtime.sending.has(prewarmed.thread.id));
     emit = emits[0]; // 恢复主线程的事件源（open 顺序：主线程序，预热线程后）
-    schemas.threadInspectionSchema.parse(await bridge.request('codexhost/thread/inspect', { threadId }));
+    schemas.threadInspectionSchema.parse(await bridge.request('harnessmix/thread/inspect', { threadId }));
     const turn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'test' }], approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
     // turn/start 在 currentTurn 建立后即返回，adapter.send 的调用在其后；等待透传到达
     await wait(() => sendExtras.at(-1)?.turnPermissions != null);
@@ -252,7 +258,7 @@ async function main() {
     ]) {
       assert.equal(await bridge.request(method, params), undefined, `Official Codex ${method} passes through`);
     }
-    assert.deepEqual(await bridge.request('codexhost/thread/ownership/list', { threadIds: ['official-thread', threadId] }), {
+    assert.deepEqual(await bridge.request('harnessmix/thread/ownership/list', { threadIds: ['official-thread', threadId] }), {
       threads: [
         { threadId: 'official-thread', owner: 'codex' },
         { threadId, owner: 'external', harnessId: 'pi' },
@@ -267,25 +273,25 @@ async function main() {
       hooks.emit({ kind: 'usage', usage: { input: 20, output: 5, cacheRead: 10, tokens: 30, contextWindow: 100, cost: 0.01 } });
       hooks.emit({ kind: 'completed', finalAnswer: true });
     };
-    const command = await bridge.request('codexhost/thread/command/execute', { threadId, commandId: 'compact' });
+    const command = await bridge.request('harnessmix/thread/command/execute', { threadId, commandId: 'compact' });
     schemas.threadCommandExecuteResultSchema.parse(command);
     await wait(() => compactCalls === 1 && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
-    const usage = await bridge.request('codexhost/thread/usage/inspect', { threadId });
+    const usage = await bridge.request('harnessmix/thread/usage/inspect', { threadId });
     schemas.threadUsageInspectionSchema.parse(usage);
     assert.equal(usage.usage.inputTokens, 20);
     assert.equal(usage.usage.contextUsagePercent, 30);
-    assert.ok(events.some(e => e.method === 'codexhost/thread/usage/updated' && e.params.usage?.cachedInputTokens === 10));
-    await assert.rejects(bridge.request('codexhost/thread/command/execute', { threadId, commandId: 'missing' }), /不支持此指令/);
+    assert.ok(events.some(e => e.method === 'harnessmix/thread/usage/updated' && e.params.usage?.cachedInputTokens === 10));
+    await assert.rejects(bridge.request('harnessmix/thread/command/execute', { threadId, commandId: 'missing' }), /不支持此指令/);
     // ===== 新 Harness 路由：omp / opencode / grok 的 legacy 传输串解码与投影 =====
-    assert.equal(routeModel('omp'), 'codexhost/omp-native');
-    assert.equal(routeModel('opencode'), 'codexhost/opencode-native');
-    assert.equal(routeModel('grok'), 'codexhost/grok-native');
-    assert.deepEqual(decodeRoute('codexhost/omp-native'), { harnessId: 'omp' });
-    assert.deepEqual(decodeRoute('codexhost/omp-native@model-x@high'), { harnessId: 'omp', model: { id: 'model-x' }, thinkingOptionId: 'high' }, 'OMP 两段式 = model@thinking');
-    assert.deepEqual(decodeRoute('codexhost/omp-native@model-x@approve@high'), { harnessId: 'omp', model: { id: 'model-x' }, permissionModeId: 'approve', thinkingOptionId: 'high' }, 'OMP 三段式 = model@permission@thinking');
-    assert.deepEqual(decodeRoute('codexhost/opencode-native@m@perm'), { harnessId: 'opencode', model: { id: 'm' }, permissionModeId: 'perm' });
-    assert.deepEqual(decodeRoute('codexhost/grok-native@m@@think'), { harnessId: 'grok', model: { id: 'm' }, thinkingOptionId: 'think' });
-    assert.throws(() => decodeRoute('codexhost/omp-native@a@b@c@d'), /Invalid native Harness route/);
+    assert.equal(routeModel('omp'), 'harnessmix/omp-native');
+    assert.equal(routeModel('opencode'), 'harnessmix/opencode-native');
+    assert.equal(routeModel('grok'), 'harnessmix/grok-native');
+    assert.deepEqual(decodeRoute('harnessmix/omp-native'), { harnessId: 'omp' });
+    assert.deepEqual(decodeRoute('harnessmix/omp-native@model-x@high'), { harnessId: 'omp', model: { id: 'model-x' }, thinkingOptionId: 'high' }, 'OMP 两段式 = model@thinking');
+    assert.deepEqual(decodeRoute('harnessmix/omp-native@model-x@approve@high'), { harnessId: 'omp', model: { id: 'model-x' }, permissionModeId: 'approve', thinkingOptionId: 'high' }, 'OMP 三段式 = model@permission@thinking');
+    assert.deepEqual(decodeRoute('harnessmix/opencode-native@m@perm'), { harnessId: 'opencode', model: { id: 'm' }, permissionModeId: 'perm' });
+    assert.deepEqual(decodeRoute('harnessmix/grok-native@m@@think'), { harnessId: 'grok', model: { id: 'm' }, thinkingOptionId: 'think' });
+    assert.throws(() => decodeRoute('harnessmix/omp-native@a@b@c@d'), /Invalid native Harness route/);
     // ===== 跨 Harness 协作：委派 → 消息 → 等待 → 级联取消 =====
     const childEmits = [];
     let childSend;
@@ -298,11 +304,11 @@ async function main() {
       async close() {} };
     runtime.adapters.set('claude', childAdapter); runtime.status.claude = { available: true };
     // Host 级 /delegate 指令出现在命令目录中（insert 型，填入输入框）
-    const commandList = await bridge.request('codexhost/thread/commands/inspect', { threadId });
+    const commandList = await bridge.request('harnessmix/thread/commands/inspect', { threadId });
     assert.ok(commandList.commands.some(c => c.invocation === '/delegate' && c.argumentMode === 'text'), 'Host 级 /delegate 指令应出现在命令目录');
     // 委派：协议入口创建子任务线程并挂起父线程协作 Turn
     childSend = hooks => { hooks.emit({ kind: 'text-delta', text: '子任务结论' }); hooks.emit({ kind: 'completed', finalAnswer: true }); };
-    const delegated = await bridge.request('codexhost/thread/delegate', { threadId, harnessId: 'claude-code', task: '审查代码' });
+    const delegated = await bridge.request('harnessmix/thread/delegate', { threadId, harnessId: 'claude-code', task: '审查代码' });
     schemas.threadDelegationResultSchema.parse(delegated);
     assert.equal(delegated.turn.status, 'inProgress', '委派后父线程协作 Turn 保持活动');
     assert.ok(delegated.turn?.id, 'Delegation starts a parent collaboration Turn');
@@ -322,13 +328,13 @@ async function main() {
     assert.equal(delegateTool.status, 'completed', '子任务结算后协作工具项完成');
     assert.ok(String(delegateTool.output).includes('子任务结论'), '协作工具项携带子任务最终答复');
     // 消息链：向同一子任务跟进（复用既有子线程）
-    const followUp = await bridge.request('codexhost/thread/message', { threadId, childThreadId: childId, text: '再检查一遍' });
+    const followUp = await bridge.request('harnessmix/thread/message', { threadId, childThreadId: childId, text: '再检查一遍' });
     schemas.threadDelegationResultSchema.parse(followUp);
     await wait(() => !runtime.execution.isRunning(threadId));
     assert.deepEqual(childAdapter.sendCalls, ['审查代码', '再检查一遍'], '跟进消息进入同一子任务');
     assert.equal(followUp.childThreadId, childId);
     // 循环防护：子任务不能继续委派
-    await assert.rejects(bridge.request('codexhost/thread/delegate', { threadId: childId, harnessId: 'pi', task: 'x' }), /暂不支持继续委派/);
+    await assert.rejects(bridge.request('harnessmix/thread/delegate', { threadId: childId, harnessId: 'pi', task: 'x' }), /暂不支持继续委派/);
     // 斜杠通道：/delegate 文本走同一委派链路
     childSend = hooks => { hooks.emit({ kind: 'text-delta', text: '斜杠委派完成' }); hooks.emit({ kind: 'completed', finalAnswer: true }); };
     const slashTurn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: '/delegate claude 用斜杠通道' }] });
@@ -338,7 +344,7 @@ async function main() {
     await assert.rejects(bridge.request('turn/start', { threadId, input: [{ type: 'text', text: '/delegate' }] }), /用法：\/delegate/);
     // 级联取消：中断父线程协作 Turn ⇒ 子任务被取消
     childSend = () => new Promise(() => {}); // 子任务永不自行结算
-    const stuck = await bridge.request('codexhost/thread/delegate', { threadId, harnessId: 'claude', task: '长跑任务' });
+    const stuck = await bridge.request('harnessmix/thread/delegate', { threadId, harnessId: 'claude', task: '长跑任务' });
     assert.ok(runtime.execution.isRunning(threadId), '父线程协作 Turn 等待子任务');
     await bridge.request('turn/interrupt', { threadId });
     await wait(() => !runtime.execution.isRunning(threadId) && !runtime.execution.isRunning(stuck.childThreadId));
@@ -350,8 +356,8 @@ async function main() {
     await assert.rejects(bridge.request('thread/fork', { threadId, excludeTurns: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true, threadSource: 'thread_description' }), /Ephemeral background thread is not supported/);
     // Worktree 隔离工作区丢弃与推送协议接口
-    await assert.rejects(bridge.request('codexhost/thread/workspace/discard', { threadId }), /该任务未使用 Worktree 隔离工作区/);
-    await assert.rejects(bridge.request('codexhost/thread/workspace/push', { threadId }), /该任务未使用 Worktree 隔离工作区/);
+    await assert.rejects(bridge.request('harnessmix/thread/workspace/discard', { threadId }), /该任务未使用 Worktree 隔离工作区/);
+    await assert.rejects(bridge.request('harnessmix/thread/workspace/push', { threadId }), /该任务未使用 Worktree 隔离工作区/);
     const dummyWorktreeThread = await bridge.request('thread/start', { cwd: root, model: routeModel('pi') });
     const dummyThreadId = dummyWorktreeThread.thread.id;
     const dummyWorkspaceDir = path.join(root, 'dummy-wt');
@@ -362,12 +368,12 @@ async function main() {
       root: dummyWorkspaceDir,
       cwd: dummyWorkspaceDir,
       source: root,
-      branch: 'codexhost/test-wt-branch',
+      branch: 'harnessmix/test-wt-branch',
     };
-    await assert.rejects(bridge.request('codexhost/thread/workspace/push', { threadId: dummyThreadId }), /git/i);
-    const discardResult = await bridge.request('codexhost/thread/workspace/discard', { threadId: dummyThreadId });
+    await assert.rejects(bridge.request('harnessmix/thread/workspace/push', { threadId: dummyThreadId }), /git/i);
+    const discardResult = await bridge.request('harnessmix/thread/workspace/discard', { threadId: dummyThreadId });
     assert.equal(discardResult.discarded, true);
-    assert.equal(discardResult.branch, 'codexhost/test-wt-branch');
+    assert.equal(discardResult.branch, 'harnessmix/test-wt-branch');
     assert.equal(dummyTargetThread.workspace, undefined, 'Discard deletes thread.workspace');
 
     // 消息排队（thread/queue/add, list, update, reorder, delete, start）能力验证

@@ -2,7 +2,7 @@ import {
   THREAD_OWNERSHIP_LIST_MAX_LENGTH,
   hostThreadIdSchema,
   type ThreadOwnership,
-} from "@codexhost/shared-contracts";
+} from "@harnessmix/shared-contracts";
 
 import type { RendererAgent } from "./agent-selection-state.js";
 import { createRendererAgentIcon, RENDERER_AGENT_LABELS } from "./renderer-agent-icon.js";
@@ -13,7 +13,7 @@ export const SIDEBAR_THREAD_ROW_ATTRIBUTE = "data-app-action-sidebar-thread-row"
 export const SIDEBAR_THREAD_ROW_SELECTOR = `[${SIDEBAR_THREAD_ROW_ATTRIBUTE}]`;
 export const SIDEBAR_THREAD_ID_ATTRIBUTE = "data-app-action-sidebar-thread-id";
 export const SIDEBAR_THREAD_HOST_ID_ATTRIBUTE = "data-app-action-sidebar-thread-host-id";
-export const SIDEBAR_AGENT_ICON_ATTRIBUTE = "data-codexhost-sidebar-agent-icon";
+export const SIDEBAR_AGENT_ICON_ATTRIBUTE = "data-harnessmix-sidebar-agent-icon";
 
 export interface RendererSidebarContractInspection {
   rowCount: number;
@@ -58,28 +58,32 @@ export function threadIdFromSidebarRowElement(element: HTMLElement): string | nu
   const fiberNames = Object.getOwnPropertyNames(element).filter((name) =>
     name.startsWith("__reactFiber$"),
   );
-  const fiberName = fiberNames[0];
-  if (fiberNames.length !== 1 || !fiberName) return null;
-  const firstFiber = Object.getOwnPropertyDescriptor(element, fiberName)?.value;
-  if (!isRecord(firstFiber)) return null;
+  if (fiberNames.length === 0) return null;
 
+  // Desktop builds occasionally attach more than one Fiber root key to a row
+  // (transitions, nested roots). Walk each of them and stay fail-closed only
+  // when they genuinely disagree, instead of giving up on the row entirely.
   const candidates = new Set<string>();
-  let fiber: Record<string, unknown> | null = firstFiber;
-  for (let depth = 0; fiber && depth < 12; depth += 1) {
-    const props = fiber.memoizedProps;
-    if (isRecord(props) && isRecord(props.dataAttributes)) {
-      const dataAttributes = props.dataAttributes;
-      const threadId = hostThreadIdSchema.safeParse(props.conversationId);
-      if (
-        threadId.success &&
-        dataAttributes[SIDEBAR_THREAD_ROW_ATTRIBUTE] === rowMarker &&
-        dataAttributes[SIDEBAR_THREAD_ID_ATTRIBUTE] === taskKey &&
-        dataAttributes[SIDEBAR_THREAD_HOST_ID_ATTRIBUTE] === hostId
-      ) {
-        candidates.add(threadId.data);
+  for (const fiberName of fiberNames) {
+    const firstFiber = Object.getOwnPropertyDescriptor(element, fiberName)?.value;
+    if (!isRecord(firstFiber)) continue;
+    let fiber: Record<string, unknown> | null = firstFiber;
+    for (let depth = 0; fiber && depth < 16; depth += 1) {
+      const props = fiber.memoizedProps;
+      if (isRecord(props) && isRecord(props.dataAttributes)) {
+        const dataAttributes = props.dataAttributes;
+        const threadId = hostThreadIdSchema.safeParse(props.conversationId);
+        if (
+          threadId.success &&
+          dataAttributes[SIDEBAR_THREAD_ROW_ATTRIBUTE] === rowMarker &&
+          dataAttributes[SIDEBAR_THREAD_ID_ATTRIBUTE] === taskKey &&
+          dataAttributes[SIDEBAR_THREAD_HOST_ID_ATTRIBUTE] === hostId
+        ) {
+          candidates.add(threadId.data);
+        }
       }
+      fiber = isRecord(fiber.return) ? fiber.return : null;
     }
-    fiber = isRecord(fiber.return) ? fiber.return : null;
   }
   return candidates.size === 1 ? (candidates.values().next().value ?? null) : null;
 }
