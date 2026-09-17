@@ -59,14 +59,18 @@ async function main() {
 
   const rt = new HostRuntime({ dataDirectory: path.join(root, 'data') }); await rt.store.load();
   await rt.collaboration.initialize();
-  rt.collaboration.jobs.set('saved', { id: 'saved', owner: 'parent', agent: 'pi', childId: 'child', status: 'running', task: 'continue', workspace });
+  rt.collaboration.jobs.set('saved', { id: 'saved', owner: 'parent', agent: 'pi', childId: 'child', status: 'running', task: 'continue', workspace, teamId: 'team', memberId: 'member', teamTaskId: 'team-task' });
   rt.collaboration.jobs.set('finished', { id: 'finished', owner: 'parent', agent: 'pi', childId: 'done', status: 'completed', result: 'kept' });
+  rt.collaboration.teams.set('team', { id: 'team', owner: 'parent', name: 'Recovery team', goal: 'Resume safely', status: 'active', members: [{ id: 'member', name: 'Builder', role: 'Continue work', agent: 'pi', status: 'working', childId: 'child' }], tasks: [{ id: 'team-task', title: 'Continue', description: 'Resume after restart', assignee: 'member', dependsOn: [], status: 'in_progress' }], messages: [], updatedAt: Date.now() });
   await rt.collaboration.save();
+  await rt.collaboration.saveTeams();
   const restarted = new Collaboration(rt); await restarted.initialize();
   assert.equal(restarted.jobs.get('saved').status, 'interrupted');
   assert.equal(restarted.jobs.get('saved').childId, 'child');
   assert.equal(restarted.jobs.get('saved').workspace.cwd, workspace.cwd);
   assert.equal(restarted.jobs.get('finished').result, 'kept');
+  assert.equal(restarted.teams.get('team').members[0].status, 'interrupted');
+  assert.equal(restarted.teams.get('team').tasks[0].status, 'interrupted');
   assert.equal(restarted.keys.size, 0, 'No session authorization keys persisted');
   // Resume must reuse the durable child identity, rather than spawn a replacement.
   const parent = { id: 'parent', cwd: repo, title: 'Lead' }, child = { id: 'child', parentThreadId: 'parent', cwd: workspace.cwd };
@@ -78,10 +82,15 @@ async function main() {
     async createThread() { throw new Error('Duplicate child created'); }, async cancel() {} };
   restarted.runtime = fake;
   await restarted.call('parent', 'resume_delegation', { task_id: 'saved' });
+  assert.equal(restarted.teams.get('team').members[0].status, 'working');
+  assert.equal(restarted.teams.get('team').tasks[0].status, 'in_progress');
   await restarted.jobs.get('saved').done;
   assert.match(received, /do not repeat completed side effects/);
   assert.equal(restarted.jobs.get('saved').result, 'resumed');
   assert.equal(restarted.jobs.get('saved').childId, 'child');
+  assert.equal(restarted.teams.get('team').members[0].status, 'ready');
+  assert.equal(restarted.teams.get('team').tasks[0].status, 'completed');
+  assert.equal(restarted.teams.get('team').status, 'completed');
   const nativeReview = await restarted.call('parent', 'review_delegation_changes', { task_id: 'saved' });
   assert.equal(nativeReview.digest, review.digest); assert.match(nativeReview.patch, /worker/);
   rt.collaboration.jobs.clear();
@@ -92,7 +101,7 @@ async function main() {
     async readNative() { calls.push('read'); return [{ id: 'u', role: 'user', text: 'old question', at: 1 }, { id: 'a', role: 'assistant', text: 'old answer', at: 2 }]; },
   });
   const protocol = new NativeProtocol(rt, () => {});
-  const rows = await protocol.request('codexhost/harness/session-import/list', { harnessId: 'all-harnesses', query: 'Native' });
+  const rows = await protocol.request('harnessmix/harness/session-import/list', { harnessId: 'all-harnesses', query: 'Native' });
   assert.equal(rows.total, 1);
   const params = { harnessId: 'all-harnesses', nativeSessionId: rows.candidates[0].nativeSessionId };
   const context = await rt.history.context(params);

@@ -1,4 +1,4 @@
-import { WORKSPACE_CONTRACT_VERSION } from "@codexhost/shared-contracts/version";
+import { WORKSPACE_CONTRACT_VERSION } from "@harnessmix/shared-contracts/version";
 
 export { readCodexLocaleSettings, setCodexLocaleOverride } from "./codex-locale-adapter.js";
 export type {
@@ -295,9 +295,11 @@ export type {
   CollabCardPayload,
   CollabCardOptions,
 } from "./renderer-collab-cards.js";
+export { installTeamCards, parseTeamPayload } from "./renderer-team-cards.js";
+export type { TeamCardPayload, TeamMemberPayload, TeamTaskPayload, TeamMessagePayload } from "./renderer-team-cards.js";
 
 export const rendererBuildMetadata = {
-  name: "@codexhost/renderer-extension",
+  name: "@harnessmix/renderer-extension",
   target: "browser",
   contractVersion: WORKSPACE_CONTRACT_VERSION,
 } as const;
