@@ -3,7 +3,7 @@ name = "harness-mix-appx"
 version = "0.2.0"
 edition = "2021"
 description = "Harness Mix Windows AppX activation boundary (IApplicationActivationManager / IPackageDebugSettings)"
-license = "Apache-2.0"
+license = "Apache-2.0 OR MIT"
 
 [[bin]]
 name = "harness-mix-appx"

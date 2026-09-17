@@ -1,5 +1,9 @@
 # Harness Mix
 
+<p align="center"><a href="#zh">中文</a> | <a href="#en">English</a></p>
+
+<a id="zh"></a>
+
 macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面验收仍需在对应机器执行。安装方式、Linux 桌面前提和支持边界见 [跨平台指南](docs/cross-platform.md)。
 
 <p align="center">
@@ -17,7 +21,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
 <p align="center"><strong>Codex 原生 UI，连接多个原生 Coding Harness，并让任务在它们之间无缝接力。</strong></p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0 OR MIT" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg"></a>
   <img alt="UI" src="https://img.shields.io/badge/UI-Codex%20Desktop-412991.svg">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-555555.svg">
@@ -225,24 +229,257 @@ npm run e2e:codex
 
 ## License
 
-Harness Mix 基于 [Apache License 2.0](LICENSE) 发布。第三方组件仍适用各自的许可证；归属信息见 [NOTICE](NOTICE)。
+Harness Mix 基于 [Apache License 2.0](LICENSE) 或 [MIT](LICENSE-MIT) 双许可证发布，可任选其一。第三方组件仍适用各自的许可证；归属信息见 [NOTICE](NOTICE)。
 
 ## 鸣谢
 
 Harness Mix 一路走来，受了下面这些开源项目不少启发。它们都把成果公开在自己的仓库里，本项目的架构分层、协议接线和界面细节都从中获益：
 
-- [BytePioneer-AI/codex-host](https://github.com/BytePioneer-AI/codex-host) —— 官方 Codex Desktop 原生界面集成（renderer extension / desktop control / shared contracts）的衍生基础，也是整体分层与协议接线的思路来源。
+- BytePioneer-AI 的 Codex Desktop 集成项目（MIT）—— 官方 Codex Desktop 原生界面集成（renderer extension / desktop control / shared contracts）的衍生基础，也是整体分层与协议接线的思路来源。
 - [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) —— 多 Agent 协作运行时的编排思路来源。
 - [xintaofei/codeg](https://github.com/xintaofei/codeg) —— 工具协议与多 Harness 接线方式的参考。
 - [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) —— 皮肤市场内置皮肤素材的来源。
 
 以上项目各自适用原有许可证，归属声明与许可正文见 [NOTICE](NOTICE) 与 [licenses/](licenses/)。相关商标仍归各自所有者，本项目仅用于标识所集成的产品，不主张任何商标权、背书或关联关系。
 
+---
+
+<a id="en"></a>
+
+# Harness Mix
+
+macOS/Linux source builds and launch adaptation are in place; full desktop acceptance on those systems still has to run on the respective machines. See the [Cross-Platform Guide](docs/cross-platform.md) for install options, Linux desktop prerequisites and support boundaries.
+
+<p align="center">
+  <img src="src/assets/brand-harness-mix.png" width="92" alt="Harness Mix logo">
+</p>
+
+<p align="center">
+  ⭐ If this project helps you, please give us a <a href="https://github.com/emo-xiaoyu/harness-mix">Star</a>! ⭐
+</p>
+
+<p align="center">
+  <a href="https://linux.do/"><img alt="Linux DO" src="https://img.shields.io/badge/Linux%20DO-%E7%A4%BE%E5%8C%BA-0A66C2.svg"></a>
+</p>
+
+<p align="center"><strong>The Codex native UI, connecting multiple native coding Harnesses with seamless task handoff between them.</strong></p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: Apache-2.0 OR MIT" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg"></a>
+  <img alt="UI" src="https://img.shields.io/badge/UI-Codex%20Desktop-412991.svg">
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4.svg">
+  <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-555555.svg">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624.svg">
+</p>
+
+<p align="center"><strong>Currently registered Harnesses (17)</strong></p>
+
+<table align="center">
+  <tbody>
+    <tr>
+      <td align="center"><img src="src/assets/icons/antigravity-color.svg" width="28" height="28" alt="Antigravity"><br><sub>Antigravity</sub></td>
+      <td align="center"><img src="src/assets/icons/codex-harness.svg" width="28" height="28" alt="Codex"><br><sub>Codex</sub></td>
+      <td align="center"><img src="src/assets/icons/claude-color.svg" width="28" height="28" alt="Claude Code"><br><sub>Claude Code</sub></td>
+      <td align="center"><img src="src/assets/icons/pi.svg" width="28" height="28" alt="Pi"><br><sub>Pi</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/omp-color.svg" width="28" height="28" alt="Oh My Pi"><br><sub>Oh My Pi</sub></td>
+      <td align="center"><img src="src/assets/icons/deepseek-color.svg" width="28" height="28" alt="DeepSeek Harness"><br><sub>DeepSeek</sub></td>
+      <td align="center"><img src="src/assets/icons/opencode-color.svg" width="28" height="28" alt="OpenCode"><br><sub>OpenCode</sub></td>
+      <td align="center"><img src="src/assets/icons/grok-color.svg" width="28" height="28" alt="Grok"><br><sub>Grok</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/openclaw-color.svg" width="28" height="28" alt="OpenClaw"><br><sub>OpenClaw</sub></td>
+      <td align="center"><img src="src/assets/icons/hermes-color.svg" width="28" height="28" alt="Hermes"><br><sub>Hermes</sub></td>
+      <td align="center"><img src="src/assets/icons/qoder-color.svg" width="28" height="28" alt="Qoder"><br><sub>Qoder</sub></td>
+      <td align="center"><img src="src/assets/icons/codebuddy-color.svg" width="28" height="28" alt="CodeBuddy"><br><sub>CodeBuddy</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/kiro-cli-color.svg" width="28" height="28" alt="Kiro"><br><sub>Kiro</sub></td>
+      <td align="center"><img src="src/assets/icons/cursor.svg" width="28" height="28" alt="Cursor"><br><sub>Cursor</sub></td>
+      <td align="center"><img src="src/assets/icons/zcode-color.svg" width="28" height="28" alt="ZCode"><br><sub>ZCode</sub></td>
+      <td align="center"><img src="src/assets/icons/trae-color.svg" width="28" height="28" alt="Trae"><br><sub>Trae</sub></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="src/assets/icons/cline-color.svg" width="28" height="28" alt="Cline"><br><sub>Cline</sub></td>
+    </tr>
+  </tbody>
+</table>
+
+<p align="center"><sub>Icons and Harness capabilities come from the project's own registry; only Harnesses installed locally with a successful handshake enter real runs.</sub></p>
+
+Harness Mix is a local kernel that plugs into the official Codex Desktop native UI. Through a locally compiled CLI Shim it speaks the desktop's app-server protocol and connects native coding Harnesses — including Antigravity, Codex, Pi, Oh My Pi, Claude Code, DeepSeek Harness, OpenCode, Grok, OpenClaw, Hermes, Qoder, CodeBuddy, Kiro CLI, Cursor CLI, ZCode, Trae and Cline — into one UI. The Host Runtime and Protocol Core manage task mapping, collaboration and event projection; model calls, tool execution, native sessions and credentials stay owned by each Harness itself.
+
+## UI Preview
+
+<p align="center">
+  <img src="docs/images/codex-desktop-home.png" width="960" alt="Harness Mix in the Codex Desktop native home">
+</p>
+
+The preview comes from the current Codex Desktop native window: Harness Mix appears as a native extension entry in the desktop toolbar and the Composer, while sessions, models, tools and permissions remain managed by Codex Desktop and each Harness.
+
+| Module | Core capabilities | Entry points & notes |
+| :--- | :--- | :--- |
+| **🔄 Cross-Harness Task Handoff** | 4 handoff modes (continue / run plan / independent review / re-analyze) with smooth transitions | Composer handoff badge / `/switch`; persisted redacted checkpoints with evidence traceability |
+| **🎨 Skin Marketplace** | Built-in HeiGe and Codex Styler themes with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
+| **📚 History Import & Reference** | One-click import of Pi / Claude / Codex / CodeBuddy native history with interruptible resume; `#` references any past session with redacted context injected | References prefetch only the latest page; read-only MCP tools `get_session_info` / `list_session_messages` let Harnesses page through and read branch / model / usage metadata on demand |
+| **🤝 Multi-Agent Orchestration** | Type `#` to summon target Harnesses, manage them as capsule tags, dispatch under strong coordinator constraints | Composer `#` menu; loop review and verification, cascading subtask cancellation and timeout circuit breaking |
+| **🧩 Native Skills Management** | Covers the native skill directories of all 17 Harnesses, with root directories pre-created at session start | Settings → Skills; drag-and-drop install of a single `SKILL.md` or a complete folder |
+| **🛠️ Native MCP Extensions** | Local stdio and remote Streamable HTTP / SSE transports | Settings → MCP; custom headers supported, applied per Harness |
+| **📋 Native Message Queue** | Full integration of the Codex session queue (add / remove / edit, reorder, preempt and auto-drain) | Native Composer queue; queued messages are scheduled sequentially once the current turn completes |
+| **✅ Configurable Verification Gates** | Per-task off / advisory / required policies, built-in consistency checks and custom verification commands | Command palette `/gate`, `/verify`; required mode protects isolated branch merges and pushes |
+| **💾 Session Storage Governance** | schema v3 sharded lazy loading, lossless compact storage, migration backups and size diagnostics | Cold start reads only the task index; a task's Core checkpoint is restored only when it is opened |
+| **🩹 Failure Classification & Recovery** | Failed turns are classified as connection / login / quota / rejected / service fault, derived from native structured errors (Codex `codexErrorInfo` passthrough), status codes or message patterns, and honestly marked unknown when nothing matches | Error state follows the task projection; the Renderer can query `harnessmix/harness/turn-error` for the classification and actions (retry / go sign in / new session), and the login button only appears when the Harness truly supports it |
+| **🌐 ChatGPT Sidebar Bridge** | Safely redacts and extracts the current session context and generates a structured draft in one click | Web quick-chat panel; injected straight into ChatGPT for seamless cross-tool collaboration |
+| **👤 Account & Usage Isolation** | Codex multi-account isolation with instant switching; real-time Token / Credits tracking | Native sidebar and settings panel; each Harness manages its own credentials, models and approvals |
+
+### 🎨 Skin Marketplace Preview
+
+Theme assets ship with the project and the images use licensed material from this repository; applying a skin only changes the visual layer, never Codex's native interactions or Harness execution behavior.
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="src/assets/skins/heige/themes/miku-488137/hero.webp" width="360" alt="Miku theme"><br><sub>🎀 Miku</sub></td>
+    <td align="center"><img src="src/assets/skins/heige/themes/genshin-night/hero.webp" width="360" alt="Genshin Night theme"><br><sub>🌌 Genshin Night</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="src/assets/skins/heige/themes/deepspace-star/hero.webp" width="360" alt="Deepspace Star theme"><br><sub>🌠 Deepspace Star</sub></td>
+    <td align="center"><img src="src/assets/skins/heige/themes/wuthering-tide/hero.webp" width="360" alt="Wuthering Tide theme"><br><sub>🌊 Wuthering Tide</sub></td>
+  </tr>
+</table>
+
+## Native Harness Support Matrix
+
+> 💡 **Design principle**: every capability is honestly declared in the Adapter `manifest`, and the UI renders from real capabilities instead of guessing from names. Credentials, models, tools and permission approvals always remain under each native Harness's own control.
+
+| Harness | Native protocol | Streaming | Reasoning | Tool approval | User questions | Resume / Fork | Image attachments | Native Skills | MCP |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
+| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
+| **DeepSeek** | Plain Web Remote / collaboration ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ➖ |
+| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
+| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
+| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **ZCode** | Compatible ACP bridge | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Trae** | Compatible ACP bridge | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
+| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
+
+<sub>Note: ✅ means natively supported and wired end-to-end; ➖ means the upstream protocol currently does not expose or declare it; only Harnesses installed locally with a successful handshake enter real runs. See [Native ACP Deep Integration](docs/native-acp.md) and [Harness Management](docs/harness-management.md) for details.</sub>
+
+## Core Features
+
+### 🔄 Cross-Harness Task Handoff
+One Harness analyzes in depth, another writes the implementation, then you switch back to the original Harness for cross-review — all seamlessly within the same Codex Desktop native window:
+- **Context fully preserved**: conversation history, uncommitted code changes, Git status and review records all carry over.
+- **Persisted checkpoints**: hashed handoff snapshots with automatic redaction of test evidence and sensitive keys, pausable and resumable at any time.
+- **Independent session resume**: each Harness's native session and parameters are stored separately, and switching back invokes its native resume mechanism (e.g. Pi `--session` or Claude `resume`).
+- **Four handoff modes**: "Continue", "Run the previous plan", "Independent review" and "Re-analyze".
+
+### 🤝 Multi-Agent Collaboration
+- **Decoupled trigger**: type `#` in the native composer to open the collaboration menu (`#pi`, `#claude`, `#codex`, `#dsh`); the official `@` menu stays fully reserved for Codex native features.
+- **Tag visualization**: selected collaborating Agents appear as capsule tags above the composer, with click-to-remove and Backspace-to-undo.
+- **Strict orchestration constraints**: the coordinator is automatically injected with hard constraints that forbid dispatching to unspecified Harnesses; cascading cancellation and subtask timeout circuit breaking are built in.
+- **Real Agent Teams**: one Lead can organize up to six concurrent named Harness members; the Team, roles, shared task dependency graph and member mailboxes are all persisted by the Host, so teammates communicate, hand off and report directly instead of only returning parallel results to the Lead.
+- **Native Team Workbench**: expanding the details of the team cockpit at the top of a conversation shows the single lead, member roles, per-member task lanes, progress, message flow and event replay inside the Codex content stream — without covering the native sidebar, messages or composer. Member cards jump to their native subtasks. State refreshes live from the Host, and members keep using their own native Harness sessions, models, tools, permissions and accounts.
+- **Unified workspace capabilities**: every Harness uniformly gets Host-owned Git detection, worktree isolation and a final snapshot diff; native live diffs continue to layer on top according to each Harness's real protocol. An explicit isolation failure never degrades to a shared directory.
+
+### 🧩 Native Skills & MCP Management
+- **Zero-config pre-creation across 17 platforms**: opening a session pre-creates the native Skills root directories declared by all 17 Harnesses, so even newly installed Harnesses work out of the box.
+- **Drag-and-drop install**: in Settings → Skills, drop a single `SKILL.md` or a complete skill folder to install it, with safe path validation built in.
+- **Scoped and safe disabling**: switch seamlessly between Global and Project scopes; disabling moves skills into a retention directory and never damages user source files.
+- **Remote MCP support**: configure Streamable HTTP / SSE remote servers with custom headers.
+
+### 🎨 Skin Marketplace & Readability Protection
+- **Theme preview and switching**: preview and apply built-in themes in Settings → Skins, or restore the stock Codex look at any time.
+- **Full-UI coverage**: background, sidebar, message cards, composer, buttons and text colors all follow theme tokens.
+- **Dark-mode readability**: automatic overlays and contrast keep the sidebar, task lists and message content visible on dark backgrounds.
+- **Zero interaction intrusion**: no Codex controls are replaced, and models, tools, permissions, queues and native sessions are never modified.
+
+## Running Locally
+
+Development requires Windows, macOS or Linux, a recent Node.js LTS and npm. The app never reads or stores Harness account credentials — install and sign in with each native CLI first; see the [Cross-Platform Guide](docs/cross-platform.md) for platform prerequisites and on-device acceptance scope.
+```powershell
+git clone https://github.com/emo-xiaoyu/harness-mix.git
+cd harness-mix
+npm install
+```
+
+### Install from npm
+
+Harness Mix is published as the `@harness-mix/cli` npm package, and the command is still `harness-mix`. The current release bundles the native Shim for the platform that built it; on macOS/Linux, build from source on the target system — full details are in the [Cross-Platform Guide](docs/cross-platform.md).
+
+```powershell
+npm install --global @harness-mix/cli
+harness-mix
+```
+
+Upgrade to the latest version:
+
+```powershell
+npm update --global @harness-mix/cli
+```
+
+The first run restarts an already-open Codex Desktop. The npm package distributes Harness Mix itself only; each Harness's CLI, login state, model quota and permissions still need to be installed and configured locally as listed below.
+
+### How to Run
+
+Native mode (default): the locally compiled Shim and Renderer extension plug into the official Codex Desktop, and model selection routes to the corresponding Harness. The first launch restarts an already-open Codex Desktop:
+```powershell
+npm start
+```
+
+Common native dependencies:
+
+- Codex: install `@openai/codex` and make sure the `codex` command is available.
+- Pi: make sure `pi.cmd` is available.
+- Claude Code: the SDK ships as an npm dependency; authentication stays managed by the Claude Code environment.
+- DeepSeek Harness: uses the `@deepseek-ai/dsh@0.1.2-rc.1` version locked by this project. `HARNESS_MIX_DSH_ROOT` may explicitly point at a source checkout, but the version must be supported by the kernel.
+- CodeBuddy: install the official `codebuddy` CLI and sign in; old WorkBuddy installs keep working through a compatibility alias.
+- Kiro CLI: install `kiro-cli`, enable the `acp` subcommand and sign in.
+- Cursor CLI: install `cursor-agent` and sign in.
+- Cline: install `cline` (`npm i -g cline`) and sign in via `cline auth`; Harness Mix connects through the official `cline --acp`.
+- Qoder: install `qodercli` (or `qoder`) and sign in; the ACP entry depends on the installed version.
+- ZCode / Trae: only set `HARNESS_MIX_ZCODE_ACP_EXECUTABLE` / `HARNESS_MIX_TRAE_EXECUTABLE` when you have a verified ACP-compatible bridge; the project never guesses official entry points.
+
+See [Native Codex Integration](docs/native-codex.md) for wiring, data directories and verification notes.
+
+## Verification
+
+```powershell
+npm run check
+npm run test:core-all
+npm run e2e:native
+npm run smoke:native-ui
+```
+
+When native Adapters are involved, also run the corresponding real chains:
+
+```powershell
+npm run e2e:pi
+npm run e2e:dsh
+npm run e2e:claude
+npm run e2e:codex
+```
+
+Some E2E suites launch real Harnesses and may require local installs, sign-in or model quota. Test artifacts are written to `output/` and should not be committed.
+
+## License
+
+Harness Mix is dual-licensed under [Apache License 2.0](LICENSE) or [MIT](LICENSE-MIT), at your option. Third-party components remain subject to their own licenses; see [NOTICE](NOTICE) for attribution.
+
 ## Acknowledgements
 
 Harness Mix owes a lot to the open-source projects below. All of them publish their work in their own repositories, and this project's architecture, protocol wiring and interface details have benefited from them:
 
-- [BytePioneer-AI/codex-host](https://github.com/BytePioneer-AI/codex-host) — the upstream basis for the native Codex Desktop integration (renderer extension, desktop control, shared contracts), and the source of its overall layering and protocol wiring.
+- BytePioneer-AI's Codex Desktop integration project (MIT) — the upstream basis for the native Codex Desktop integration (renderer extension, desktop control, shared contracts), and the source of its overall layering and protocol wiring.
 - [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) — the orchestration approach behind the multi-Agent collaboration runtime.
 - [xintaofei/codeg](https://github.com/xintaofei/codeg) — a reference for the tool protocol and multi-Harness wiring.
 - [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) — the artwork bundled in the skin marketplace.

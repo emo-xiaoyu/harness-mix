@@ -57,7 +57,7 @@ Cursor 在 Windows 上识别官方版本目录并直接运行其 Node bundle。
 
 ## 能力边界
 
-- 这是针对本项目接口实现的适配，不是完整移植 codex-host 的插件系统。
+- 这是针对本项目接口实现的适配，不是完整移植上游项目的插件系统。
 - 原生子 Agent 的独立卡片、后台生命周期与子会话历史浏览尚未实现。
   CodeBuddy 带 parentToolCallId 的子 Agent 内容不会混入父回答。
 - Kiro fork 只读取并校验原生 session.json/messages.jsonl 的最新完整 turn_end，
@@ -121,7 +121,7 @@ Antigravity、Pi、Claude Code、Codex、Grok、CodeBuddy；DSH/OpenClaw 的当�
 
 ## 参考与图标
 
-协议字段对照了 [codex-host 7cc4db87](https://github.com/BytePioneer-AI/codex-host/tree/7cc4db87fe5e5aa7f232e592a6ff8f0ff96534c9/packages/adapters)
+协议字段对照了上游 adapters 提交（7cc4db87）
 的 codebuddy、kiro-cli、cursor-cli 实现及接口说明；其测试结果不视为本项目证据。
 CodeBuddy 和 Cursor 图标取自该提交的官方品牌资源副本，Kiro 沿用仓库已有
 官方 SVG。品牌标志归原所有者所有，不表示厂商背书。
