@@ -81,7 +81,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 | **📋 原生消息队列** | 完整接入 Codex 会话排队机制（增删改查、排序、插队抢占与自动排空） | 原生 Composer 队列；当前回合完成后自动顺序调度执行排队消息 |
 | **✅ 可配置验证门禁** | 任务级 off / advisory / required 策略，内置一致性检查与自定义验证命令 | 命令面板 `/gate`、`/verify`；强制模式保护隔离分支合并与推送 |
 | **💾 会话存储治理** | schema v3 分片惰性加载、无损紧凑存储、迁移备份与体积诊断 | 冷启动只读任务索引；打开任务时才恢复对应 Core checkpoint |
-| **🩹 失败分类与恢复** | 失败回合归类为连接 / 登录 / 额度 / 被拒 / 服务异常五类，分类来自原生结构化错误（Codex `codexErrorInfo` 透传）、状态码或消息特征，无法归类时诚实标注 unknown | 错误状态随任务投影；Renderer 可查 `codexhost/harness/turn-error` 获取分类与动作（重试 / 去登录 / 新建会话），login 按钮按 Harness 真实登录能力出现 |
+| **🩹 失败分类与恢复** | 失败回合归类为连接 / 登录 / 额度 / 被拒 / 服务异常五类，分类来自原生结构化错误（Codex `codexErrorInfo` 透传）、状态码或消息特征，无法归类时诚实标注 unknown | 错误状态随任务投影；Renderer 可查 `harnessmix/harness/turn-error` 获取分类与动作（重试 / 去登录 / 新建会话），login 按钮按 Harness 真实登录能力出现 |
 | **🌐 ChatGPT 侧边栏桥接** | 安全脱敏提取当前会话上下文并一键生成结构化草稿 | Web 快捷聊天面板；直通注入 ChatGPT，实现跨工具无缝协作 |
 | **👤 账户与用量隔离** | Codex 多账户隔离与即时切换；实时追踪 Token / Credits 用量 | 原生侧边栏与设置面板；各 Harness 凭据、模型与审批原生自理 |
 
@@ -139,6 +139,9 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - **触发符解耦**：在原生输入框输入 `#` 调出协同菜单（`#pi`、`#claude`、`#codex`、`#dsh`），完全保留官方 `@` 菜单给 Codex 原生功能。
 - **标签可视化**：已选协同 Agent 在输入框顶部呈现为胶囊标签，支持点击快速删除或 Backspace 撤销。
 - **严谨编排约束**：自动为主控 Coordinator 注入硬约束，严禁越界派发给未指定的 Harness；完善级联取消与子任务超时熔断机制。
+- **真正的 Agent Team**：一个 Lead 可组织最多六个并发的具名 Harness 成员；Team、职责、共享任务依赖图和成员邮箱均由 Host 持久化，teammate 可直接定向通信、交接和反馈，而不是只把并行结果返回 Lead。
+- **原生 Team Workbench**：对话顶部团队驾驶舱点击「展开详情」后在 Codex 内容流内显示唯一主导者、各成员职责、独立任务列、进度、通信流和事件回放，不覆盖原生侧栏、消息或输入框；成员卡片可跳转其原生子任务。状态直接向 Host 实时刷新，各成员仍使用自己的原生 Harness Session、模型、工具、权限和账户。
+- **统一 Workspace 能力**：全部 Harness 由 Host 统一获得 Git 探测、Worktree 隔离和最终快照 Diff；原生实时 Diff 继续按各 Harness 实际协议叠加。显式隔离失败不会降级到共享目录。
 
 ### 🧩 原生 Skills 与 MCP 管理
 - **17 平台免配置预建**：打开会话时自动预建全部 17 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。

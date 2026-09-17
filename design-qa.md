@@ -1,82 +1,55 @@
-# Skin visual and readability QA
+# Agent Team Six-Role Workbench Design QA
 
-- Source visual truth: `C:\Users\laofeng\AppData\Local\Temp\codex-clipboard-cecde24c-cc35-4fb5-8a06-f4d21f604567.png`
-- Implementation screenshot: `E:\harness-mix\output\native-ui-smoke\skin-miku-full.png`
-- Combined comparison: `C:\Users\laofeng\.codex\visualizations\2026\09\15\01a0a50c-06cc-7a50-8f95-647f7a7b9dc5\miku-reference-vs-harness-mix.png`
-- Readability source: `C:\Users\laofeng\AppData\Local\Temp\codex-clipboard-23ec311a-e932-4318-a966-e70c980509ae.png`
-- Readability implementation: `E:\harness-mix\output\native-ui-smoke\skin-conversation-readable.png`
-- Readability comparison: `C:\Users\laofeng\.codex\visualizations\2026\09\15\01a0a50c-06cc-7a50-8f95-647f7a7b9dc5\skin-readability-before-after.png`
-- Dark-theme issue sources: `C:\Users\laofeng\AppData\Local\Temp\codex-clipboard-ad951004-e4af-44c1-9879-15b93f4c8b95.png`, `C:\Users\laofeng\AppData\Local\Temp\codex-clipboard-0c5743c1-7578-41cf-a69a-49d53111cf56.png`
-- Dark-theme implementation fixture: `E:\harness-mix\output\native-ui-smoke\skin-dark-all-surfaces.png`
-- Dark-theme live Codex evidence: `C:\Users\laofeng\.codex\visualizations\2026\09\15\01a0a50c-06cc-7a50-8f95-647f7a7b9dc5\dark-skin-all-surfaces-live.png`
-- Light-to-dark live switch evidence: `C:\Users\laofeng\.codex\visualizations\2026\09\15\01a0a50c-06cc-7a50-8f95-647f7a7b9dc5\light-to-dark-switch-live.png`
-- Viewport: 1055 x 616 CSS pixels
-- Source pixels: 1055 x 616
-- Implementation pixels: 1055 x 616
-- Density normalization: both compared at 1:1 pixel dimensions; Electron capture used device scale factor 1
-- State: light Miku theme on the new-task surface, sidebar visible, suggestion cards and composer visible
+- Source visual truth: `C:/Users/laofeng/AppData/Local/Temp/codex-clipboard-0c2e9b83-a19e-4a5f-83c1-4ed2e77f9cb2.png`
+- Implementation compact capture: `E:/harness-mix/output/collaboration-ui/team-inline-compact-focus.png`
+- Implementation expanded capture: `E:/harness-mix/output/collaboration-ui/team-inline-expanded-focus.png`
+- Side-by-side comparison: `E:/harness-mix/output/collaboration-ui/team-six-role-comparison.png`
+- Source pixels: `1680 x 945`; implementation expanded pixels: `960 x 518`
+- Comparison canvas: `1920 x 540`; source normalized to `960 x 540`, implementation retained at `960 x 518` and vertically centered
+- Implementation viewport: `1024 x 716` CSS pixels at density `1x`
+- State: one active Lead, six specialist Harness members, six assigned tasks, team activity, compact and expanded states
 
-## Full-view comparison evidence
+## Findings
 
-The combined comparison shows the same supplied Miku hero filling the main work area, a pale translucent sidebar, readable translucent suggestion cards and composer, the supplied Miku logo in the sidebar header, and the supplied polaroid decoration at the lower right. Harness Mix intentionally retains the current Windows Codex layout and its Settings -> Skins entry instead of cloning HeiGe's separate top-center theme launcher.
+No actionable P0, P1, or P2 findings remain.
 
-## Focused-region comparison evidence
+- Fonts and typography: system UI fonts, compact weights, truncation, and small status labels match the information density of Codex Desktop while keeping responsibilities readable.
+- Spacing and layout rhythm: the unique Lead is centered above the specialist lanes; member lanes, task cards, progress, and activity use a consistent compact grid within the native conversation width.
+- Colors and visual tokens: the implementation inherits `Canvas` and current text colors, using restrained semantic status colors rather than copying the reference application's unrelated orange palette.
+- Image quality and asset fidelity: all Lead/member avatars use the repository's real Harness icon catalog. The reference robot mascots are inspiration for role hierarchy, not assets copied into Harness Mix.
+- Copy and content: the panel explicitly labels `主导者`, shows every member's responsibility, Harness identity, state, assigned tasks, progress, and team communication.
 
-A separate crop was not required. At 1055 x 616, the full-view comparison keeps the logo, main-surface transparency, card treatment, composer treatment, and polaroid large enough to judge without ambiguity.
-
-## Required fidelity surfaces
-
-- Fonts and typography: native Codex typography remains owned by Codex; the theme does not replace application fonts. Foreground colors are mapped to the theme palette and remain legible over the automatic veils.
-- Spacing and layout rhythm: native Codex layout remains unchanged. Theme decoration is responsive; the polaroid scales with viewport width and disappears below 760 px to avoid covering controls.
-- Colors and visual tokens: Miku surface, secondary, accent, and text colors are applied to Codex and Harness Mix tokens. Main, sidebar, cards, messages, active task, and composer surfaces use bounded transparency.
-- Image quality and asset fidelity: the original bundled `hero.webp`, `logo.webp`, and `polaroid.webp` are used directly. No placeholder, CSS drawing, or generated substitute is present.
-- Copy and content: native Codex and Harness Mix copy is preserved. The theme changes appearance only.
-
-## Comparison history
+## Comparison History
 
 ### Iteration 1
 
-- P1: the main workspace remained opaque white, exposing the hero only through the sidebar.
-- P2: Miku's supplied logo and polaroid assets were bundled but not rendered.
-- Fixes: moved the layered hero to `#root`, added stable Codex main-surface selectors, made conversation/composer/card surfaces translucent, and wired the two Miku decoration assets.
+- Finding [P1]: the earlier Team view visually treated Lead and members as peers, so ownership and responsibility were unclear.
+- Finding [P2]: tasks were grouped by dependency depth rather than by responsible member, unlike the selected prototype.
+- Finding [P2]: the existing runtime allowed only four team members/concurrent jobs while the selected prototype showed six active specialists.
+- Fixes: introduced a centered unique Lead stage; added six horizontally browsable specialist lanes with explicit responsibilities, per-member task progress and task cards; retained a separate team activity rail; increased the real Host schema and concurrency gate to six members/jobs.
+- Post-fix evidence: `team-inline-expanded-focus.png` and `team-six-role-comparison.png` show the corrected Lead-to-specialist hierarchy and role-owned work.
 
 ### Iteration 2
 
-- P2: the first Electron fixture retained outer padding and dark generic button styling, which made the comparison misleading and allowed the polaroid to crowd the rightmost card.
-- Fixes: normalized the fixture to the exact viewport, exercised Codex token classes on cards, removed inherited outer padding, and reduced the responsive decoration width.
-- Post-fix evidence: `skin-miku-full.png` and the combined comparison show the complete background with readable native surfaces and both decorations.
+- Finding [P2]: native horizontal scrollbars dominated the compact summary and role lanes at the Codex content width.
+- Fix: retained keyboard/touchpad horizontal scrolling and the `横向滚动查看更多` affordance while hiding the heavy platform scrollbar.
+- Post-fix evidence: the final focused capture keeps the six-member summary visible and the expanded lanes visually clean without page-level overflow.
 
-### Iteration 3
+## Focused Region Comparison
 
-- P1: conversation text was rendered directly over high-contrast artwork, so dark text crossed dark areas and became difficult to read.
-- Fixes: conversation content now receives a 90% theme-surface reading card, bounded border, padding, and shadow. Nested assistant wrappers avoid double cards, and reduced-transparency mode makes the card fully opaque.
-- Post-fix evidence: `skin-readability-before-after.png` shows the formerly low-contrast Dragon Ball conversation beside the corrected reading-card treatment at the same 1020 x 716 dimensions.
+The source is a standalone wide workbench, while Harness Mix must remain inside the narrower Codex conversation region. The comparison therefore evaluates the requested hierarchy and information architecture rather than copying the source application's sidebar, chrome, video overlay, or mascot art. At narrow width, four detailed lanes are visible and the remaining two are reachable through contained horizontal scrolling; all six remain visible in the compact summary.
 
-### Iteration 4
+## Interaction Verification
 
-- P1: the current Codex Desktop release introduced a broader semantic token set. Dark skins changed the artwork and legacy foregrounds, while the title bar, sidebar labels, tool/status content, review card, file rows, composer, menus, editor and workbench surfaces continued to resolve through official light-theme tokens. This produced both dark text over dark artwork and light text over opaque white cards.
-- Fixes: mapped the current `--color-*`, `--app-color-*`, `--wb-*`, and relevant `--vscode-*` neutral foreground, surface, border and interaction tokens to each skin palette. Success, warning, danger and info colors remain semantic; no blanket descendant color rule was added.
-- Interaction safety: the production DOM retained 276 buttons and 8 input/editable controls before and after the live token patch. No node, event handler, hit target, focus behavior, model route, Harness route or permission path was changed.
-- Post-fix evidence: `dark-skin-all-surfaces-live.png` shows the real running Codex Desktop with readable title bar, sidebar, conversation, review card, file rows, status values and composer. The review surface resolves to dark theme color at 48% alpha and the composer to the same family at 82.8% alpha, both with `rgb(240, 230, 200)` foreground.
+- Compact summary exposes all six named members and their responsibilities.
+- `展开详情` opens an in-flow panel without fixed positioning or body scroll lock.
+- Lead is unique and visually separated from specialist members.
+- Each member owns a responsibility label, progress indicator, task list, status, and native Harness-session navigation.
+- Team activity, live refresh, timeline selection, playback, collapse, Escape, and member navigation remain functional.
+- Host validation accepts six members, runs six concurrent native subtasks, rejects a seventh concurrent job, and retains the sixteen-subtasks-per-lead-turn limit.
 
-### Iteration 5
+## Follow-up Polish
 
-- P1: switching skins in the already-running pre-build Renderer replaced the primary skin style node and removed the earlier one-theme live patch. The selected background changed, but `--color-text-primary` reverted to official light-theme `#1a1c1f` and elevated surfaces reverted to white.
-- Fixes: the production stylesheet already emits the complete foreground and surface mapping on every `applyRendererSkin()` call. The Electron smoke now explicitly applies a light skin and then a dark skin in the same DOM, asserting the active skin, changed surface color, preserved control counts and non-white dark review/composer surfaces.
-- Live-session recovery: installed a separate palette-token style node for every bundled non-native skin, then exercised the actual Settings skin action from Miku to Gilded Grandeur. Because this node is separate from the replaceable hero stylesheet, subsequent skin changes in the current pre-restart session keep the contrast mapping.
-- Post-fix evidence: `light-to-dark-switch-live.png` shows the real running Codex Desktop after the light-to-dark action with readable chrome, navigation, message, status and composer text. The DOM retained 276 buttons and 8 input/editable controls.
-
-## Validation
-
-- Target interaction: Settings -> Skins -> switch from Nocturne to Miku -> `data-harness-mix-skin="miku-488137"` and the generated skin stylesheet are active.
-- Renderer behavior: Electron smoke passed with hero, logo, and polaroid computed as bundled WebP backgrounds.
-- Framework/error overlay: none present in the captured implementation.
-- Console/runtime health: no renderer exception escaped the Electron smoke flow.
-- Automated checks: 67 Native UI test files / 591 tests passed; native UI typecheck passed; core suite passed; native build passed.
-
-## Residual limits
-
-- A restarted production Codex Desktop was not used because doing so would terminate the active Codex session. The Electron renderer fixture verifies the CSS and asset composition, but a separate reopened-window pass is still required for final production-version selector compatibility.
-- Exact card placement and application chrome differ between the reference macOS build and the current Windows Codex build by design.
+- [P3] If Codex later exposes a stable resizable native split-pane contract, the activity rail could become user-resizable instead of using a fixed 27% track.
 
 final result: passed
