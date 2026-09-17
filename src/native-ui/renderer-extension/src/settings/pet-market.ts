@@ -24,6 +24,9 @@ const COPY = {
     installedBadge: "Installed",
     uninstall: "Uninstall",
     uninstalling: "Removing...",
+    retry: "Retry",
+    installFailed: "Install failed",
+    uninstallFailed: "Uninstall failed",
     tip: "Select in Appearance > Pets or type /pet to wake",
     empty: "No pets match the current filter.",
     officialBadge: "Official",
@@ -46,6 +49,9 @@ const COPY = {
     installedBadge: "已安装",
     uninstall: "卸载",
     uninstalling: "卸载中...",
+    retry: "重试",
+    installFailed: "安装失败",
+    uninstallFailed: "卸载失败",
     tip: "安装后在官方设置「外观 > 桌宠」或输入 /pet 指令唤醒伴侣",
     empty: "没有找到符合条件的桌宠。",
     officialBadge: "官方预载",
@@ -54,6 +60,10 @@ const COPY = {
 } as const;
 
 type PetTab = "all" | "official" | "community" | "installed";
+type PetOperation = "install" | "uninstall";
+type PetOperationState =
+  | { readonly status: "installing" | "uninstalling" }
+  | { readonly status: "failed"; readonly op: PetOperation; readonly error: string };
 
 const SPRITE_COLUMNS = 8;
 const SPRITE_FRAMES = 6;
@@ -71,6 +81,7 @@ function setupSpriteAnimation(
 
   let currentFrame = 0;
   let timer: number | null = null;
+  let idleTimeout: number | null = null;
   let isHovered = false;
 
   const tick = () => {
@@ -115,13 +126,21 @@ function setupSpriteAnimation(
   const idleInterval = window.setInterval(() => {
     if (!isHovered && timer === null) {
       startLoop();
-      setTimeout(stopLoop, FRAME_DURATION_MS * SPRITE_FRAMES);
+      if (idleTimeout !== null) window.clearTimeout(idleTimeout);
+      idleTimeout = window.setTimeout(() => {
+        idleTimeout = null;
+        stopLoop();
+      }, FRAME_DURATION_MS * SPRITE_FRAMES);
     }
   }, 4000 + Math.random() * 3000);
 
   return () => {
     stopLoop();
     clearInterval(idleInterval);
+    if (idleTimeout !== null) {
+      window.clearTimeout(idleTimeout);
+      idleTimeout = null;
+    }
     if (parentCard) {
       parentCard.removeEventListener("mouseenter", onMouseEnter);
       parentCard.removeEventListener("mouseleave", onMouseLeave);
@@ -199,8 +218,52 @@ export function createPetSettingsPage(
 
       let allPets: RendererPetItem[] = [];
       const imageCache = new Map<string, string>(); // id -> dataUrl / url
+      // 每个 pet 的操作状态机：installing / uninstalling / failed（含错误与失败操作类型）
+      const petStates = new Map<string, PetOperationState>();
+      // 渲染世代：重渲染后让在途的 preview 回调失效，避免给已分离的 DOM 节点挂动画
+      let renderEpoch = 0;
+
+      const runPetOperation = (pet: RendererPetItem, op: PetOperation) => {
+        const client = getClient();
+        const current = petStates.get(pet.id);
+        // 操作进行中禁止重复触发；failed 状态允许重试
+        if (!client || (current && current.status !== "failed")) return;
+        petStates.set(pet.id, {
+          status: op === "install" ? "installing" : "uninstalling",
+        });
+        renderGrid();
+        const settle = (installed: boolean, failure: string | null) => {
+          if (failure === null) {
+            petStates.delete(pet.id);
+          } else {
+            petStates.set(pet.id, { status: "failed", op, error: failure });
+          }
+          allPets = allPets.map((p) =>
+            p.id === pet.id ? { ...p, installed } : p,
+          );
+          renderGrid();
+        };
+        const onSuccess = () => settle(op === "install", null);
+        const onFailure = (err: unknown) =>
+          settle(pet.installed, err instanceof Error ? err.message : String(err));
+        if (op === "install") {
+          void client
+            .install({
+              id: pet.id,
+              displayName: pet.displayName,
+              description: pet.description,
+              spritesheetUrl: pet.spritesheetUrl,
+              spriteVersionNumber: pet.spriteVersionNumber,
+            })
+            .then(onSuccess, onFailure);
+        } else {
+          void client.uninstall(pet.id).then(onSuccess, onFailure);
+        }
+      };
 
       const renderGrid = () => {
+        renderEpoch += 1;
+        const epoch = renderEpoch;
         // Clear previous animations
         for (const d of disposers) d();
         disposers.length = 0;
@@ -229,10 +292,12 @@ export function createPetSettingsPage(
         }
 
         for (const pet of filtered) {
+          const opState = petStates.get(pet.id);
           const card = document.createElement("article");
           card.className = "pet-card";
           card.dataset.petId = pet.id;
           card.dataset.installed = String(pet.installed);
+          if (opState) card.dataset.state = opState.status;
 
           // Stage
           const stage = document.createElement("div");
@@ -241,49 +306,6 @@ export function createPetSettingsPage(
           const sprite = document.createElement("div");
           sprite.className = "pet-card__sprite";
           stage.append(sprite);
-
-          // Load visual asset
-          const client = getClient();
-          const cachedImg = imageCache.get(pet.id);
-          if (cachedImg) {
-            const disposeAnim = setupSpriteAnimation(sprite, cachedImg, pet.spriteVersionNumber);
-            disposers.push(disposeAnim);
-          } else if (pet.spritesheetUrl) {
-            imageCache.set(pet.id, pet.spritesheetUrl);
-            const disposeAnim = setupSpriteAnimation(
-              sprite,
-              pet.spritesheetUrl,
-              pet.spriteVersionNumber,
-            );
-            disposers.push(disposeAnim);
-          } else if (client) {
-            // Load base64 preview on demand
-            void client.preview(pet.id).then(
-              (res) => {
-                if (res && res.dataBase64) {
-                  const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
-                  imageCache.set(pet.id, dataUrl);
-                  const disposeAnim = setupSpriteAnimation(
-                    sprite,
-                    dataUrl,
-                    pet.spriteVersionNumber,
-                  );
-                  disposers.push(disposeAnim);
-                }
-              },
-              () => {
-                if (pet.previewUrl) {
-                  sprite.style.backgroundImage = `url("${pet.previewUrl}")`;
-                  sprite.style.backgroundSize = "contain";
-                  sprite.style.backgroundPosition = "center";
-                }
-              },
-            );
-          } else if (pet.previewUrl) {
-            sprite.style.backgroundImage = `url("${pet.previewUrl}")`;
-            sprite.style.backgroundSize = "contain";
-            sprite.style.backgroundPosition = "center";
-          }
 
           // Body
           const body = document.createElement("div");
@@ -299,7 +321,13 @@ export function createPetSettingsPage(
           const badges = document.createElement("div");
           badges.className = "pet-card__badges";
 
-          if (pet.installed) {
+          if (opState?.status === "failed") {
+            const b = document.createElement("span");
+            b.className = "pet-card__badge pet-card__badge--failed";
+            b.textContent =
+              opState.op === "install" ? copy.installFailed : copy.uninstallFailed;
+            badges.append(b);
+          } else if (pet.installed) {
             const b = document.createElement("span");
             b.className = "pet-card__badge pet-card__badge--installed";
             b.append(createRendererSettingsIcon("check", 12), copy.installedBadge);
@@ -333,68 +361,110 @@ export function createPetSettingsPage(
           const actions = document.createElement("div");
           actions.className = "pet-card__actions";
 
-          if (pet.installed) {
+          if (opState?.status === "installing" || opState?.status === "uninstalling") {
+            // 操作进行中：按钮禁用，防止重复点击（runPetOperation 内还有 petStates 防重入）
+            const busyBtn = document.createElement("button");
+            busyBtn.type = "button";
+            busyBtn.className =
+              opState.status === "installing"
+                ? "pet-btn pet-btn--primary"
+                : "pet-btn pet-btn--danger";
+            busyBtn.disabled = true;
+            busyBtn.textContent =
+              opState.status === "installing" ? copy.installing : copy.uninstalling;
+            actions.append(busyBtn);
+          } else if (opState?.status === "failed") {
+            // 失败后错误显示在卡片内，重试按钮恢复对应操作
+            const retryBtn = document.createElement("button");
+            retryBtn.type = "button";
+            retryBtn.className =
+              opState.op === "install"
+                ? "pet-btn pet-btn--primary"
+                : "pet-btn pet-btn--danger";
+            retryBtn.textContent = copy.retry;
+            retryBtn.addEventListener("click", () => runPetOperation(pet, opState.op));
+            actions.append(retryBtn);
+          } else if (pet.installed) {
             const uninstallBtn = document.createElement("button");
             uninstallBtn.type = "button";
             uninstallBtn.className = "pet-btn pet-btn--danger";
             uninstallBtn.textContent = copy.uninstall;
-            uninstallBtn.addEventListener("click", () => {
-              if (!client) return;
-              uninstallBtn.disabled = true;
-              uninstallBtn.textContent = copy.uninstalling;
-              void client.uninstall(pet.id).then(
-                () => {
-                  allPets = allPets.map((p) =>
-                    p.id === pet.id ? { ...p, installed: false } : p,
-                  );
-                  renderGrid();
-                },
-                (err) => {
-                  uninstallBtn.disabled = false;
-                  uninstallBtn.textContent = copy.uninstall;
-                  alert(err instanceof Error ? err.message : String(err));
-                },
-              );
-            });
+            uninstallBtn.addEventListener("click", () =>
+              runPetOperation(pet, "uninstall"),
+            );
             actions.append(uninstallBtn);
           } else {
             const installBtn = document.createElement("button");
             installBtn.type = "button";
             installBtn.className = "pet-btn pet-btn--primary";
             installBtn.textContent = copy.install;
-            installBtn.addEventListener("click", () => {
-              if (!client) return;
-              installBtn.disabled = true;
-              installBtn.textContent = copy.installing;
-              void client
-                .install({
-                  id: pet.id,
-                  displayName: pet.displayName,
-                  description: pet.description,
-                  spritesheetUrl: pet.spritesheetUrl,
-                  spriteVersionNumber: pet.spriteVersionNumber,
-                })
-                .then(
-                  () => {
-                    allPets = allPets.map((p) =>
-                      p.id === pet.id ? { ...p, installed: true } : p,
-                    );
-                    renderGrid();
-                  },
-                  (err) => {
-                    installBtn.disabled = false;
-                    installBtn.textContent = copy.install;
-                    alert(err instanceof Error ? err.message : String(err));
-                  },
-                );
-            });
+            installBtn.addEventListener("click", () =>
+              runPetOperation(pet, "install"),
+            );
             actions.append(installBtn);
           }
 
           footer.append(hint, actions);
-          body.append(cardHeader, desc, footer);
+
+          // 操作状态/错误显示在卡片内（而非全局弹窗）
+          if (opState?.status === "failed") {
+            const errorBox = document.createElement("div");
+            errorBox.className = "pet-card__error";
+            errorBox.textContent = opState.error;
+            body.append(cardHeader, desc, errorBox, footer);
+          } else if (opState) {
+            const statusLine = document.createElement("div");
+            statusLine.className = "pet-card__status";
+            statusLine.textContent =
+              opState.status === "installing" ? copy.installing : copy.uninstalling;
+            body.append(cardHeader, desc, statusLine, footer);
+          } else {
+            body.append(cardHeader, desc, footer);
+          }
           card.append(stage, body);
           grid.append(card);
+
+          // Load visual asset（必须在 card 挂载后进行，setupSpriteAnimation 依赖 closest('.pet-card')）
+          const cachedImg = imageCache.get(pet.id);
+          if (cachedImg) {
+            disposers.push(
+              setupSpriteAnimation(sprite, cachedImg, pet.spriteVersionNumber),
+            );
+          } else if (pet.spritesheetUrl) {
+            imageCache.set(pet.id, pet.spritesheetUrl);
+            disposers.push(
+              setupSpriteAnimation(sprite, pet.spritesheetUrl, pet.spriteVersionNumber),
+            );
+          } else {
+            const showStaticPreview = () => {
+              if (!pet.previewUrl) return;
+              sprite.style.backgroundImage = `url("${pet.previewUrl}")`;
+              sprite.style.backgroundSize = "contain";
+              sprite.style.backgroundPosition = "center";
+            };
+            const client = getClient();
+            if (client) {
+              // Load base64 preview on demand；重渲染/卸载后丢弃过期回调，避免泄漏动画定时器
+              void client.preview(pet.id).then(
+                (res) => {
+                  if (epoch !== renderEpoch || !sprite.isConnected) return;
+                  if (res && res.dataBase64) {
+                    const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
+                    imageCache.set(pet.id, dataUrl);
+                    disposers.push(
+                      setupSpriteAnimation(sprite, dataUrl, pet.spriteVersionNumber),
+                    );
+                  }
+                },
+                () => {
+                  if (epoch !== renderEpoch || !sprite.isConnected) return;
+                  showStaticPreview();
+                },
+              );
+            } else {
+              showStaticPreview();
+            }
+          }
         }
       };
 
@@ -439,8 +509,20 @@ export function createPetSettingsPage(
       }
 
       return () => {
+        renderEpoch += 1; // 使在途 preview 回调失效
         for (const d of disposers) d();
         disposers.length = 0;
+        // 释放图片缓存（blob: URL 需要显式 revoke；data: URL 仅释放引用）
+        for (const url of imageCache.values()) {
+          if (url.startsWith("blob:")) {
+            try {
+              URL.revokeObjectURL(url);
+            } catch {
+              /* 忽略撤销失败 */
+            }
+          }
+        }
+        imageCache.clear();
       };
     },
   });
