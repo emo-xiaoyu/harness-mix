@@ -6,7 +6,7 @@ const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const { nativePaths, nativeEnvironment, saveNativeSettings } = require('./config');
 const { runUpdateFlow, reexecLauncher } = require('./updater');
 const { markBootOk, pidAlive } = require('./update-state');
-const { inspectPosix, assertDesktopStopped } = require('./platform');
+const { inspectPosix, assertDesktopStopped, migrateLegacyDataDirectory } = require('./platform');
 const {
   evaluateDesktopCompatibility,
   enforceDesktopCompatibility,
@@ -133,7 +133,7 @@ async function launch(args = []) {
   const flags = new Set(args);
   const unknown = args.filter(arg => !['--check', '--update', '--no-update', '--restart'].includes(arg));
   if (unknown.length) throw new Error('Unsupported Launcher arguments');
-  const dataDir = nativeEnvironment().CODEXHOST_DATA_DIR;
+  const dataDir = nativeEnvironment().HARNESSMIX_DATA_DIR;
   if (!flags.has('--check') && isCodexTaskEnvironment()) {
     throw new Error('拒绝从 Codex 任务内部启动或重启 Harness Mix：这会终止当前 Codex Desktop 和正在执行的任务。请在 Codex 外部终端运行 Start-Codex.cmd 或 npm start。');
   }
@@ -182,20 +182,24 @@ async function launch(args = []) {
     console.warn(`[Harness Mix] Codex Desktop ${installation.version} compatibility is ${compatibility.state}; protocol checks continue, but full restarted Desktop acceptance is not recorded.`);
   }
   const env = nativeEnvironment();
+  // Retire the previous runtime first: it still holds the data directory open and
+  // would otherwise write over the sessions and accounts being relocated. Only
+  // then relocate a pre-rename directory and record the executable locations.
+  console.log('[Harness Mix] Restarting Codex Desktop: official Codex passthrough + Harness Mix routes.');
+  stopDesktopProcesses(installation);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  sweepLeftovers(root, dataDir);
+  migrateLegacyDataDirectory({ log: message => console.log(message) });
   saveNativeSettings(env);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'node-path.txt'), process.execPath);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'stock-path.txt'), installation.stock);
   const port = await freePort();
   const attachmentPort = await freePort();
   const nonce = crypto.randomBytes(16).toString('hex');
-  const overrides = { CODEX_CLI_PATH: paths.shim, CODEXHOST_STOCK_CODEX_PATH: installation.stock,
-    CODEXHOST_DATA_DIR: env.CODEXHOST_DATA_DIR, HARNESS_MIX_NODE_PATH: process.execPath,
-    CODEXHOST_DEFAULT_AGENT: 'codex' };
+  const overrides = { CODEX_CLI_PATH: paths.shim, HARNESSMIX_STOCK_CODEX_PATH: installation.stock,
+    HARNESSMIX_DATA_DIR: env.HARNESSMIX_DATA_DIR, HARNESS_MIX_NODE_PATH: process.execPath,
+    HARNESSMIX_DEFAULT_AGENT: 'codex' };
   const block = Buffer.from(Object.entries(overrides).map(([k, v]) => `${k}=${v}`).join('\0') + '\0\0', 'utf16le').toString('base64');
-  console.log('[Harness Mix] Restarting Codex Desktop: official Codex passthrough + Harness Mix routes.');
-  stopDesktopProcesses(installation);
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  sweepLeftovers(root, dataDir);
   let desktop;
   let pid;
   if (process.platform === 'win32') {
