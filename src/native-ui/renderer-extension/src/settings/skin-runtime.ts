@@ -16,6 +16,7 @@ import gildedGrandeurHero from "../../../../assets/skins/codex-styler/themes/gil
 import merryBigTopHero from "../../../../assets/skins/codex-styler/themes/merry-big-top/hero.webp";
 import nocturneStudioHero from "../../../../assets/skins/codex-styler/themes/nocturne-studio/hero.webp";
 import quietGardenHero from "../../../../assets/skins/codex-styler/themes/quiet-garden/hero.webp";
+import gothicVoidCrusadeHero from "../../../../assets/skins/dream-skin/themes/gothic-void-crusade/hero.webp";
 
 export const RENDERER_SKIN_STORAGE_KEY = "harness-mix.renderer-skin.v1";
 export const RENDERER_SKIN_STYLE_ID = "harness-mix-renderer-skin";
@@ -26,7 +27,11 @@ export const RENDERER_SKIN_IDS = [
   "wuthering-tide", "naruto-hokage", "naruto-sasuke", "deepspace-dawn",
   "deepspace-star", "dragonball-nimbus", "dragonball-super-saiyan", "dalao-dianyan",
   "styler-gilded-grandeur", "styler-merry-big-top", "styler-nocturne-studio",
-  "styler-quiet-garden",
+  "styler-quiet-garden", "dream-gothic-void-crusade",
+  "palette-catppuccin-latte", "palette-catppuccin-mocha", "palette-claude-desktop-dark",
+  "palette-claude-desktop-light", "palette-gruvbox-dark", "palette-gruvbox-light",
+  "palette-nord-dark", "palette-nord-light", "palette-one-dark", "palette-one-light",
+  "palette-tokyo-night-dark", "palette-tokyo-night-light",
 ] as const;
 
 export type RendererSkinId = (typeof RENDERER_SKIN_IDS)[number];
@@ -47,6 +52,8 @@ export interface RendererSkinDefinition {
 
 const HEIGE_SOURCE_URL = "https://github.com/HeiGeAi/heige-codex-skin-studio";
 const CODEX_STYLER_SOURCE_URL = "https://github.com/xuhuanstudio/codex-styler";
+const DREAM_SKIN_SOURCE_URL = "https://github.com/Fei-Away/Codex-Dream-Skin";
+const ANTHROPIC_THEME_SOURCE_URL = "https://github.com/miniLV/Anthropic-codex-theme";
 
 function heigeSkin(
   id: Exclude<RendererSkinId, "native">,
@@ -83,6 +90,36 @@ function codexStylerSkin(
   });
 }
 
+function dreamSkin(
+  id: Exclude<RendererSkinId, "native">,
+  name: string,
+  heroUrl: string,
+  palette: RendererSkinDefinition["palette"],
+  focus: string,
+): RendererSkinDefinition {
+  return Object.freeze({
+    id, name, heroUrl, logoUrl: null, polaroidUrl: null, palette, focus, dark: true,
+    sourceName: "Codex Dream Skin · MIT",
+    sourceUrl: DREAM_SKIN_SOURCE_URL,
+    preview: "linear-gradient(rgb(3 7 12 / 16%), transparent)",
+  });
+}
+
+function paletteSkin(
+  id: Exclude<RendererSkinId, "native">,
+  name: string,
+  palette: RendererSkinDefinition["palette"],
+  panel: string,
+  dark: boolean,
+): RendererSkinDefinition {
+  return Object.freeze({
+    id, name, heroUrl: null, logoUrl: null, polaroidUrl: null, palette, focus: "50% 50%", dark,
+    sourceName: "Anthropic Codex Theme · MIT",
+    sourceUrl: ANTHROPIC_THEME_SOURCE_URL,
+    preview: `linear-gradient(155deg, ${palette[0]} 0 58%, ${panel} 58% 100%)`,
+  });
+}
+
 export const RENDERER_SKINS: readonly RendererSkinDefinition[] = Object.freeze([
   Object.freeze({
     id: "native", name: "Native Codex", sourceName: "OpenAI Codex", sourceUrl: null,
@@ -115,6 +152,19 @@ export const RENDERER_SKINS: readonly RendererSkinDefinition[] = Object.freeze([
   codexStylerSkin("styler-merry-big-top", "欢乐大帐篷", merryBigTopHero, ["#100b14", "#5a3d4b", "#ff755e", "#fff2dc"], "55% 48%"),
   codexStylerSkin("styler-nocturne-studio", "夜曲工作室", nocturneStudioHero, ["#090b0d", "#34383a", "#e9a066", "#f5efe6"], "58% 46%"),
   codexStylerSkin("styler-quiet-garden", "静谧花园", quietGardenHero, ["#101612", "#364339", "#9fc29a", "#edf2e8"], "52% 50%"),
+  dreamSkin("dream-gothic-void-crusade", "哥特虚空远征", gothicVoidCrusadeHero, ["#0d0d0e", "#b5a386", "#c8a55a", "#f3ead7"], "76% 45%"),
+  paletteSkin("palette-catppuccin-latte", "Catppuccin · 拿铁", ["#EFF1F5", "#5C5F77", "#FE640B", "#4C4F69"], "#E6E9EF", false),
+  paletteSkin("palette-catppuccin-mocha", "Catppuccin · 摩卡", ["#181825", "#A6ADC8", "#FAB387", "#CDD6F4"], "#1E1E2E", true),
+  paletteSkin("palette-claude-desktop-dark", "Claude · 墨夜", ["#1A1918", "#A8A49C", "#CA7554", "#E8E4DC"], "#222120", true),
+  paletteSkin("palette-claude-desktop-light", "Claude · 素纸", ["#F8F6F1", "#605B54", "#CA7554", "#38342E"], "#F3EFE7", false),
+  paletteSkin("palette-gruvbox-dark", "Gruvbox · 暖夜", ["#282828", "#D5C4A1", "#FE8019", "#EBDBB2"], "#32302F", true),
+  paletteSkin("palette-gruvbox-light", "Gruvbox · 暖昼", ["#FBF1C7", "#504945", "#D65D0E", "#3C3836"], "#F2E5BC", false),
+  paletteSkin("palette-nord-dark", "Nord · 极夜", ["#2E3440", "#C3CBD9", "#88C0D0", "#D8DEE9"], "#3B4252", true),
+  paletteSkin("palette-nord-light", "Nord · 雪原", ["#ECEFF4", "#3B4252", "#5E81AC", "#2E3440"], "#E5E9F0", false),
+  paletteSkin("palette-one-dark", "One Dark · 子夜", ["#282C34", "#9DA5B4", "#61AFEF", "#ABB2BF"], "#21252B", true),
+  paletteSkin("palette-one-light", "One Light · 皓昼", ["#FAFAFA", "#4F525E", "#4078F2", "#383A42"], "#F0F0F1", false),
+  paletteSkin("palette-tokyo-night-dark", "Tokyo Night · 夜", ["#1A1B26", "#A9B1D6", "#7AA2F7", "#C0CAF5"], "#16161E", true),
+  paletteSkin("palette-tokyo-night-light", "Tokyo Night · 晨", ["#E1E2E7", "#4C505E", "#2E7DE9", "#343B59"], "#D5D6DB", false),
 ]);
 
 interface RendererSkinStorage {

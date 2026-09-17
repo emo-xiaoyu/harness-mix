@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Settings → Collaboration is a new page with two independent switches (both on by default): **Multi-Agent collaboration** (the `#` mention menu, delegation tools and coordinator prompt are fully disabled when off) and **Agent Team** (`create_agent_team` and the other team tools are hidden from the injected MCP server and rejected Host-side when off, while one-shot delegation stays available). Preferences persist across Host restarts.
+- The skin marketplace grows from 17 to 30 built-ins: the **Gothic Void Crusade** background theme redistributed from Fei-Away/Codex-Dream-Skin (MIT, artwork by @seansong-ideogram), and twelve classic editor palette themes (Catppuccin Latte/Mocha, Claude Desktop dark/light, Gruvbox dark/light, Nord dark/light, One Dark/Light, Tokyo Night dark/light) derived from miniLV/Anthropic-codex-theme (MIT). License texts and provenance are recorded under licenses/ and src/assets/skins/dream-skin/.
 
 ## 0.2.0 — 2026-09-17
 

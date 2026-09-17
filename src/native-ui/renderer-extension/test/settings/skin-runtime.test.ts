@@ -79,10 +79,24 @@ describe("renderer skin runtime", () => {
       "styler-merry-big-top",
       "styler-nocturne-studio",
       "styler-quiet-garden",
+      "dream-gothic-void-crusade",
+      "palette-catppuccin-latte",
+      "palette-catppuccin-mocha",
+      "palette-claude-desktop-dark",
+      "palette-claude-desktop-light",
+      "palette-gruvbox-dark",
+      "palette-gruvbox-light",
+      "palette-nord-dark",
+      "palette-nord-light",
+      "palette-one-dark",
+      "palette-one-light",
+      "palette-tokyo-night-dark",
+      "palette-tokyo-night-light",
     ]);
     expect(RENDERER_SKINS[0]?.sourceUrl).toBeNull();
     expect(RENDERER_SKINS.slice(1).every(({ sourceUrl }) => sourceUrl?.startsWith("https://github.com/"))).toBe(true);
-    expect(RENDERER_SKINS.slice(1).every(({ heroUrl }) => Boolean(heroUrl))).toBe(true);
+    expect(RENDERER_SKINS.slice(1).every((skin) => Boolean(skin.heroUrl) || skin.id.startsWith("palette-"))).toBe(true);
+    expect(RENDERER_SKINS.filter((skin) => skin.id.startsWith("palette-")).every((skin) => skin.preview.startsWith("linear-gradient"))).toBe(true);
     const miku = RENDERER_SKINS.find(({ id }) => id === "miku-488137");
     expect(miku?.logoUrl).toContain("logo.webp");
     expect(miku?.polaroidUrl).toContain("polaroid.webp");

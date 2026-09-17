@@ -25,6 +25,20 @@ The original artwork is licensed under Creative Commons Attribution 4.0.
 Upstream attribution and asset license records are preserved under
 src/assets/skins/codex-styler/. The upstream software is Apache-2.0 licensed.
 
+One bundled skin background (Gothic Void Crusade) is redistributed from
+Fei-Away/Codex-Dream-Skin under the MIT License, with original artwork
+contributed to the upstream project by @seansong-ideogram.
+Source: https://github.com/Fei-Away/Codex-Dream-Skin
+The upstream license text is preserved in licenses/codex-dream-skin-MIT.txt.
+Upstream attribution records are preserved under src/assets/skins/dream-skin/.
+
+Twelve bundled palette-only skins (Catppuccin, Claude Desktop, Gruvbox, Nord,
+One Dark/Light, Tokyo Night color schemes) are derived from
+miniLV/Anthropic-codex-theme under the MIT License.
+Source: https://github.com/miniLV/Anthropic-codex-theme
+The upstream license text is preserved in licenses/anthropic-codex-theme-MIT.txt.
+These skins carry color values only; no upstream artwork is redistributed.
+
 Twenty-four icons under src/assets/icons/ are redistributed from lobehub/lobe-icons
 under the MIT License. Copyright (c) 2023 LobeHub.
 Source: https://github.com/lobehub/lobe-icons

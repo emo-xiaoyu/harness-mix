@@ -77,7 +77,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 | 功能模块 | 核心能力 | 交互入口与特点 |
 | :--- | :--- | :--- |
 | **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
-| **🎨 皮肤市场** | 内置 HeiGe 与 Codex Styler 主题，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
+| **🎨 皮肤市场** | 内置 HeiGe、Codex Styler、Dream Skin 与经典编辑器配色主题，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
 | **📚 历史会话导入与引用** | 一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑；`#` 引用任意旧会话注入脱敏上下文 | 引用仅预取最近一页；MCP 只读工具 `get_session_info` / `list_session_messages` 供 Harness 按需翻页与读取分支 / 模型 / 用量元数据 |
 | **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
 | **🧩 原生 Skills 管理** | 全量覆盖 17 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
@@ -144,6 +144,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 - **标签可视化**：已选协同 Agent 在输入框顶部呈现为胶囊标签，支持点击快速删除或 Backspace 撤销。
 - **严谨编排约束**：自动为主控 Coordinator 注入硬约束，严禁越界派发给未指定的 Harness；完善级联取消与子任务超时熔断机制。
 - **真正的 Agent Team**：一个 Lead 可组织最多六个并发的具名 Harness 成员；Team、职责、共享任务依赖图和成员邮箱均由 Host 持久化，teammate 可直接定向通信、交接和反馈，而不是只把并行结果返回 Lead。
+- **独立开关**：「设置 → 协作」中「多 Agent 协作」与「Agent Team」是两个独立开关（默认均开启）；关闭协作即同时停用团队，关闭团队则保留一次性委派。
 - **原生 Team Workbench**：对话顶部团队驾驶舱点击「展开详情」后在 Codex 内容流内显示唯一主导者、各成员职责、独立任务列、进度、通信流和事件回放，不覆盖原生侧栏、消息或输入框；成员卡片可跳转其原生子任务。状态直接向 Host 实时刷新，各成员仍使用自己的原生 Harness Session、模型、工具、权限和账户。
 - **统一 Workspace 能力**：全部 Harness 由 Host 统一获得 Git 探测、Worktree 隔离和最终快照 Diff；原生实时 Diff 继续按各 Harness 实际协议叠加。显式隔离失败不会降级到共享目录。
 
@@ -239,6 +240,7 @@ Harness Mix 一路走来，受了下面这些开源项目不少启发。它们�
 - [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) —— 多 Agent 协作运行时的编排思路来源。
 - [xintaofei/codeg](https://github.com/xintaofei/codeg) —— 工具协议与多 Harness 接线方式的参考。
 - [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) —— 皮肤市场内置皮肤素材的来源。
+- [Fei-Away/Codex-Dream-Skin](https://github.com/Fei-Away/Codex-Dream-Skin) 与 [miniLV/Anthropic-codex-theme](https://github.com/miniLV/Anthropic-codex-theme) —— 皮肤市场部分内置主题的背景素材与配色方案来源。
 
 以上项目各自适用原有许可证，归属声明与许可正文见 [NOTICE](NOTICE) 与 [licenses/](licenses/)。相关商标仍归各自所有者，本项目仅用于标识所集成的产品，不主张任何商标权、背书或关联关系。
 
@@ -321,7 +323,7 @@ The preview comes from the current Codex Desktop native window: Harness Mix appe
 | Module | Core capabilities | Entry points & notes |
 | :--- | :--- | :--- |
 | **🔄 Cross-Harness Task Handoff** | 4 handoff modes (continue / run plan / independent review / re-analyze) with smooth transitions | Composer handoff badge / `/switch`; persisted redacted checkpoints with evidence traceability |
-| **🎨 Skin Marketplace** | Built-in HeiGe and Codex Styler themes with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
+| **🎨 Skin Marketplace** | Built-in HeiGe, Codex Styler, Dream Skin and classic editor-palette themes with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
 | **📚 History Import & Reference** | One-click import of Pi / Claude / Codex / CodeBuddy native history with interruptible resume; `#` references any past session with redacted context injected | References prefetch only the latest page; read-only MCP tools `get_session_info` / `list_session_messages` let Harnesses page through and read branch / model / usage metadata on demand |
 | **🤝 Multi-Agent Orchestration** | Type `#` to summon target Harnesses, manage them as capsule tags, dispatch under strong coordinator constraints | Composer `#` menu; loop review and verification, cascading subtask cancellation and timeout circuit breaking |
 | **🧩 Native Skills Management** | Covers the native skill directories of all 17 Harnesses, with root directories pre-created at session start | Settings → Skills; drag-and-drop install of a single `SKILL.md` or a complete folder |
@@ -388,6 +390,7 @@ One Harness analyzes in depth, another writes the implementation, then you switc
 - **Tag visualization**: selected collaborating Agents appear as capsule tags above the composer, with click-to-remove and Backspace-to-undo.
 - **Strict orchestration constraints**: the coordinator is automatically injected with hard constraints that forbid dispatching to unspecified Harnesses; cascading cancellation and subtask timeout circuit breaking are built in.
 - **Real Agent Teams**: one Lead can organize up to six concurrent named Harness members; the Team, roles, shared task dependency graph and member mailboxes are all persisted by the Host, so teammates communicate, hand off and report directly instead of only returning parallel results to the Lead.
+- **Independent switches**: Settings → Collaboration offers separate toggles for Multi-Agent Collaboration and Agent Team (both on by default); disabling collaboration also disables teams, while disabling teams keeps one-shot delegation available.
 - **Native Team Workbench**: expanding the details of the team cockpit at the top of a conversation shows the single lead, member roles, per-member task lanes, progress, message flow and event replay inside the Codex content stream — without covering the native sidebar, messages or composer. Member cards jump to their native subtasks. State refreshes live from the Host, and members keep using their own native Harness sessions, models, tools, permissions and accounts.
 - **Unified workspace capabilities**: every Harness uniformly gets Host-owned Git detection, worktree isolation and a final snapshot diff; native live diffs continue to layer on top according to each Harness's real protocol. An explicit isolation failure never degrades to a shared directory.
 
@@ -483,5 +486,6 @@ Harness Mix owes a lot to the open-source projects below. All of them publish th
 - [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) — the orchestration approach behind the multi-Agent collaboration runtime.
 - [xintaofei/codeg](https://github.com/xintaofei/codeg) — a reference for the tool protocol and multi-Harness wiring.
 - [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) — the artwork bundled in the skin marketplace.
+- [Fei-Away/Codex-Dream-Skin](https://github.com/Fei-Away/Codex-Dream-Skin) and [miniLV/Anthropic-codex-theme](https://github.com/miniLV/Anthropic-codex-theme) — background artwork and color palettes for additional built-in skins.
 
 Each project remains subject to its own license; see [NOTICE](NOTICE) and [licenses/](licenses/) for the attribution records and upstream license texts. All trademarks remain the property of their respective owners. They are bundled solely to identify the products this project integrates with, and no trademark right, endorsement or affiliation is claimed.
