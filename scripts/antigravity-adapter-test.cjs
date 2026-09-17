@@ -374,43 +374,140 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.equal(noResultSession.activeTurn, null);
   await noResultAdapter.close(noResultSession);
 
-  // 17. A SUCCESS result with no assistant text must not be reported as a
-  // successful empty turn.
-  const emptySuccessChild = new EventEmitter();
-  emptySuccessChild.stdin = new PassThrough();
-  emptySuccessChild.stdout = new PassThrough();
-  emptySuccessChild.stderr = new PassThrough();
-  let emptySuccessClosed = false;
-  const closeEmptySuccessChild = () => {
-    if (emptySuccessClosed) return;
-    emptySuccessClosed = true;
-    emptySuccessChild.stdout.end();
-    emptySuccessChild.stderr.end();
-    emptySuccessChild.emit('close', 0);
+  // 17. A SUCCESS result with no assistant text triggers exactly one automatic
+  // nudge retry in the same native conversation; only a repeated empty result
+  // surfaces as an error.
+  const makeEmptySuccessChild = (onPrompt) => {
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    let closed = false;
+    const closeChild = () => {
+      if (closed) return;
+      closed = true;
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('close', 0);
+    };
+    child.isClosed = () => closed;
+    child.stdin.once('data', (chunk) => {
+      const content = JSON.parse(String(chunk).trim()).message?.content || '';
+      setTimeout(() => onPrompt(child, content, closeChild), 1);
+    });
+    child.stdin.once('finish', () => setTimeout(closeChild, 0));
+    child.kill = closeChild;
+    return child;
   };
-  emptySuccessChild.stdin.once('data', () => setTimeout(() => {
-    if (!emptySuccessClosed) emptySuccessChild.stdout.write(`${JSON.stringify({
-      event: 'result',
-      result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', response: '' },
-    })}\n`);
-  }, 1));
-  emptySuccessChild.stdin.once('finish', () => setTimeout(closeEmptySuccessChild, 0));
-  emptySuccessChild.kill = closeEmptySuccessChild;
-  const emptySuccessAdapter = create(() => {}, { spawnProcess: () => emptySuccessChild, resultDrainMaxMs: 20 });
-  const emptySuccessSession = await emptySuccessAdapter.open({
-    thread: { id: 'fake-empty-success-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
+  const writeStream = (child, event) => {
+    if (!child.isClosed()) child.stdout.write(`${JSON.stringify(event)}\n`);
+  };
+
+  // 17a. First attempt empty, nudge retry answers → turn completes, no error.
+  const retryChildren = [];
+  const retryArgs = [];
+  const retryAdapter = create(() => {}, {
+    spawnProcess: (_bin, args) => {
+      retryArgs.push(args);
+      const attempt = retryChildren.length;
+      const child = makeEmptySuccessChild((c, content) => {
+        if (attempt === 0) {
+          writeStream(c, { event: 'init', conversation_id: 'fake-empty-success' });
+          writeStream(c, { event: 'result', result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', response: '' } });
+        } else {
+          c.nudgePrompt = content;
+          writeStream(c, { event: 'init', conversation_id: 'fake-empty-success' });
+          writeStream(c, {
+            event: 'step_update',
+            step_update: { conversation_id: 'fake-empty-success', step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'late recovered answer' },
+          });
+          writeStream(c, { event: 'result', result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', num_turns: 2, response: 'late recovered answer' } });
+        }
+      });
+      retryChildren.push(child);
+      return child;
+    },
+    resultDrainMs: 10,
+    resultDrainMaxMs: 20,
+  });
+  const retrySession = await retryAdapter.open({
+    thread: { id: 'fake-empty-retry-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
     emit: () => {},
     diagnostic: () => {},
   });
-  const emptySuccessEvents = [];
+  const retryEvents = [];
+  await retryAdapter.send(retrySession, 'return an empty success', { emit: event => retryEvents.push(event) });
+  assert.equal(retryChildren.length, 2);
+  assert.match(retryChildren[1].nudgePrompt || '', /previous turn ended WITHOUT any visible assistant response/);
+  const resumeIdx = retryArgs[1].indexOf('--conversation');
+  assert.ok(resumeIdx >= 0);
+  assert.equal(retryArgs[1][resumeIdx + 1], 'fake-empty-success');
+  assert.equal(retryEvents.filter(event => event.kind === 'error').length, 0);
+  assert.ok(retryEvents.some(event => event.kind === 'status' && /自动补问/.test(event.text || '')));
+  assert.equal(retryEvents.filter(event => event.kind === 'text-delta').map(event => event.text).join(''), 'late recovered answer');
+  assert.ok(retryEvents.some(event => event.kind === 'completed'));
+  assert.equal(retrySession.activeTurn, null);
+  await retryAdapter.close(retrySession);
+
+  // 17b. Every attempt empty → rejects, error emitted exactly once (final attempt).
+  let alwaysEmptySpawns = 0;
+  const alwaysEmptyAdapter = create(() => {}, {
+    spawnProcess: () => {
+      alwaysEmptySpawns += 1;
+      return makeEmptySuccessChild((c) => {
+        writeStream(c, { event: 'init', conversation_id: 'fake-empty-success' });
+        writeStream(c, { event: 'result', result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', response: '' } });
+      });
+    },
+    resultDrainMaxMs: 20,
+  });
+  const alwaysEmptySession = await alwaysEmptyAdapter.open({
+    thread: { id: 'fake-always-empty-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
+    emit: () => {},
+    diagnostic: () => {},
+  });
+  const alwaysEmptyEvents = [];
   await assert.rejects(
-    emptySuccessAdapter.send(emptySuccessSession, 'return an empty success', { emit: event => emptySuccessEvents.push(event) }),
+    alwaysEmptyAdapter.send(alwaysEmptySession, 'return an empty success', { emit: event => alwaysEmptyEvents.push(event) }),
     /没有 assistant 文本/,
   );
-  assert.match(emptySuccessEvents.find(event => event.kind === 'error')?.message || '', /没有 assistant 文本/);
-  assert.equal(emptySuccessEvents.some(event => event.kind === 'completed'), false);
-  assert.equal(emptySuccessSession.activeTurn, null);
-  await emptySuccessAdapter.close(emptySuccessSession);
+  assert.equal(alwaysEmptySpawns, 2);
+  assert.equal(alwaysEmptyEvents.filter(event => event.kind === 'error').length, 1);
+  assert.match(alwaysEmptyEvents.find(event => event.kind === 'error')?.message || '', /没有 assistant 文本/);
+  assert.equal(alwaysEmptyEvents.some(event => event.kind === 'completed'), false);
+  assert.equal(alwaysEmptySession.activeTurn, null);
+  await alwaysEmptyAdapter.close(alwaysEmptySession);
+
+  // 17c. Automatic retry disabled via env → single attempt, immediate error.
+  process.env.HARNESSMIX_ANTIGRAVITY_EMPTY_RESULT_RETRIES = '0';
+  try {
+    let noRetrySpawns = 0;
+    const noRetryAdapter = create(() => {}, {
+      spawnProcess: () => {
+        noRetrySpawns += 1;
+        return makeEmptySuccessChild((c) => {
+          writeStream(c, { event: 'init', conversation_id: 'fake-empty-success' });
+          writeStream(c, { event: 'result', result: { conversation_id: 'fake-empty-success', status: 'SUCCESS', response: '' } });
+        });
+      },
+      resultDrainMaxMs: 20,
+    });
+    const noRetrySession = await noRetryAdapter.open({
+      thread: { id: 'fake-no-retry-thread', cwd: os.tmpdir(), options: { permissionMode: 'skip' } },
+      emit: () => {},
+      diagnostic: () => {},
+    });
+    const noRetryEvents = [];
+    await assert.rejects(
+      noRetryAdapter.send(noRetrySession, 'return an empty success', { emit: event => noRetryEvents.push(event) }),
+      /没有 assistant 文本/,
+    );
+    assert.equal(noRetrySpawns, 1);
+    assert.equal(noRetryEvents.filter(event => event.kind === 'error').length, 1);
+    await noRetryAdapter.close(noRetrySession);
+  } finally {
+    delete process.env.HARNESSMIX_ANTIGRAVITY_EMPTY_RESULT_RETRIES;
+  }
 
   // 18. An empty view_file result must not close the Core turn before a late
   // assistant response. This is the stream shape produced for image files by
