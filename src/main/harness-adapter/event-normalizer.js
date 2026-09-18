@@ -48,7 +48,7 @@ class EventNormalizer {
     this.currentNativeRef = legacy.nativeRef;
     switch (legacy.kind) {
       case 'text-delta':
-        return this.#delta('agent_message', 'currentMessageItemId', legacy.text);
+        return this.#textDelta(legacy.text);
       case 'thinking-delta':
         return this.#delta('reasoning', 'currentReasoningItemId', legacy.text);
       case 'tool':
@@ -92,6 +92,8 @@ class EventNormalizer {
         // 原生流仍送达 agent_settled / result），防止影子侧出现非法状态迁移。
         if (!this.turnActive) return [];
         this.turnActive = false;
+        // 最后一段 agent_message 标记 phase:'final'：Desktop 回合结算后把此前所有
+        // progress 段与工具项折叠进「用时」栏，仅保留该段作为唯一正式结论。
         return [
           ...(!legacy.finalAnswer || legacy.stopReason && legacy.stopReason !== 'completed' || !this.currentMessageItemId ? [] : [this.#event({ type: 'item.updated', itemId: this.currentMessageItemId, payload: { phase: 'final' } })]),
           this.#event({ type: 'turn.completed', payload: { stopReason: legacy.stopReason ?? 'completed' } }),
@@ -99,11 +101,13 @@ class EventNormalizer {
       case 'error':
         if (!this.turnActive) return [];
         this.turnActive = false;
-        return [this.#event({ type: 'turn.failed', payload: {
-          message: String(legacy.message ?? 'unknown error'),
-          errorKind: classifyError(legacy),
-          ...(codexErrorInfoKey(legacy.codexErrorInfo) ? { codexErrorInfo: codexErrorInfoKey(legacy.codexErrorInfo) } : {}),
-        } })];
+        return [
+          this.#event({ type: 'turn.failed', payload: {
+            message: String(legacy.message ?? 'unknown error'),
+            errorKind: classifyError(legacy),
+            ...(codexErrorInfoKey(legacy.codexErrorInfo) ? { codexErrorInfo: codexErrorInfoKey(legacy.codexErrorInfo) } : {}),
+          } }),
+        ];
       default:
         return [];
     }
@@ -121,6 +125,13 @@ class EventNormalizer {
       type,
       payload: payload ?? {},
     };
+  }
+
+  #textDelta(text) {
+    // 正文 delta 一律即时流式发出：开场白与工具间解说段以 phase:'progress' 实时可见
+    // （回合结构 = progress 段与工具项交错），回合结算时仅最后一段升级为 'final'，
+    // 由 Codex Desktop 原生把 progress 段随执行区折叠进「用时 XXm XXs」栏。
+    return this.#delta('agent_message', 'currentMessageItemId', text);
   }
 
   #delta(itemType, slot, text) {
