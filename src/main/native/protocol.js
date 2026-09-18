@@ -1154,7 +1154,11 @@ class NativeProtocol {
     const pending = this.approvals.get(message.id);
     if (!pending) return false;
     if (message.error) throw new Error(message.error.message || 'Approval UI error');
-    const answer = message.result?.answers?.[pending.requestId]?.answers?.[0];
+    // Desktop 的 answers 为 string[]：多选提问（如 ACP/OpenCode multiple）勾选多项时
+    // 只取 [0] 会无声吞掉其余选项，且 opencode 对 multiple 题执行 JSON.parse(response.value)，
+    // 单值字符串会直接抛 SyntaxError——多答案 JSON 编码全量保留，单答案维持原字符串。
+    const rawAnswers = message.result?.answers?.[pending.requestId]?.answers;
+    const answer = Array.isArray(rawAnswers) && rawAnswers.length > 1 ? JSON.stringify(rawAnswers) : (rawAnswers?.[0] ?? '');
     const decision = message.result?.decision;
     const response = pending.item.type === 'question' ? { value: answer || '' } : pending.item.method === 'select' ? { value: answer || '' } : { confirmed: decision === 'accept' || decision === 'acceptForSession' };
     await this.runtime.respondApproval(pending.threadId, pending.requestId, response);

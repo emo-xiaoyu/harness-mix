@@ -26,7 +26,7 @@ const { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, remo
  * 仍由其原生程序维护，Adapter 只负责原生协议接入与事件转换。
  */
 class HostRuntime {
-  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000 }) {
+  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000, delegationTimeoutMs = 30 * 60 * 1000 }) {
     this.store = new ThreadStore(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
@@ -41,9 +41,14 @@ class HostRuntime {
     this.reviewTasks = new Set();
     this.openings = new Map();
     this.sending = new Set();
-    // send 进行中被 cancel 的线程：Turn 尚未开始或 prompt 尚未投递时 abort 无从生效，
-    // 由 #send 在 Turn 启动后/投递前据此结算取消，避免用户看不见的僵尸运行
-    this.cancelRequests = new Set();
+    // threadId -> 在途 send 的票据：cancel 会提前放锁让新发送进入，
+    // 旧 send 退出时凭票据比对，避免其 finally 误删新发送的锁
+    this.sendTickets = new Map();
+    this.sendTicketSeq = 0;
+    // send 进行中被 cancel 的线程（threadId -> 被取消 send 的票据）：Turn 尚未开始或
+    // prompt 尚未投递时 abort 无从生效，由 #send 在 Turn 启动后/投递前据此结算取消，
+    // 避免用户看不见的僵尸运行；票据不匹配的陈旧登记属上一代发送，由 #send 入口清理
+    this.cancelRequests = new Map();
     this.switching = new Set();
     // 同目录并发会话警告的去重记录：threadId -> 上次提醒时间
     this.concurrentCwdNotified = new Map();
@@ -52,6 +57,8 @@ class HostRuntime {
     // 即按超时结算，让 UI 停转、审查快照收尾。等待用户审批的回合属合法静默。
     this.turnActivity = new Map();
     this.stuckTurnMs = stuckTurnMs;
+    // /delegate 委派等待子任务结算的上限（对齐协作编排的 30 分钟），注入以便测试
+    this.delegationTimeoutMs = delegationTimeoutMs;
     this.watchdogTimer = setInterval(() => this.#sweepStuckTurns(), stuckSweepMs);
     this.watchdogTimer.unref?.();
     // 跨 Harness 协作：parentThreadId -> { childId, toolCallId, cancelled }
@@ -320,14 +327,27 @@ class HostRuntime {
     // Reserve before opening a native session: two submissions can otherwise both
     // pass isRunning() while awaiting the same opening promise.
     if (this.sending.has(threadId)) throw new Error('任务正在执行，请先停止或等待完成');
+    const ticket = ++this.sendTicketSeq;
     this.sending.add(threadId);
-    try { return await this.#send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions }); }
-    finally { this.sending.delete(threadId); this.cancelRequests.delete(threadId); }
+    this.sendTickets.set(threadId, ticket);
+    try { return await this.#send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions, ticket }); }
+    // cancel() 会提前放锁并让新发送进入：仅当票据仍归本次发送时才回收，否则
+    // 这里的 delete 会误删新发送的锁，使第三个发送与在途发送并发撞车
+    finally {
+      if (this.sendTickets.get(threadId) === ticket) {
+        this.sending.delete(threadId);
+        this.sendTickets.delete(threadId);
+        this.cancelRequests.delete(threadId);
+      }
+    }
   }
 
-  async #send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions }) {
+  async #send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions, ticket }) {
     const thread = this.#requireThread(threadId);
     if (this.execution.isRunning(thread.id)) throw new Error("任务正在执行，请先停止或等待完成");
+    // 不得在此按票据清理 cancelRequests：登记可能属于仍停留在 Turn 启动前阶段（会话
+    // 打开/prompt 组装）的在途旧 send——删掉会让旧 send 错过下方的取消结算而继续投递，
+    // 与新发送双双进入原生会话。陈旧登记由本次 send 的 finally（票据匹配时）回收。
     const prepared = this.#prepareAttachments(thread, attachments);
     const typed = typeof text === "string" ? text.trim() : "";
     if (!typed && !prepared.images.length && !prepared.texts.length) throw new Error("请输入消息");
@@ -428,9 +448,19 @@ class HostRuntime {
     thread.updatedAt = Date.now();
     delete thread.error;
     delete thread.errorKind;
-    this.execution.turnStarted(thread, displayPrompt);
-    // 会话打开/prompt 组装期间用户已按停止（cancel 时 Turn 尚未开始，原生侧无从 abort）：直接结算取消，不再投递
-    if (this.cancelRequests.delete(thread.id)) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
+    // 会话打开/prompt 组装期间用户已按停止（cancel 时 Turn 尚未开始，原生侧无从 abort）：
+    // 本代发送直接结算取消、不再投递。若取消后用户已重发且新回合已在运行，旧 send 不得
+    // 再 turnStarted——那会把新回合挤出 lastTurn，使新发送在投递前自查时误判空闲而丢消息；
+    // 此时静默退出，把投影权交给新回合。
+    const cancelledBeforeTurn = this.cancelRequests.get(thread.id) === ticket;
+    if (cancelledBeforeTurn) this.cancelRequests.delete(thread.id);
+    if (cancelledBeforeTurn && this.execution.isRunning(thread.id)) {
+      await this.#save();
+      this.#broadcast();
+      return;
+    }
+    const turn = this.execution.turnStarted(thread, displayPrompt);
+    if (cancelledBeforeTurn) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
     this.turnActivity.set(thread.id, Date.now());
     const message = thread.messages.at(-1);
     if (hasConcurrentTurn) message.concurrent = true;
@@ -438,8 +468,12 @@ class HostRuntime {
     this.#syncCore(thread);
     try { if (!collaborationOf || isolated) message.reviewId = await this.reviews.begin(thread.cwd); else message.reviewOwnerThreadId = collaborationOf; }
     catch (e) { message.reviewError = '本轮未建立文件快照：' + e.message; }
-    if (!this.execution.isRunning(thread.id)) {
-      if (message.reviewId) await this.#settleReview(thread, message);
+    // 本代回合已结算（含上方的取消结算）时退出。注意 isRunning 反映的是最新回合：
+    // 取消后用户重发的新回合一旦启动，这里会被重新置真——必须再按回合身份核验，
+    // 否则被取消的旧发送会把 review 快照与后续 prompt 投递错误地挂到新回合上。
+    const superseded = this.execution.lastTurn(thread.id)?.id !== turn.id;
+    if (!this.execution.isRunning(thread.id) || superseded) {
+      if (message.reviewId && !superseded) await this.#settleReview(thread, message);
       return;
     }
     this.startReviewUpdates(thread, message);
@@ -455,14 +489,16 @@ class HostRuntime {
           await this.#save();
           this.#broadcast();
         }
-        // 投递前最后检查：Turn 可能在 review 快照/保存期间被取消（cancel 已结算）。
+        // 投递前最后检查：Turn 可能在 review 快照/保存期间被取消（cancel 已结算），
+        // 或已被取消后重发的新回合取代（lastTurn 易主时 isRunning 仍为真）。
         // 此时再投递，先到的 abort 会在原生侧落空，形成用户看不见的僵尸运行
-        if (!this.execution.isRunning(thread.id)) {
+        const outdated = this.execution.lastTurn(thread.id)?.id !== turn.id;
+        if (!this.execution.isRunning(thread.id) || outdated) {
           if (handoff?.checkpointId) {
             handoff.phase = 'failed';
             await this.handoffs.mark(thread.id, handoff.checkpointId, 'failed').catch(() => {});
           }
-          if (message.reviewId) await this.#settleReview(thread, message);
+          if (message.reviewId && !outdated) await this.#settleReview(thread, message);
           return;
         }
         await session.adapter.send(session, promptText, hooks, { images: prepared.images, turnPermissions });
@@ -476,8 +512,10 @@ class HostRuntime {
         handoff.phase = 'failed';
         await this.handoffs.mark(thread.id, handoff.checkpointId, 'failed').catch(() => {});
       }
-      // 用户取消造成的 reject 已由 cancel() 结算，不再标错
-      if (this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: "error", message: error.message } });
+      // 用户取消造成的 reject 已由 cancel() 结算，不再标错。若回合已易主（取消后重发 /
+      // 外部转向启动了新回合），旧发送迟到的 reject 不得击中正在运行的新回合——
+      // 仅当本代回合仍是 lastTurn 时才把错误投到它上面。
+      if (this.execution.isRunning(thread.id) && this.execution.lastTurn(thread.id)?.id === turn?.id) this.#applyEvent({ threadId, event: { kind: "error", message: error.message } });
       await this.#save().catch(() => {});
       this.#broadcast();
     }
@@ -548,12 +586,23 @@ class HostRuntime {
     let answer = '';
     try {
       await this.send(child.id, task, { delegateOf: parent.id });
-      // Adapter 返回≠原生 Turn 完全结算，兜底等待至子任务真正空闲
-      const grace = Date.now() + 30_000;
-      while (this.execution.isRunning(child.id) && Date.now() < grace) await new Promise(resolve => setTimeout(resolve, 100));
-      const lastTurn = this.execution.lastTurn(child.id);
-      if (lastTurn?.status === 'error') failure = new Error(lastTurn.error || '子任务执行失败');
-      else answer = this.#turnFinalText(child.id);
+      // Adapter 返回≠原生 Turn 完全结算（Pi 等非阻塞适配器收到 prompt ack 即返回，实际
+      // 执行由异步流驱动），有界等待至子任务真正空闲——对齐协作编排的 30 分钟上限，
+      // 超时主动取消子任务；已 wedge 的子任务由看门狗（stuckTurnMs）提前按 error 结算。
+      const until = Date.now() + this.delegationTimeoutMs;
+      while (this.execution.isRunning(child.id) && !delegation?.cancelled) {
+        if (Date.now() > until) {
+          await this.cancel(child.id);
+          failure = new Error(`子任务超过 ${Math.round(this.delegationTimeoutMs / 60000)} 分钟未结算，已自动取消`);
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!failure) {
+        const lastTurn = this.execution.lastTurn(child.id);
+        if (lastTurn?.status === 'error') failure = new Error(lastTurn.error || '子任务执行失败');
+        else answer = this.#turnFinalText(child.id);
+      }
     } catch (error) { failure = error; }
     const cancelled = delegation?.cancelled;
     this.delegations.delete(parent.id);
@@ -615,8 +664,8 @@ class HostRuntime {
 
   async cancel(threadId) {
     const thread = this.threads.find(t => t.id === threadId);
-    // send 进行中（会话恢复 / prompt 尚未投递）时 abort 可能落空：登记取消请求，由 #send 在投递前结算
-    if (this.sending.has(threadId)) this.cancelRequests.add(threadId);
+    // send 进行中（会话恢复 / prompt 尚未投递）时 abort 可能落空：按票据登记取消请求，由 #send 在投递前结算
+    if (this.sending.has(threadId)) this.cancelRequests.set(threadId, this.sendTickets.get(threadId));
     // If this thread is a collaboration child task, mark the collaboration job as cancelled immediately
     const childJob = [...this.collaboration.jobs.values()].find(j => j.childId === threadId && j.status === 'running');
     if (childJob) {
@@ -625,7 +674,9 @@ class HostRuntime {
     }
     // Record the user's cancellation immediately so UI and Core become idle without waiting on subtasks
     if (thread && this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
+    // 立即放锁让用户可以重发；同时作废旧 send 的票据，其 finally 不得误删新发送的锁
     this.sending.delete(threadId);
+    this.sendTickets.delete(threadId);
     // Cancel child collaboration tasks with a hard timeout to prevent child hangs
     try {
       await Promise.race([
@@ -765,6 +816,8 @@ class HostRuntime {
     } else this.sessions.set(thread.id, attachSession(adapter, session, thread.id));
     await this.#save();
     this.#broadcast();
+    // 与 createThread 同一契约：通知 Desktop 侧边栏实时挂载分支会话（protocol.js 据此发 thread/started）
+    for (const listener of this.listeners) listener({ type: 'thread-created', thread });
     return thread;
   }
 
@@ -1179,6 +1232,11 @@ class HostRuntime {
       const last = this.turnActivity.get(thread.id) ?? this.execution.lastTurn(thread.id)?.createdAt ?? now;
       if (now - last < this.stuckTurnMs) continue;
       this.turnActivity.delete(thread.id);
+      // 级联取消原生会话：仅结算 Turn 而不 abort，原生进程（死循环脚本/挂起的长连接）会
+      // 常驻后台，下一次发送直接撞上原生侧的会话占用报错（如 Pi 的 already processing），
+      // 该 Thread 永久无法恢复。fire-and-forget 不阻塞扫描；迟到事件由 execution.apply 忽略。
+      const session = this.sessions.get(thread.id);
+      if (session) void Promise.race([session.adapter.cancel(session), new Promise(r => setTimeout(r, 2000))]).catch(() => {});
       this.#applyEvent({ threadId: thread.id, event: { kind: 'error', timestamp: now,
         message: `原生会话超过 ${Math.round(this.stuckTurnMs / 60000)} 分钟未产生任何事件，判定为卡死并已自动结算。如原生进程仍在运行，可手动取消或开启新回合。` } });
     }

@@ -33,6 +33,8 @@ function run(args, input) {
       }
       resolve({ missing: false, stdout: Buffer.from(stdout || '') });
     });
+    // helper 进程提前退出时 stdin.end 会异步抛 EPIPE，无监听即 crash 宿主；真实错误由 execFile 回调覆盖
+    if (child.stdin) child.stdin.on('error', () => {});
     if (input !== undefined && child.stdin) child.stdin.end(Buffer.from(input));
   });
 }

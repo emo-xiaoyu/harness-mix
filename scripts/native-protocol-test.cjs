@@ -13,10 +13,11 @@ async function main() {
   let emit;
   const emits = [];
   const answers = [];
-  const adapter = { manifest: { id: 'pi', name: 'Pi', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true } },
+  const adapter = { manifest: { id: 'pi', name: 'Pi', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true, fork: true } },
     async open(input) { emits.push(input.emit); emit = input.emit; return {}; },
     async describe() { return { models: [{ id: 'demo', name: 'Demo', provider: 'test' }], thinkingLevels: [{ id: 'high', label: 'High', default: true }, { id: 'low', label: 'Low' }], permissionModes: [] }; },
     async send(session, text, hooks, extras) { sendExtras.push(extras); }, async cancel() {}, async close() {},
+    async fork(source) { return { session: {}, nativeSessionId: `forked-${source.id}` }; },
     async respond(session, id, answer) { answers.push({ id, answer }); } };
   const sendExtras = [];
   runtime.adapters.set('pi', adapter); runtime.status.pi = { available: true };
@@ -183,9 +184,21 @@ async function main() {
     const question = events.find(e => e.method === 'item/tool/requestUserInput');
     await bridge.respond({ id: question.id, result: { answers: { question: { answers: ['Alice'] } } } });
     assert.equal(answers[1].answer.value, 'Alice');
+    // 多选提问：answers 数组必须全量保留（JSON 编码），只取 [0] 会无声吞掉其余选项
+    emit({ kind: 'approval', requestId: 'multi', method: 'input', title: 'Pick many?' });
+    const multi = events.filter(e => e.method === 'item/tool/requestUserInput').at(-1);
+    await bridge.respond({ id: multi.id, result: { answers: { multi: { answers: ['a', 'b'] } } } });
+    assert.equal(answers[2].answer.value, '["a","b"]', '多选答案 JSON 编码全量保留');
+    emit({ kind: 'approval', requestId: 'empty', method: 'input', title: 'Empty?' });
+    const emptyQ = events.filter(e => e.method === 'item/tool/requestUserInput').at(-1);
+    await bridge.respond({ id: emptyQ.id, result: { answers: { empty: { answers: [] } } } });
+    assert.equal(answers[3].answer.value, '', '空答案数组回退为空字符串而非 undefined');
     emit({ kind: 'file-change', changes: [{ path: 'a.txt', changeType: 'added', before: '', after: 'hello', complete: true }] });
     emit({ kind: 'completed', finalAnswer: true });
     await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
+    // Fork：Host 侧新建分支线程必须广播 thread/started，否则 Desktop 侧边栏不显示分支
+    const forked = await bridge.request('thread/fork', { threadId });
+    assert.ok(events.some(e => e.method === 'thread/started' && e.params.thread.id === forked.thread.id), 'Fork 后 Desktop 收到分支线程的 thread/started');
     assert.equal(events.filter(e => e.method === 'item/agentMessage/delta').map(e => e.params.delta).join(''), 'hello world');
     // 非终端工具投影为 dynamicToolCall（摘要显示真实工具名），终端命令投影为原生 commandExecution
     assert.ok(events.some(e => e.method === 'item/completed' && e.params.item.type === 'dynamicToolCall' && e.params.item.tool === 'Read'));

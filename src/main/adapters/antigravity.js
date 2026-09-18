@@ -920,6 +920,9 @@ function create(emit, options = {}) {
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
+        // 进程崩溃/提前退出时，迟到的 stdin.write/end 在流上异步抛 EPIPE；
+        // 无 error 监听的 Writable 会被 Node 当作未捕获异常 crash 宿主进程
+        child.stdin.on('error', () => {});
 
         let turnResolve, turnReject;
         const settled = new Promise((resolve, reject) => {

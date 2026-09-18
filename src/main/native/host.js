@@ -83,6 +83,8 @@ async function runNativeHost() {
   const passthrough = process.argv.slice(2);
   const officialArgs = passthrough.includes('--listen') ? passthrough : [...passthrough, '--listen', 'stdio://'];
   const official = spawn(stock, officialArgs, { env, windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
+  // official 异常退出后迟到的 stdin.write 会异步抛 EPIPE，无监听即 crash 宿主；退出由 close() 路径处理
+  official.stdin.on('error', () => {});
   const forwarded = new Map();
   const lines = readline.createInterface({ input: official.stdout });
   lines.on('line', line => {

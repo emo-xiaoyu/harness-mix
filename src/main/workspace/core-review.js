@@ -75,6 +75,9 @@ async function projectReview(runtime, thread, message, record) {
   );
 
   let changes = record.changes;
+  // 本轮触碰路径惰性计算一次：供并发收窄与 foreign 过滤两处共用
+  let touched = null;
+  const touchedThisTurn = () => (touched ??= touchedPaths(runtime, thread, message));
   if (hasNativePatch && record.concurrent) {
     // 同目录并发时，原生 patch 是唯一能归属到本轮的边界。无并发时始终
     // 保留 Host 最终快照，补齐原生 Harness 没有上报或漏报的文件。
@@ -85,14 +88,19 @@ async function projectReview(runtime, thread, message, record) {
     // 无原生 patch 的 Harness（如 Pi）：并发同目录时用本轮工具触碰路径收窄全量快照，
     // 避免同项目其他会话的改动出现在本回合卡片里。本轮没有任何可归因路径时
     // （纯 shell 会话等）保留全量快照，不虚报归属。
-    const touched = touchedPaths(runtime, thread, message);
-    if (touched.size) changes = changes.filter(change => touched.has(change.path.toLowerCase()));
+    const touchedSet = touchedThisTurn();
+    if (touchedSet.size) changes = changes.filter(change => touchedSet.has(change.path.toLowerCase()));
   }
 
-  // 正向归属于其他会话的改动无条件剔除（不依赖 concurrent 标记：对方可能
-  // 在本回合开始后才启动）。无归属证据的改动保持原样，不虚报归属。
+  // 正向归属于其他会话的改动剔除（不依赖 concurrent 标记：对方可能在本回合开始后
+  // 才启动）。但本轮工具已明确触碰的文件属本会话自身的正向事实——foreign 集合扫描的是
+  // 其他会话的历史全部轮次，同目录旧会话碰过的路径会永久滞留其中，不得据此误剔本轮编辑，
+  // 否则该文件会从审查卡片与撤回列表中消失。无归属证据的改动保持原样，不虚报归属。
   const foreign = foreignPaths(runtime, thread, message);
-  if (foreign.size) changes = changes.filter(change => !foreign.has(change.path.toLowerCase()));
+  if (foreign.size) {
+    const touchedSet = touchedThisTurn();
+    changes = changes.filter(change => touchedSet.has(change.path.toLowerCase()) || !foreign.has(change.path.toLowerCase()));
+  }
 
   core.dispatch({ threadId: thread.id, turnId: message.coreTurnId, type: 'files.updated', payload: {
     source: 'snapshot', replace: true,

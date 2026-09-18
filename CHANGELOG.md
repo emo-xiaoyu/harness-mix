@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Send/cancel race hardening: the per-thread send lock is now ticket-owned. Stopping a turn mid-stream frees the thread for an immediate resend, but the old send's exit path can no longer delete the newer send's lock (which previously let a third submission run concurrently and trip the native harness's "already processing" error); pending cancel requests are likewise scoped to the send generation they target. 取消-重发竞态修复：发送锁改为票据所有制，旧发送退出时不再误删新发送的锁。
+- Stuck-turn watchdog now cancels the native session when it settles a wedged turn, instead of only settling the UI: a zombie native process no longer blocks the thread's next turn with an occupancy error. 卡死回合看门狗结算时级联取消原生会话，避免僵尸进程占用后续回合。
+- `/delegate` waits for the child task to actually settle (up to 30 minutes, aligned with collaboration orchestration, injectable as `delegationTimeoutMs`) and cancels the child on timeout with an explicit parent-side error — previously a non-blocking harness child (e.g. Pi) running longer than 30 seconds was silently reported as done with its result dropped. 委派等待修复：子任务异步结算前父线程不再提前误判成功。
+- Forked threads now broadcast `thread/started`, so a fork appears in the Desktop sidebar immediately instead of only after a reload. Fork 分支会话即时显示在侧边栏。
+- Multi-select question answers from the Desktop are preserved in full (JSON-encoded) instead of being truncated to the first option, fixing `JSON.parse` crashes on OpenCode multiple-choice questions; empty answer arrays now resolve to `''` rather than `undefined`. 多选答案全量保留，空数组回退为空字符串。
+- Workspace review attribution: files this turn's own tools touched win over historical "foreign session" attribution, so same-directory sessions' old edits no longer hide this turn's legitimate changes from the review card and undo list. 审查归属修复：本轮触碰的文件不再被历史 foreign 归属误剔。
+- Child-process stdin streams (`jsonl` transports, the DPAPI secure-store helper, the Antigravity CLI, and the official app-server pipe) now swallow asynchronous EPIPE stream errors instead of crashing the host process with an unhandled exception. 子进程 stdin 管道错误不再导致宿主崩溃。
+
 ## 0.2.2 — 2026-09-18
 
 - Aligns all six `@harness-mix/native-*` runtime packages at 0.2.2 with the CLI and pins `optionalDependencies` to the same version. 0.2.1 shipped with pins still at 0.1.11, so a fresh install's postinstall could overwrite the bundled fresh Shim binaries with the old-contract 0.1.11 ones; supersedes 0.2.1. Native binaries are rebuilt from unchanged Rust sources.

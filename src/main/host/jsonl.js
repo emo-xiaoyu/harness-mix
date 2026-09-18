@@ -16,6 +16,10 @@ class JsonlProcess {
     this.nextId = 1;
     this.hooks = hooks;
     this.child = spawn(command, args, { windowsHide: true, ...options, stdio: ["pipe", "pipe", "pipe"] });
+    // 子进程异常退出/管道破裂时，迟到的 stdin.write 会在流上异步抛 EPIPE；
+    // Writable 无 error 监听会被 Node 当作未捕获异常直接 crash 宿主进程。
+    // 真实失败由 exit/error 路径统一结算，这里仅吞掉管道噪声。
+    this.child.stdin.on("error", (error) => this.hooks.onDiagnostic?.(`stdin: ${error.message}`));
     this.#attachReader(this.child.stdout, (line) => this.#dispatch(line));
     this.#attachReader(this.child.stderr, (line) => hooks.onDiagnostic?.(line));
     this.child.on("error", (error) => this.#failAll(error));

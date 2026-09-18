@@ -21,11 +21,12 @@ async function until(fn) {
   await rt.store.load();
 
   const emits = new Map();
+  const cancels = new Map(); // threadId -> adapter.cancel 次数（看门狗级联取消断言）
   const adapter = {
     manifest: { id: 'test-harness', name: 'Test', capabilities: {} },
     async open(input) { emits.set(input.thread.id, input.emit); return {}; },
     async send(session) {},
-    async cancel(session) {},
+    async cancel(session) { cancels.set(session.threadId, (cancels.get(session.threadId) ?? 0) + 1); },
     async close() {},
   };
   rt.adapters.set(adapter.manifest.id, adapter);
@@ -57,11 +58,15 @@ async function until(fn) {
     await rt.send(stuck.id, 'wedged session');
     await until(() => stuck.status === 'error');
     assert.match(stuck.error, /卡死/);
+    // 结算的同时级联取消原生会话：否则僵尸进程常驻，下一回合撞上原生侧占用报错
+    await until(() => (cancels.get(stuck.id) ?? 0) >= 1);
     const turn = rt.execution.lastTurn(stuck.id);
     assert.equal(turn.status, 'error');
     await until(() => !stuck.reviewPending);
     const open = rt.core.getItemsForTurn(turn.id).filter(item => !['completed', 'error', 'cancelled'].includes(item.status));
     assert.equal(open.length, 0, 'watchdog settlement finalizes every open item');
+    assert.equal(cancels.get(active.id) ?? 0, 0, '正常完成的活跃回合不触发 adapter.cancel');
+    assert.equal(cancels.get(approval.id) ?? 0, 0, '审批等待后正常完成的回合不触发 adapter.cancel');
 
     console.log('stuck-turn-test: active/approval-waiting turns survive; wedged zero-event turn auto-settles and finalizes items');
   } finally {
