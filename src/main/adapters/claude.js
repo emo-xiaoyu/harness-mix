@@ -272,6 +272,9 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
     state: { turn: null, crashed: false, lastUsage: undefined, latestPlanLimit: undefined, checkpointId: undefined },
   };
 
+  // Host 侧投影异常绝不能杀死原生事件泵：crashed 只保留给真正的原生流错误。
+  const safeEmit = (mapped) => { try { emit(mapped); } catch { /* host projection must not kill the native pump */ } };
+
   session.query = sdk.query({
     prompt: input,
     options: {
@@ -293,7 +296,7 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
           }
         }
         const requestId = randomUUID();
-        emit(projectApproval(requestId, toolName, toolInput, suggestions));
+        safeEmit(projectApproval(requestId, toolName, toolInput, suggestions));
         return new Promise((resolve) => {
           const onAbort = () => {
             session.pendingApprovals.delete(requestId);
@@ -316,7 +319,7 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
           session.nativeSessionId = event.session_id;
           session.model = { id: event.model, name: event.model };
           session.permissionMode = event.permissionMode ?? session.permissionMode;
-          emit({ kind: "session", nativeSessionId: event.session_id, model: session.model });
+          safeEmit({ kind: "session", nativeSessionId: event.session_id, model: session.model });
           continue;
         }
         if (event.type === "rate_limit_event") {
@@ -326,7 +329,7 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
             if (typeof onPlanLimit === "function") onPlanLimit(limit);
             const current = session.state.lastUsage || {};
             session.state.lastUsage = applyClaudePlanLimitToUsage(current, limit);
-            emit({ kind: "usage", usage: session.state.lastUsage });
+            safeEmit({ kind: "usage", usage: session.state.lastUsage });
           }
           continue;
         }
@@ -337,14 +340,14 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
           for (const mapped of projectEvent(event)) {
             // 结算事件携带原生检查点（assistant uuid），供 fork 边界定位
             if (mapped.kind === 'completed') mapped.nativeRef = { ...mapped.nativeRef, checkpointId: session.state.checkpointId };
-            emit(mapped);
+            safeEmit(mapped);
           }
           session.state.turn?.resolve();
           session.state.turn = null;
           continue;
         }
         if (event.type === 'assistant' && event.uuid) session.state.checkpointId = event.uuid;
-        for (const mapped of projectEvent(event)) emit(mapped);
+        for (const mapped of projectEvent(event)) safeEmit(mapped);
       }
       // 流正常结束（close）：未结算的回合按取消处理
       session.state.turn?.resolve();
@@ -352,7 +355,7 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
     } catch (error) {
       session.state.crashed = true;
       if (session.state.turn) { session.state.turn.reject(error); session.state.turn = null; }
-      else emit({ kind: "error", message: `Claude 会话中断：${error.message}` });
+      else safeEmit({ kind: "error", message: `Claude 会话中断：${error.message}` });
     }
   })();
   return session;

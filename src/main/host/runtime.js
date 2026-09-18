@@ -26,7 +26,7 @@ const { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, remo
  * 仍由其原生程序维护，Adapter 只负责原生协议接入与事件转换。
  */
 class HostRuntime {
-  constructor({ dataDirectory, observer = null }) {
+  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000 }) {
     this.store = new ThreadStore(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
@@ -41,9 +41,19 @@ class HostRuntime {
     this.reviewTasks = new Set();
     this.openings = new Map();
     this.sending = new Set();
+    // send 进行中被 cancel 的线程：Turn 尚未开始或 prompt 尚未投递时 abort 无从生效，
+    // 由 #send 在 Turn 启动后/投递前据此结算取消，避免用户看不见的僵尸运行
+    this.cancelRequests = new Set();
     this.switching = new Set();
     // 同目录并发会话警告的去重记录：threadId -> 上次提醒时间
     this.concurrentCwdNotified = new Map();
+    // 卡死回合看门狗：记录运行中回合的最后事件时间。原生 Harness  wedge 时
+    // （如协作长轮询后进程不再产生任何事件），回合会永远转圈；超过阈值无事件
+    // 即按超时结算，让 UI 停转、审查快照收尾。等待用户审批的回合属合法静默。
+    this.turnActivity = new Map();
+    this.stuckTurnMs = stuckTurnMs;
+    this.watchdogTimer = setInterval(() => this.#sweepStuckTurns(), stuckSweepMs);
+    this.watchdogTimer.unref?.();
     // 跨 Harness 协作：parentThreadId -> { childId, toolCallId, cancelled }
     this.delegations = new Map();
     this.collaboration = new Collaboration(this);
@@ -312,7 +322,7 @@ class HostRuntime {
     if (this.sending.has(threadId)) throw new Error('任务正在执行，请先停止或等待完成');
     this.sending.add(threadId);
     try { return await this.#send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions }); }
-    finally { this.sending.delete(threadId); }
+    finally { this.sending.delete(threadId); this.cancelRequests.delete(threadId); }
   }
 
   async #send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions }) {
@@ -419,6 +429,9 @@ class HostRuntime {
     delete thread.error;
     delete thread.errorKind;
     this.execution.turnStarted(thread, displayPrompt);
+    // 会话打开/prompt 组装期间用户已按停止（cancel 时 Turn 尚未开始，原生侧无从 abort）：直接结算取消，不再投递
+    if (this.cancelRequests.delete(thread.id)) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
+    this.turnActivity.set(thread.id, Date.now());
     const message = thread.messages.at(-1);
     if (hasConcurrentTurn) message.concurrent = true;
     this.observer?.turnStarted(thread, this.core);
@@ -441,6 +454,16 @@ class HostRuntime {
           await this.handoffs.mark(thread.id, handoff.checkpointId, 'delivering');
           await this.#save();
           this.#broadcast();
+        }
+        // 投递前最后检查：Turn 可能在 review 快照/保存期间被取消（cancel 已结算）。
+        // 此时再投递，先到的 abort 会在原生侧落空，形成用户看不见的僵尸运行
+        if (!this.execution.isRunning(thread.id)) {
+          if (handoff?.checkpointId) {
+            handoff.phase = 'failed';
+            await this.handoffs.mark(thread.id, handoff.checkpointId, 'failed').catch(() => {});
+          }
+          if (message.reviewId) await this.#settleReview(thread, message);
+          return;
         }
         await session.adapter.send(session, promptText, hooks, { images: prepared.images, turnPermissions });
         if (handoff) {
@@ -592,6 +615,8 @@ class HostRuntime {
 
   async cancel(threadId) {
     const thread = this.threads.find(t => t.id === threadId);
+    // send 进行中（会话恢复 / prompt 尚未投递）时 abort 可能落空：登记取消请求，由 #send 在投递前结算
+    if (this.sending.has(threadId)) this.cancelRequests.add(threadId);
     // If this thread is a collaboration child task, mark the collaboration job as cancelled immediately
     const childJob = [...this.collaboration.jobs.values()].find(j => j.childId === threadId && j.status === 'running');
     if (childJob) {
@@ -1035,6 +1060,7 @@ class HostRuntime {
   }
 
   async close() {
+    clearInterval(this.watchdogTimer);
     await this.collaboration.close();
     await this.handoffAccess.close();
     clearTimeout(this.saveTimer); clearTimeout(this.broadcastTimer);
@@ -1141,14 +1167,42 @@ class HostRuntime {
   }
 
   /** 统一事件投影：Adapter 转换后的标准事件落到线程模型上 */
+  // 看门狗扫描：运行中回合超过 stuckTurnMs 无任何事件（且不在等待用户审批）
+  // 即判定原生会话卡死，按超时错误结算——否则 UI 会永远转圈、审查快照永不收尾。
+  #sweepStuckTurns() {
+    const now = Date.now();
+    for (const thread of this.threads) {
+      if (thread._storageStub) continue;
+      if (!this.execution.isRunning(thread.id)) { this.turnActivity.delete(thread.id); continue; }
+      if (this.core.interactions?.pending(thread.id)?.length) continue;
+      if (thread.pendingApprovals?.length) continue;
+      const last = this.turnActivity.get(thread.id) ?? this.execution.lastTurn(thread.id)?.createdAt ?? now;
+      if (now - last < this.stuckTurnMs) continue;
+      this.turnActivity.delete(thread.id);
+      this.#applyEvent({ threadId: thread.id, event: { kind: 'error', timestamp: now,
+        message: `原生会话超过 ${Math.round(this.stuckTurnMs / 60000)} 分钟未产生任何事件，判定为卡死并已自动结算。如原生进程仍在运行，可手动取消或开启新回合。` } });
+    }
+  }
+
+  /** 统一事件投影：Adapter 转换后的标准事件落到线程模型上 */
   #applyEvent({ threadId, event }) {
     if (!event) return;
     const thread = this.threads.find((t) => t.id === threadId);
     if (!thread) return;
     const turn = this.execution.lastTurn(thread.id);
     event = { ...event, timestamp: event.timestamp ?? Date.now() };
-    const { settled, ignored } = this.execution.apply(thread, event);
+    // 投影异常（畸形事件载荷等）绝不能沿 emit 同步抛回 Adapter——那会杀死原生
+    // 事件泵并把会话误判为崩溃。跳过该事件并提示；回合继续，卡死由看门狗兜底。
+    let applied;
+    try {
+      applied = this.execution.apply(thread, event);
+    } catch (error) {
+      this.#notify('info', `[投影] 异常事件已跳过：${error.message}`.slice(0, 300), thread.id);
+      return;
+    }
+    const { settled, ignored } = applied;
     if (ignored) return;
+    this.turnActivity.set(thread.id, event.timestamp);
     // 文件编辑落盘后即时刷新审查快照（含协作 Lead 的聚合卡片），不等 3s 轮询
     if ((event.kind === 'tool' && event.state !== 'running' && typeof event.path === 'string' && event.path) || event.kind === 'file-change') {
       this.reviewController.nudge(thread.id);

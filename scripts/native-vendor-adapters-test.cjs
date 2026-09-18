@@ -84,5 +84,71 @@ const pi = require('../src/main/adapters/pi');
   const projected = projectItem({ id: 'norm-item-1', type: 'context_compaction' });
   assert.deepEqual(projected, { id: 'norm-item-1', type: 'contextCompaction' });
 
+  // Pi 自动重试（stream 错误如 "Anthropic stream ended without a stop reason"）：
+  // message_end 的 error 不得提前定论为 Turn 失败——agent_end 携带 willRetry，
+  // 重试成功的回答必须完整落地，全程零 error 事件（否则 Host 提前结算，
+  // 重试结果被丢弃，用户重发还会撞上原生 "Agent is already processing"）。
+  {
+    const emitted = [];
+    const fakeProc = { harnessMixAnswer: '', command: async () => ({ leafId: 'leaf-1' }) };
+    const fwd = (event) => pi.forwardEvent(fakeProc, event, e => emitted.push(e));
+    const failedMsg = { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Anthropic stream ended without a stop reason' };
+    fwd({ type: 'message_end', message: failedMsg });
+    assert.equal(emitted.filter(e => e.kind === 'error').length, 0, 'message_end 不得提前报错');
+    fwd({ type: 'agent_end', willRetry: true, messages: [{ role: 'user', content: [{ type: 'text', text: '登录好了' }] }, failedMsg] });
+    assert.equal(emitted.at(-1).kind, 'status');
+    fwd({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: failedMsg.errorMessage });
+    assert.equal(emitted.at(-1).kind, 'status');
+    fwd({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '好的，' } });
+    fwd({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '开始执行。' } });
+    fwd({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '好的，开始执行。' }], stopReason: 'stop' } });
+    assert.equal(emitted.filter(e => e.kind === 'text-delta').map(e => e.text).join(''), '好的，开始执行。', '已流式回答不得重复补发');
+    fwd({ type: 'auto_retry_end', success: true, attempt: 1 });
+    fwd({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: [{ type: 'text', text: '好的，开始执行。' }], stopReason: 'stop' }] });
+    fwd({ type: 'agent_settled', sessionId: 's-retry' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(emitted.at(-1).kind, 'completed');
+    assert.equal(emitted.at(-1).nativeRef.checkpointId, 'leaf-1');
+    assert.equal(emitted.filter(e => e.kind === 'error').length, 0, '重试成功全程不得出现 error');
+  }
+  // Pi 重试耗尽/不可重试：error 在 agent_end（willRetry:false）处恰好结算一次
+  {
+    const emitted = [];
+    const fwd = (event) => pi.forwardEvent({ harnessMixAnswer: '', command: async () => ({}) }, event, e => emitted.push(e));
+    const failedMsg = { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'native quota exhausted' };
+    fwd({ type: 'message_end', message: failedMsg });
+    assert.equal(emitted.filter(e => e.kind === 'error').length, 0);
+    fwd({ type: 'agent_end', willRetry: false, messages: [failedMsg] });
+    assert.equal(emitted.filter(e => e.kind === 'error').length, 1);
+    assert.match(emitted.find(e => e.kind === 'error').message, /quota exhausted/);
+  }
+  // Pi 未流式回答的 message_end 回退补发仍然有效
+  {
+    const emitted = [];
+    pi.forwardEvent({ harnessMixAnswer: '', command: async () => ({}) },
+      { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '非流式回答' }], stopReason: 'stop' } },
+      e => emitted.push(e));
+    assert.ok(emitted.some(e => e.kind === 'text-delta' && e.text === '非流式回答'));
+  }
+  // Pi send()：原生拒绝 "already processing"（Host 与原生状态偶发分叉，如取消竞态）时
+  // 按原生协议提示以 followUp 排队重发；其他错误原样抛出
+  {
+    const calls = [];
+    let rejectOnce = true;
+    const busySession = { process: { harnessMixAnswer: '', command: async (payload) => {
+      calls.push(payload);
+      if (rejectOnce && payload.type === 'prompt') { rejectOnce = false; throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."); }
+      return {};
+    } } };
+    await pi.create().send(busySession, '登录好了', { emit: () => {} }, { images: [{ data: 'AA==', mime: 'image/png' }] });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].streamingBehavior, undefined);
+    assert.equal(calls[1].streamingBehavior, 'followUp');
+    assert.equal(calls[1].message, '登录好了');
+    assert.deepEqual(calls[1].images, [{ type: 'image', data: 'AA==', mimeType: 'image/png' }]);
+    const failingSession = { process: { harnessMixAnswer: '', command: async () => { throw new Error('Authentication failed'); } } };
+    await assert.rejects(pi.create().send(failingSession, 'hi', { emit: () => {} }, {}), /Authentication failed/);
+  }
+
   console.log('Native adapters: streaming deduplication, user suppression, question retry, exact native approvals, sanitized usage, grok images, grok compaction & UI projection PASS');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -89,11 +89,33 @@ async function until(fn) {
     assert.equal(review1.concurrent, true, 'review1 should record concurrent execution');
     assert.ok(review1.note.includes('并发任务'), 'review note should explain concurrency');
 
+    // 6.5 污染防护：并发期间 thread2 的 Harness 上报了带 path 的编辑事件，
+    // 该文件只能出现在 thread2 的审查里，不得污染 thread1 的回合卡片
+    await rt.send(thread1.id, 'task 1 turn 3 (no own edits)');
+    await rt.send(thread2.id, 'task 2 edits foreign file');
+    const emit2b = emits.get(thread2.id);
+    await fs.writeFile(path.join(root, 'foreign.txt'), 'edited by thread2\n');
+    emit2b({ kind: 'tool', toolCallId: 'edit-foreign', title: 'edit', state: 'done', path: 'foreign.txt' });
+    emit2b({ kind: 'text-delta', text: 'thread2 edited foreign.txt' });
+    emit2b({ kind: 'completed', finalAnswer: true });
+    await until(() => thread2.status === 'ready' && !thread2.reviewPending);
+    const msg2b = thread2.messages.at(-1);
+    const review2b = await rt.readReview(thread2, msg2b);
+    assert.ok(review2b.files.some(f => f.path === 'foreign.txt'), 'thread2 review should include its own attributed edit');
+
+    const emit1b = emits.get(thread1.id);
+    emit1b({ kind: 'text-delta', text: 'thread1 turn 3 finished without edits' });
+    emit1b({ kind: 'completed', finalAnswer: true });
+    await until(() => thread1.status === 'ready' && !thread1.reviewPending);
+    const msg1b = thread1.messages.at(-1);
+    const review1b = await rt.readReview(thread1, msg1b);
+    assert.ok(!review1b.files.some(f => f.path === 'foreign.txt'), 'foreign attributed edit must not pollute thread1 review');
+
     // 7. 全部空闲后，安全撤回可以正常执行
     await rt.undoFile(thread1.id, msg0.id, 'base.txt');
     await assert.rejects(fs.access(path.join(root, 'base.txt')));
 
-    console.log('core-concurrency-test: same-cwd concurrency, review degradation, and undo guard passed');
+    console.log('core-concurrency-test: same-cwd concurrency, review degradation, cross-session pollution guard and undo guard passed');
   } finally {
     await rt.close();
   }

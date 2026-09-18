@@ -77,9 +77,11 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
     recordNative(manifest.id, event);
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta' && event.assistantMessageEvent.delta) process.harnessMixAnswer = (process.harnessMixAnswer || '') + event.assistantMessageEvent.delta;
     if (event.type === 'message_end' && event.message?.role === 'assistant') {
-      if (event.message.stopReason === 'error' || event.message.errorMessage) {
-        emit({ kind: 'error', message: event.message.errorMessage || `${name} native model turn failed` });
-      } else if (!process.harnessMixAnswer) {
+      // 失败不在 message_end 定论：紧随其后的 agent_end 携带 willRetry，由它决定投影
+      // 「自动重试中」还是最终错误。若在此直接发 error，Host 会提前把 Turn 结算为失败，
+      // 自动重试成功的事件全被丢弃，用户重发消息还会撞上原生 "Agent is already processing"。
+      const failed = event.message.stopReason === 'error' || event.message.errorMessage;
+      if (!failed && !process.harnessMixAnswer) {
         const answer = Array.isArray(event.message.content) ? event.message.content.filter(block => block?.type === 'text').map(block => block.text || '').join('\n') : '';
         if (answer) emit({ kind: 'text-delta', text: answer });
       }
@@ -146,10 +148,31 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
         // 图片走 RPC 原生 images 字段（base64）；文本附件由 Host 内联进 text
         const images = (attachments?.images ?? []).map((a) => ({ type: 'image', data: a.data, mimeType: a.mime }));
         session.process.harnessMixAnswer = '';
-        await session.process.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
+        // Pi 的 prompt 命令在 preflight（扩展 input 钩子、压缩检查等）完成后才 ack；
+        // 此期间 abort 没有活动 run 可停，会落空，消息在 ack 后照常开跑（僵尸运行）。
+        // 用 in-flight 计数 + cancelRequested 标志：ack 之后补一发 abort 把刚启动的 run 真正停掉。
+        session.promptInFlight = (session.promptInFlight || 0) + 1;
+        try {
+          try {
+            await session.process.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
+          } catch (error) {
+            // Host 与原生状态偶发分叉（取消竞态、原生运行未收尾）时，按原生协议提示把消息
+            // 排队为 followUp（当前运行结束后处理），而不是把内部错误直接抛给用户。
+            if (!/already processing/i.test(String(error?.message))) throw error;
+            await session.process.command({ type: "prompt", message: text, streamingBehavior: "followUp", ...(images.length ? { images } : {}) });
+          }
+        } finally {
+          session.promptInFlight -= 1;
+          if (session.cancelRequested && !session.promptInFlight) {
+            session.cancelRequested = false;
+            void session.process.command({ type: "abort" }).catch(() => {});
+          }
+        }
       },
 
       async cancel(session) {
+        // prompt 仍在 preflight（ack 未回）时，这发 abort 大概率落空：置标志，由 send() 在 ack 后补停
+        if (session.promptInFlight) session.cancelRequested = true;
         await session.process.command({ type: "abort" });
       },
 
@@ -345,7 +368,8 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
     }
   }
 
-  return { manifest, create, project };
+  // forwardEvent 暴露给回放/单测（runtime 经由 create().open() 闭包使用同一份实现）
+  return { manifest, create, project, forwardEvent };
 }
 
 module.exports = { piFamily, PI_PERMISSION_MODES };
