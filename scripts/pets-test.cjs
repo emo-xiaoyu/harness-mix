@@ -69,7 +69,9 @@ function webpPayload(label) {
   const env = {
     HARNESSMIX_STOCK_CODEX_PATH: fakeCodexBin,
     HARNESS_MIX_PETS_DIR: petsDir,
+    HARNESSMIX_DATA_DIR: path.join(testRoot, 'data-dir'),
   };
+  const selectionFile = path.join(env.HARNESSMIX_DATA_DIR, 'pet-selection.json');
 
   // 本地 HTTP 服务器模拟社区下载源，覆盖 成功/500/坏签名/超大/截断/慢响应 场景
   const server = http.createServer((req, res) => {
@@ -355,6 +357,67 @@ function webpPayload(label) {
     assert.equal(
       validatePetMetadata({ id: 'x', displayName: 'A', spriteVersionNumber: 2, spritesheetPath: 'spritesheet.webp' }, 'x').id,
       'x',
+    );
+
+    // 19. 选择状态：空选择 -> 设置官方预载 -> 持久化跨实例 -> 非法/未知 id 拒绝 -> 清除
+    assert.deepEqual(market.selection(), { id: null }, 'no selection initially');
+
+    const officialSelection = market.select({ id: 'synthetic-buddy' });
+    assert.equal(officialSelection.id, 'synthetic-buddy');
+    assert.equal(officialSelection.displayName, 'Synthetic Buddy');
+    assert.deepEqual(market.selection(), officialSelection, 'selection round-trips');
+
+    // 持久化文件落在数据目录内，包含渲染所需的 displayName，且无临时文件残留
+    const persisted = JSON.parse(fs.readFileSync(selectionFile, 'utf8'));
+    assert.equal(persisted.id, 'synthetic-buddy');
+    assert.equal(persisted.displayName, 'Synthetic Buddy');
+    assert.ok(typeof persisted.selectedAt === 'string' && persisted.selectedAt, 'selectedAt recorded');
+    assert.ok(!fs.existsSync(`${selectionFile}.tmp`), 'atomic tmp file renamed away');
+
+    // 跨实例持久化：同一 env 新建 market 能读到选择
+    const marketReboot = createPetMarket({ env });
+    assert.deepEqual(marketReboot.selection(), officialSelection, 'selection survives a new market instance');
+
+    // 已安装宠物可选，选择随之切换
+    const installedSelection = market.select({ id: 'community-pet' });
+    assert.equal(installedSelection.id, 'community-pet');
+    assert.equal(installedSelection.displayName, 'Community Pet');
+    assert.equal(market.selection().id, 'community-pet');
+
+    // 非法 id / 未知 id 一律拒绝，且不影响当前选择
+    assert.throws(() => market.select({ id: '../evil' }), /Invalid pet id/);
+    assert.throws(() => market.select({ id: 'UPPERCASE' }), /Invalid pet id/);
+    assert.throws(() => market.select({ id: 'a/b' }), /Invalid pet id/);
+    assert.throws(() => market.select({ id: 'ghost-pet' }), /Unknown pet: ghost-pet/);
+    assert.equal(market.selection().id, 'community-pet', 'rejected selects keep current selection');
+    assert.ok(!fs.existsSync(path.join(testRoot, 'evil')), 'selection cannot escape the data dir');
+
+    // 清除选择
+    assert.deepEqual(market.select({ id: null }), { id: null });
+    assert.deepEqual(market.selection(), { id: null });
+    assert.equal(JSON.parse(fs.readFileSync(selectionFile, 'utf8')).id, null);
+
+    // 卸载当前选中的桌宠会自动清除选择
+    market.select({ id: 'community-pet' });
+    assert.equal(market.selection().id, 'community-pet');
+    market.uninstall({ id: 'community-pet' });
+    assert.deepEqual(market.selection(), { id: null }, 'uninstalling the selected pet clears selection');
+    assert.equal(JSON.parse(fs.readFileSync(selectionFile, 'utf8')).id, null);
+
+    // 过期容忍：持久化的选择指向外部删除的宠物时按无选择处理
+    market.select({ id: 'broken-pet' });
+    assert.equal(market.selection().id, 'broken-pet');
+    fs.rmSync(path.join(petsDir, 'broken-pet'), { recursive: true, force: true });
+    assert.deepEqual(market.selection(), { id: null }, 'stale selection resolves to no selection');
+
+    // rename 失败（目标路径被同名目录占用）时抛错且不残留 .tmp 暂存文件
+    const blockedDataDir = path.join(testRoot, 'blocked-data');
+    fs.mkdirSync(path.join(blockedDataDir, 'pet-selection.json'), { recursive: true });
+    const blockedMarket = createPetMarket({ env: { ...env, HARNESSMIX_DATA_DIR: blockedDataDir } });
+    assert.throws(() => blockedMarket.select({ id: 'synthetic-buddy' }));
+    assert.ok(
+      !fs.existsSync(path.join(blockedDataDir, 'pet-selection.json.tmp')),
+      'rename failure must not leave a tmp file behind',
     );
 
     console.log('Pets market native tests passed successfully!');

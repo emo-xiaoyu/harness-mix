@@ -4,7 +4,13 @@ import type {
   RendererSettingsPageMountContext,
 } from "./core.js";
 import { createRendererSettingsIcon } from "./icons.js";
-import type { RendererPetsClient, RendererPetItem } from "./pets-client.js";
+import {
+  normalizeRendererPetSelection,
+  type RendererPetItem,
+  type RendererPetSelection,
+  type RendererPetsClient,
+} from "./pets-client.js";
+import { switchOfficialCodexPet } from "../renderer-pet-switcher.js";
 
 const COPY = {
   en: {
@@ -31,6 +37,17 @@ const COPY = {
     empty: "No pets match the current filter.",
     officialBadge: "Official",
     communityBadge: "Community",
+    nowShowing: "Now showing",
+    nowShowingEmpty:
+      "No pet selected yet. Hit Use on an installed pet below and Harness Mix switches Codex's official pet for you.",
+    panelNote:
+      "Mirrors Codex's official pet. Show or hide the mascot with Codex's own Show pet command.",
+    usePet: "Use",
+    usingPet: "Switching...",
+    activeBadge: "Active",
+    hidePet: "Clear",
+    hidingPet: "Clearing...",
+    selectFailed: "Switch failed",
   },
   "zh-CN": {
     title: "桌宠市场",
@@ -56,14 +73,41 @@ const COPY = {
     empty: "没有找到符合条件的桌宠。",
     officialBadge: "官方预载",
     communityBadge: "社区精选",
+    nowShowing: "当前桌宠",
+    nowShowingEmpty: "尚未选择桌宠。在下方已安装的桌宠上点击「使用」，Harness Mix 会为你切换 Codex 官方桌宠。",
+    panelNote: "与 Codex 官方桌宠一致。官方吉祥物的显隐由 Codex 自己的「显示宠物」命令控制。",
+    usePet: "使用",
+    usingPet: "切换中...",
+    activeBadge: "使用中",
+    hidePet: "清除",
+    hidingPet: "清除中...",
+    selectFailed: "切换失败",
   },
 } as const;
 
 type PetTab = "all" | "official" | "community" | "installed";
-type PetOperation = "install" | "uninstall";
+type PetOperation = "install" | "uninstall" | "select";
 type PetOperationState =
-  | { readonly status: "installing" | "uninstalling" }
+  | { readonly status: "installing" | "uninstalling" | "selecting" }
   | { readonly status: "failed"; readonly op: PetOperation; readonly error: string };
+
+function petOperationBusyLabel(
+  status: "installing" | "uninstalling" | "selecting",
+  copy: (typeof COPY)[keyof typeof COPY],
+): string {
+  if (status === "installing") return copy.installing;
+  if (status === "uninstalling") return copy.uninstalling;
+  return copy.usingPet;
+}
+
+function petOperationFailedLabel(
+  op: PetOperation,
+  copy: (typeof COPY)[keyof typeof COPY],
+): string {
+  if (op === "install") return copy.installFailed;
+  if (op === "uninstall") return copy.uninstallFailed;
+  return copy.selectFailed;
+}
 
 const SPRITE_COLUMNS = 8;
 const SPRITE_FRAMES = 6;
@@ -116,7 +160,7 @@ function setupSpriteAnimation(
     stopLoop();
   };
 
-  const parentCard = element.closest(".pet-card");
+  const parentCard = element.closest(".pet-card, .pet-current");
   if (parentCard) {
     parentCard.addEventListener("mouseenter", onMouseEnter);
     parentCard.addEventListener("mouseleave", onMouseLeave);
@@ -181,6 +225,11 @@ export function createPetSettingsPage(
       safetyBody.append(safetyTitle, safetyDetail);
       safety.append(safetyBody);
 
+      // 当前桌宠面板（Harness Mix 本地选择状态驱动的展示面，置顶显示）
+      const currentPanel = document.createElement("section");
+      currentPanel.className = "pet-current";
+      currentPanel.dataset.active = "false";
+
       // Toolbar: tabs + search
       const toolbar = document.createElement("div");
       toolbar.className = "pet-market__toolbar";
@@ -214,14 +263,21 @@ export function createPetSettingsPage(
       const grid = document.createElement("div");
       grid.className = "pet-market-grid";
 
-      context.content.append(heading, intro, safety, toolbar, grid);
+      context.content.append(heading, intro, safety, currentPanel, toolbar, grid);
 
       let allPets: RendererPetItem[] = [];
       const imageCache = new Map<string, string>(); // id -> dataUrl / url
-      // 每个 pet 的操作状态机：installing / uninstalling / failed（含错误与失败操作类型）
+      // 每个 pet 的操作状态机：installing / uninstalling / selecting / failed（含错误与失败操作类型）
       const petStates = new Map<string, PetOperationState>();
       // 渲染世代：重渲染后让在途的 preview 回调失效，避免给已分离的 DOM 节点挂动画
       let renderEpoch = 0;
+      // 当前桌宠面板状态：选择结果 + 隐藏操作进行中 + 面板级错误（选择失败显示在卡片内）
+      let currentSelection: RendererPetSelection = { id: null };
+      let selectionReady = false;
+      let hidePending = false;
+      let panelError: string | null = null;
+      let panelEpoch = 0;
+      const panelDisposers: Array<() => void> = [];
 
       const runPetOperation = (pet: RendererPetItem, op: PetOperation) => {
         const client = getClient();
@@ -243,7 +299,13 @@ export function createPetSettingsPage(
           );
           renderGrid();
         };
-        const onSuccess = () => settle(op === "install", null);
+        const onSuccess = () => {
+          settle(op === "install", null);
+          // 卸载当前选中的桌宠：Host 端已自动清除持久化选择，这里同步面板与悬浮层
+          if (op === "uninstall" && currentSelection.id === pet.id) {
+            applySelection({ id: null });
+          }
+        };
         const onFailure = (err: unknown) =>
           settle(pet.installed, err instanceof Error ? err.message : String(err));
         if (op === "install") {
@@ -324,8 +386,7 @@ export function createPetSettingsPage(
           if (opState?.status === "failed") {
             const b = document.createElement("span");
             b.className = "pet-card__badge pet-card__badge--failed";
-            b.textContent =
-              opState.op === "install" ? copy.installFailed : copy.uninstallFailed;
+            b.textContent = petOperationFailedLabel(opState.op, copy);
             badges.append(b);
           } else if (pet.installed) {
             const b = document.createElement("span");
@@ -342,6 +403,13 @@ export function createPetSettingsPage(
             b.className = "pet-card__badge pet-card__badge--community";
             b.textContent = copy.communityBadge;
             badges.append(b);
+          }
+
+          if (pet.installed && currentSelection.id === pet.id && opState?.status !== "failed") {
+            const activeBadge = document.createElement("span");
+            activeBadge.className = "pet-card__badge pet-card__badge--active";
+            activeBadge.textContent = copy.activeBadge;
+            badges.append(activeBadge);
           }
 
           cardHeader.append(title, badges);
@@ -361,30 +429,41 @@ export function createPetSettingsPage(
           const actions = document.createElement("div");
           actions.className = "pet-card__actions";
 
-          if (opState?.status === "installing" || opState?.status === "uninstalling") {
-            // 操作进行中：按钮禁用，防止重复点击（runPetOperation 内还有 petStates 防重入）
+          if (opState && opState.status !== "failed") {
+            // 操作进行中：按钮禁用，防止重复点击（runPetOperation/runSelectOperation 内还有 petStates 防重入）
             const busyBtn = document.createElement("button");
             busyBtn.type = "button";
             busyBtn.className =
-              opState.status === "installing"
-                ? "pet-btn pet-btn--primary"
-                : "pet-btn pet-btn--danger";
+              opState.status === "uninstalling"
+                ? "pet-btn pet-btn--danger"
+                : "pet-btn pet-btn--primary";
             busyBtn.disabled = true;
-            busyBtn.textContent =
-              opState.status === "installing" ? copy.installing : copy.uninstalling;
+            busyBtn.textContent = petOperationBusyLabel(opState.status, copy);
             actions.append(busyBtn);
           } else if (opState?.status === "failed") {
             // 失败后错误显示在卡片内，重试按钮恢复对应操作
             const retryBtn = document.createElement("button");
             retryBtn.type = "button";
             retryBtn.className =
-              opState.op === "install"
-                ? "pet-btn pet-btn--primary"
-                : "pet-btn pet-btn--danger";
+              opState.op === "uninstall"
+                ? "pet-btn pet-btn--danger"
+                : "pet-btn pet-btn--primary";
             retryBtn.textContent = copy.retry;
-            retryBtn.addEventListener("click", () => runPetOperation(pet, opState.op));
+            retryBtn.addEventListener("click", () => {
+              if (opState.op === "select") runSelectOperation(pet);
+              else runPetOperation(pet, opState.op);
+            });
             actions.append(retryBtn);
           } else if (pet.installed) {
+            // 已安装：可切换为当前桌宠（已在使用中的不再显示 Use，用 Active 徽标表达）
+            if (currentSelection.id !== pet.id) {
+              const useBtn = document.createElement("button");
+              useBtn.type = "button";
+              useBtn.className = "pet-btn pet-btn--primary";
+              useBtn.textContent = copy.usePet;
+              useBtn.addEventListener("click", () => runSelectOperation(pet));
+              actions.append(useBtn);
+            }
             const uninstallBtn = document.createElement("button");
             uninstallBtn.type = "button";
             uninstallBtn.className = "pet-btn pet-btn--danger";
@@ -415,8 +494,7 @@ export function createPetSettingsPage(
           } else if (opState) {
             const statusLine = document.createElement("div");
             statusLine.className = "pet-card__status";
-            statusLine.textContent =
-              opState.status === "installing" ? copy.installing : copy.uninstalling;
+            statusLine.textContent = petOperationBusyLabel(opState.status, copy);
             body.append(cardHeader, desc, statusLine, footer);
           } else {
             body.append(cardHeader, desc, footer);
@@ -468,6 +546,162 @@ export function createPetSettingsPage(
         }
       };
 
+      // 当前桌宠面板渲染：空态提示 / 选中态（精灵图动画 + 名称 + 隐藏按钮），面板级错误行
+      const renderPanel = () => {
+        panelEpoch += 1;
+        const epoch = panelEpoch;
+        for (const d of panelDisposers) d();
+        panelDisposers.length = 0;
+        currentPanel.replaceChildren();
+        currentPanel.dataset.active = String(currentSelection.id !== null);
+
+        const label = document.createElement("span");
+        label.className = "pet-current__label";
+        label.textContent = copy.nowShowing;
+
+        if (currentSelection.id === null) {
+          const emptyWrap = document.createElement("div");
+          emptyWrap.className = "pet-current__empty";
+          emptyWrap.append(createRendererSettingsIcon("pets", 22));
+          const hint = document.createElement("span");
+          hint.className = "pet-current__hint";
+          hint.textContent = selectionReady ? copy.nowShowingEmpty : "";
+          emptyWrap.append(hint);
+          currentPanel.append(label, emptyWrap);
+        } else {
+          const selectionId = currentSelection.id;
+          const stage = document.createElement("div");
+          stage.className = "pet-current__stage";
+          const sprite = document.createElement("div");
+          sprite.className = "pet-current__sprite";
+          stage.append(sprite);
+
+          const info = document.createElement("div");
+          info.className = "pet-current__info";
+          const name = document.createElement("strong");
+          name.className = "pet-current__name";
+          name.textContent = currentSelection.displayName ?? selectionId;
+          const note = document.createElement("span");
+          note.className = "pet-current__note";
+          note.textContent = copy.panelNote;
+          info.append(label, name, note);
+
+          const hideBtn = document.createElement("button");
+          hideBtn.type = "button";
+          hideBtn.className = "pet-btn pet-btn--secondary";
+          hideBtn.disabled = hidePending;
+          hideBtn.textContent = hidePending ? copy.hidingPet : copy.hidePet;
+          hideBtn.addEventListener("click", () => runHideOperation());
+
+          currentPanel.append(stage, info, hideBtn);
+
+          const attachAnimation = (imageUrl: string) => {
+            panelDisposers.push(
+              setupSpriteAnimation(sprite, imageUrl, currentSelection.spriteVersionNumber),
+            );
+          };
+          const cachedImg = imageCache.get(selectionId);
+          if (cachedImg) {
+            attachAnimation(cachedImg);
+          } else {
+            const client = getClient();
+            if (client) {
+              // 与卡片一致的按需加载；面板重渲染/页面卸载后丢弃过期回调
+              void client.preview(selectionId).then(
+                (res) => {
+                  if (epoch !== panelEpoch || !sprite.isConnected) return;
+                  if (res && res.dataBase64) {
+                    const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
+                    imageCache.set(selectionId, dataUrl);
+                    attachAnimation(dataUrl);
+                  }
+                },
+                () => {
+                  /* 预览加载失败仅影响动画，面板文字信息仍有效 */
+                },
+              );
+            }
+          }
+        }
+
+        if (panelError) {
+          const errorBox = document.createElement("div");
+          errorBox.className = "pet-current__error";
+          errorBox.textContent = panelError;
+          currentPanel.append(errorBox);
+        }
+      };
+
+      // 选择变更的统一入口：更新面板与卡片徽标
+      const applySelection = (selection: RendererPetSelection) => {
+        currentSelection = selection;
+        selectionReady = true;
+        panelError = null;
+        renderPanel();
+        renderGrid();
+      };
+
+      const runHideOperation = () => {
+        const client = getClient();
+        if (!client || hidePending || currentSelection.id === null) return;
+        hidePending = true;
+        panelError = null;
+        renderPanel();
+        void client.select(null).then(
+          () => {
+            hidePending = false;
+            applySelection({ id: null });
+          },
+          (err) => {
+            hidePending = false;
+            panelError = err instanceof Error ? err.message : String(err);
+            renderPanel();
+          },
+        );
+      };
+
+      const runSelectOperation = (pet: RendererPetItem) => {
+        const client = getClient();
+        const current = petStates.get(pet.id);
+        // 操作进行中禁止重复触发；failed 状态允许重试；当前选中的 pet 无需再选
+        if (!client || !pet.installed || (current && current.status !== "failed")) return;
+        if (currentSelection.id === pet.id) return;
+        petStates.set(pet.id, { status: "selecting" });
+        renderGrid();
+        // 先通过 DOM 自动化切换 Codex 官方桌宠（应用自己的点击链路，不碰账号 API），
+        // 确认成功后写入 Harness Mix 本地记录（驱动面板与徽标）
+        void switchOfficialCodexPet({ id: pet.id, displayName: pet.displayName })
+          .then(() => client.select(pet.id))
+          .then(
+            (result) => {
+              // 切换耗时数秒，页面可能已经卸载：中止后不再触碰已分离的 DOM
+              if (context.signal.aborted) return;
+              petStates.delete(pet.id);
+              const applied = normalizeRendererPetSelection(result);
+              applySelection(
+                applied.id !== null
+                  ? applied
+                  : {
+                      id: pet.id,
+                      displayName: pet.displayName,
+                      ...(pet.spriteVersionNumber !== undefined
+                        ? { spriteVersionNumber: pet.spriteVersionNumber }
+                        : {}),
+                    },
+              );
+            },
+            (err) => {
+              if (context.signal.aborted) return;
+              petStates.set(pet.id, {
+                status: "failed",
+                op: "select",
+                error: err instanceof Error ? err.message : String(err),
+              });
+              renderGrid();
+            },
+          );
+      };
+
       for (const t of tabs) {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -492,6 +726,7 @@ export function createPetSettingsPage(
 
       // Fetch catalog
       const client = getClient();
+      renderPanel(); // 首次渲染（空态），随后拉取选择填充
       if (client) {
         void context.runLatest(
           () => client.catalog(),
@@ -506,10 +741,29 @@ export function createPetSettingsPage(
             },
           },
         );
+        // 拉取当前选择填充面板；若期间用户已完成一次切换（panelEpoch 变化），丢弃过期结果
+        const selectionFetchEpoch = panelEpoch;
+        void client.selection().then(
+          (result) => {
+            if (selectionFetchEpoch !== panelEpoch) return;
+            currentSelection = normalizeRendererPetSelection(result);
+            selectionReady = true;
+            renderPanel();
+            renderGrid(); // 卡片的 Active 徽标 / Use 按钮依赖 currentSelection，需随选择到位重渲染
+          },
+          () => {
+            if (selectionFetchEpoch !== panelEpoch) return;
+            selectionReady = true;
+            renderPanel();
+          },
+        );
       }
 
       return () => {
         renderEpoch += 1; // 使在途 preview 回调失效
+        panelEpoch += 1; // 面板动画与在途 selection/preview 回调一并失效
+        for (const d of panelDisposers) d();
+        panelDisposers.length = 0;
         for (const d of disposers) d();
         disposers.length = 0;
         // 释放图片缓存（blob: URL 需要显式 revoke；data: URL 仅释放引用）

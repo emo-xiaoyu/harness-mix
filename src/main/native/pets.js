@@ -7,7 +7,8 @@ const path = require('path');
 // 桌宠市场数据源（只读官方资产，不随 Harness Mix 分发）：
 // - 官方预载：Codex Desktop 安装包 app.asar 内嵌的 *-spritesheet-vN-<hash>.webp，运行时按需提取；
 // - 已安装：~/.codex/pets/<id>/{pet.json, spritesheet.webp}（官方 Pets 设置页读取同一目录）。
-// 选择动作始终留给官方 Pets 设置页 / /pet 指令，Harness Mix 不代理账号级 accessory_id。
+// 账号级 accessory_id 始终留给官方 Pets 设置页 / /pet 指令，Harness Mix 不代理账号 API；
+// Harness Mix 自己的选择状态（selection/select）是数据目录下的本地 JSON，只驱动 Harness Mix 自有展示面。
 
 const PET_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SPRITESHEET_PATTERN = /^([a-z0-9]+(?:-[a-z0-9]+)*)-spritesheet-v\d+-[0-9a-f]+\.webp$/;
@@ -23,6 +24,15 @@ function titleCase(id) {
 
 function petsDirectory(env = process.env) {
   return env.HARNESS_MIX_PETS_DIR || path.join(os.homedir(), '.codex', 'pets');
+}
+
+// 桌宠选择是 Harness Mix 本地状态（不是账号级 accessory_id），持久化在数据目录下的小 JSON 里
+function harnessMixDataDirectory(env = process.env) {
+  return env.HARNESSMIX_DATA_DIR || path.join(os.homedir(), '.harness-mix');
+}
+
+function petSelectionFile(env = process.env) {
+  return path.join(harnessMixDataDirectory(env), 'pet-selection.json');
 }
 
 // HARNESSMIX_STOCK_CODEX_PATH 指向安装包内的 codex CLI（win: <root>/app/resources/codex.exe，
@@ -314,6 +324,47 @@ function createPetMarket({ env = process.env } = {}) {
     return pets;
   }
 
+  // 可选中的宠物：已安装或官方预载（选择状态只是 Harness Mix 本地展示状态，不要求已安装）
+  function findSelectablePet(id) {
+    const installed = installedPets().find(pet => pet.id === id);
+    if (installed) return installed;
+    return officialPets().pets.find(pet => pet.id === id) ?? null;
+  }
+
+  // 读取持久化的选择；文件缺失/损坏/id 非法一律视为无选择
+  function readPersistedSelection() {
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(petSelectionFile(env), 'utf8')); } catch { return null; }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    if (typeof raw.id !== 'string' || !PET_ID_PATTERN.test(raw.id)) return null;
+    const displayName = typeof raw.displayName === 'string' && raw.displayName.trim() ? raw.displayName : titleCase(raw.id);
+    const spriteVersionNumber = Number.isInteger(raw.spriteVersionNumber) && raw.spriteVersionNumber >= 1 ? raw.spriteVersionNumber : undefined;
+    return { id: raw.id, displayName, spriteVersionNumber };
+  }
+
+  // 原子写入（tmp + rename，与 config.js 的 saveNativeSettings 一致）；selection 为 null 表示清除
+  function writePersistedSelection(selection) {
+    const dir = harnessMixDataDirectory(env);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = petSelectionFile(env);
+    const payload = selection
+      ? { id: selection.id, displayName: selection.displayName, spriteVersionNumber: selection.spriteVersionNumber, selectedAt: new Date().toISOString() }
+      : { id: null, selectedAt: new Date().toISOString() };
+    fs.writeFileSync(`${file}.tmp`, `${JSON.stringify(payload, null, 2)}\n`);
+    try {
+      fs.renameSync(`${file}.tmp`, file);
+    } catch (err) {
+      // rename 失败（如文件占用）时清理暂存文件，避免数据目录残留 .tmp
+      try { fs.rmSync(`${file}.tmp`, { force: true }); } catch { /* best effort */ }
+      throw err;
+    }
+  }
+
+  // 选择结果的渲染描述：id + displayName + spriteVersionNumber，调用方无需二次查询即可渲染
+  function describeSelection(pet) {
+    return { id: pet.id, displayName: pet.displayName, spriteVersionNumber: pet.spriteVersionNumber ?? 2 };
+  }
+
   return {
     catalog() {
       const official = officialPets();
@@ -523,12 +574,38 @@ function createPetMarket({ env = process.env } = {}) {
         fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         if (fs.existsSync(targetDir)) throw new Error(`Failed to remove pet directory: ${targetDir}`);
         previewCache.delete(id);
+        // 卸载当前选中的桌宠时自动清除选择，避免悬空的过期选择
+        const persisted = readPersistedSelection();
+        if (persisted && persisted.id === id) writePersistedSelection(null);
         return { id, removed: true };
       } finally {
         releaseOperation(id);
       }
     },
+
+    // 当前 Harness Mix 桌宠选择；持久化的选择指向已不可用的宠物时按无选择处理（过期容忍）
+    selection() {
+      const persisted = readPersistedSelection();
+      if (!persisted) return { id: null };
+      const pet = findSelectablePet(persisted.id);
+      if (!pet) return { id: null };
+      return describeSelection(pet);
+    },
+
+    // 设置/清除选择：{ id } 选中（必须已安装或为官方预载），{ id: null } 清除
+    select({ id } = {}) {
+      if (id === null || id === undefined) {
+        writePersistedSelection(null);
+        return { id: null };
+      }
+      if (!PET_ID_PATTERN.test(String(id))) throw new Error('Invalid pet id');
+      const pet = findSelectablePet(id);
+      if (!pet) throw new Error(`Unknown pet: ${id}`);
+      const selection = describeSelection(pet);
+      writePersistedSelection(selection);
+      return selection;
+    },
   };
 }
 
-module.exports = { createPetMarket, petsDirectory, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS, isWebpBuffer, validatePetMetadata };
+module.exports = { createPetMarket, petsDirectory, petSelectionFile, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS, isWebpBuffer, validatePetMetadata };

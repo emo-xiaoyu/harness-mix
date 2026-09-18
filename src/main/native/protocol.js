@@ -450,6 +450,9 @@ class NativeProtocol {
     if (method === 'harnessmix/pets/preview') return this.pets.preview(params);
     if (method === 'harnessmix/pets/install') return this.pets.install(params);
     if (method === 'harnessmix/pets/uninstall') return this.pets.uninstall(params);
+    // Harness Mix 本地桌宠选择（仅驱动 Harness Mix 自有展示面，不触碰账号级 accessory_id）
+    if (method === 'harnessmix/pets/selection') return this.pets.selection();
+    if (method === 'harnessmix/pets/select') return this.pets.select(params);
     const thread = this.thread(params.threadId);
     // 失败回合分类查询：Renderer 据此在输入框下方渲染只真正帮得上忙的动作按钮
     if (method === 'harnessmix/harness/turn-error') {
