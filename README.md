@@ -232,18 +232,6 @@ npm run e2e:codex
 
 Harness Mix 基于 [Apache License 2.0](LICENSE) 或 [MIT](LICENSE-MIT) 双许可证发布，可任选其一。第三方组件仍适用各自的许可证；归属信息见 [NOTICE](NOTICE)。
 
-## 鸣谢
-
-Harness Mix 一路走来，受了下面这些开源项目不少启发。它们都把成果公开在自己的仓库里，本项目的架构分层、协议接线和界面细节都从中获益：
-
-- BytePioneer-AI 的 Codex Desktop 集成项目（MIT）—— 官方 Codex Desktop 原生界面集成（renderer extension / desktop control / shared contracts）的衍生基础，也是整体分层与协议接线的思路来源。
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) —— 多 Agent 协作运行时的编排思路来源。
-- [xintaofei/codeg](https://github.com/xintaofei/codeg) —— 工具协议与多 Harness 接线方式的参考。
-- [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) —— 皮肤市场内置皮肤素材的来源。
-- [Fei-Away/Codex-Dream-Skin](https://github.com/Fei-Away/Codex-Dream-Skin) 与 [miniLV/Anthropic-codex-theme](https://github.com/miniLV/Anthropic-codex-theme) —— 皮肤市场部分内置主题的背景素材与配色方案来源。
-
-以上项目各自适用原有许可证，归属声明与许可正文见 [NOTICE](NOTICE) 与 [licenses/](licenses/)。相关商标仍归各自所有者，本项目仅用于标识所集成的产品，不主张任何商标权、背书或关联关系。
-
 ---
 
 <a id="en"></a>
@@ -477,15 +465,3 @@ Some E2E suites launch real Harnesses and may require local installs, sign-in or
 ## License
 
 Harness Mix is dual-licensed under [Apache License 2.0](LICENSE) or [MIT](LICENSE-MIT), at your option. Third-party components remain subject to their own licenses; see [NOTICE](NOTICE) for attribution.
-
-## Acknowledgements
-
-Harness Mix owes a lot to the open-source projects below. All of them publish their work in their own repositories, and this project's architecture, protocol wiring and interface details have benefited from them:
-
-- BytePioneer-AI's Codex Desktop integration project (MIT) — the upstream basis for the native Codex Desktop integration (renderer extension, desktop control, shared contracts), and the source of its overall layering and protocol wiring.
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha) — the orchestration approach behind the multi-Agent collaboration runtime.
-- [xintaofei/codeg](https://github.com/xintaofei/codeg) — a reference for the tool protocol and multi-Harness wiring.
-- [HeiGeAi/heige-codex-skin-studio](https://github.com/HeiGeAi/heige-codex-skin-studio) — the artwork bundled in the skin marketplace.
-- [Fei-Away/Codex-Dream-Skin](https://github.com/Fei-Away/Codex-Dream-Skin) and [miniLV/Anthropic-codex-theme](https://github.com/miniLV/Anthropic-codex-theme) — background artwork and color palettes for additional built-in skins.
-
-Each project remains subject to its own license; see [NOTICE](NOTICE) and [licenses/](licenses/) for the attribution records and upstream license texts. All trademarks remain the property of their respective owners. They are bundled solely to identify the products this project integrates with, and no trademark right, endorsement or affiliation is claimed.
