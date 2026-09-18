@@ -199,6 +199,16 @@ function pickTurnPermissions(params = {}) {
   return Object.keys(picked).length ? picked : null;
 }
 
+// Desktop 渲染层按字面量匹配 agentMessage 的 phase 词表（commentary / final_answer）：
+// split-items-into-render-groups 只在 phase==='final_answer' 时把末段提取为回合结论，
+// 其余 assistant-message 随执行区折叠进「用时」栏。内部 CoreEvent 词表是 progress / final，
+// 在此 Codex 投影边界翻译；历史持久化数据（progress/final）也经此映射，无需迁移。
+function agentMessagePhase(phase) {
+  if (phase === 'progress' || phase === 'commentary') return 'commentary';
+  if (phase === 'final' || phase === 'final_answer' || phase == null) return 'final_answer';
+  return phase;
+}
+
 function projectItem(item) {
   const base = { id: item.id };
   if (item.type === 'user_message') return { ...base, type: 'userMessage', content: [
@@ -207,7 +217,7 @@ function projectItem(item) {
       ? { type: 'image', url: `data:${a.mime || 'image/png'};base64,${a.data}` }
       : a.path ? { type: 'localImage', path: a.path } : { type: 'text', text: `[图片：${a.name}]`, text_elements: [] }),
   ] };
-  if (item.type === 'agent_message' || item.type === 'notice') return { ...base, type: 'agentMessage', text: item.content || '', phase: item.phase || 'final' };
+  if (item.type === 'agent_message' || item.type === 'notice') return { ...base, type: 'agentMessage', text: item.content || '', phase: agentMessagePhase(item.phase) };
   if (item.type === 'reasoning') return { ...base, type: 'reasoning', summary: [item.content || ''], content: [] };
   if (item.type === 'tool_call' && item.collaboration) {
     const job = item.collaboration;

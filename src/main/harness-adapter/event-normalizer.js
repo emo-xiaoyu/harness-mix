@@ -92,16 +92,19 @@ class EventNormalizer {
         // 原生流仍送达 agent_settled / result），防止影子侧出现非法状态迁移。
         if (!this.turnActive) return [];
         this.turnActive = false;
-        // 最后一段 agent_message 标记 phase:'final'：Desktop 回合结算后把此前所有
-        // progress 段与工具项折叠进「用时」栏，仅保留该段作为唯一正式结论。
+        // 最后一段 agent_message 标记 phase:'final'并显式闭合：投影边界将其译为
+        // final_answer 随 item/completed 上线，Desktop 据此把它识别为回合唯一正式结论；
+        // 其余 progress（commentary）段与工具项折叠进「用时 XXm XXs」栏。
         return [
           ...(!legacy.finalAnswer || legacy.stopReason && legacy.stopReason !== 'completed' || !this.currentMessageItemId ? [] : [this.#event({ type: 'item.updated', itemId: this.currentMessageItemId, payload: { phase: 'final' } })]),
+          ...this.#closeSegment(),
           this.#event({ type: 'turn.completed', payload: { stopReason: legacy.stopReason ?? 'completed' } }),
         ];
       case 'error':
         if (!this.turnActive) return [];
         this.turnActive = false;
         return [
+          ...this.#closeSegment(),
           this.#event({ type: 'turn.failed', payload: {
             message: String(legacy.message ?? 'unknown error'),
             errorKind: classifyError(legacy),
