@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 — 2026-09-18
+
+- Turn transcripts now fold correctly again: the wire `phase` for `agentMessage` items uses Codex's own vocabulary — `commentary` / `final_answer` — which the Desktop matches literally when extracting the final answer and collapsing the execution zone into the elapsed-time bar. 0.2.1/0.2.2 sent the internal `progress` / `final` values, which the Desktop does not recognize, so completed turns stayed expanded. The internal vocabulary is unchanged and translated at the projection boundary (historic persisted items map through the same function), and the final message segment is explicitly closed at turn settle so its phase reaches the Desktop on the wire. 修复回合转录折叠：agentMessage 的 phase 改用 Codex 原生词表（commentary/final_answer），完成后过程内容正确折叠进「用时」栏。
 
 - Send/cancel race hardening: the per-thread send lock is now ticket-owned. Stopping a turn mid-stream frees the thread for an immediate resend, but the old send's exit path can no longer delete the newer send's lock (which previously let a third submission run concurrently and trip the native harness's "already processing" error); pending cancel requests are likewise scoped to the send generation they target. 取消-重发竞态修复：发送锁改为票据所有制，旧发送退出时不再误删新发送的锁。
 - Stuck-turn watchdog now cancels the native session when it settles a wedged turn, instead of only settling the UI: a zombie native process no longer blocks the thread's next turn with an occupancy error. 卡死回合看门狗结算时级联取消原生会话，避免僵尸进程占用后续回合。
