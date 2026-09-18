@@ -1,5 +1,35 @@
 const { diff } = require('./diff');
 
+// 把工具/文件事件里的路径归一化成「相对 cwd、小写、正斜杠」的形式，
+// 绝对路径只接受 cwd 之下的；归一化失败返回 null（忽略该条目）。
+function normalizePath(cwd) {
+  return value => {
+    if (typeof value !== 'string' || !value) return null;
+    let p = value.replace(/\\/g, '/');
+    if (/^[a-z]:\//i.test(p)) {
+      const lower = p.toLowerCase();
+      if (!cwd || !lower.startsWith(cwd + '/')) return null;
+      p = p.slice(cwd.length + 1);
+    }
+    p = p.replace(/^\.\//, '');
+    return p ? p.toLowerCase() : null;
+  };
+}
+
+// 收集一组 Core Turn 中可归因的触碰路径（file_change 条目与工具结构化 path）。
+function collectTurnPaths(runtime, turnIds, cwd) {
+  const add = normalizePath(cwd);
+  const touched = new Set();
+  for (const turnId of turnIds) {
+    for (const item of runtime.core.getItemsForTurn(turnId)) {
+      if (item.type !== 'file_change' && item.type !== 'tool_call') continue;
+      const p = add(item.path);
+      if (p) touched.add(p);
+    }
+  }
+  return touched;
+}
+
 // 本轮真实触碰的文件路径集合（相对 cwd、小写、正斜杠）：来自文件编辑类工具的
 // 结构化 path 与原生 file_change 条目。协作 Lead 回合合并其子线程的触碰路径，
 // 让团队卡片展示的是整个团队而非其他会话的改动。
@@ -10,25 +40,28 @@ function touchedPaths(runtime, thread, message) {
     if (child.parentThreadId !== thread.id) continue;
     for (const m of child.messages ?? []) if (m.coreTurnId) turns.push(m.coreTurnId);
   }
-  const touched = new Set();
-  const add = value => {
-    if (typeof value !== 'string' || !value) return;
-    let p = value.replace(/\\/g, '/');
-    if (/^[a-z]:\//i.test(p)) {
-      const lower = p.toLowerCase();
-      if (!cwd || !lower.startsWith(cwd + '/')) return;
-      p = p.slice(cwd.length + 1);
-    }
-    p = p.replace(/^\.\//, '');
-    if (p) touched.add(p.toLowerCase());
-  };
-  for (const turnId of turns) {
-    for (const item of runtime.core.getItemsForTurn(turnId)) {
-      if (item.type === 'file_change') add(item.path);
-      else if (item.type === 'tool_call') add(item.path);
-    }
+  return collectTurnPaths(runtime, turns, cwd);
+}
+
+// 明确归属于「其他会话」的文件路径集合：同目录并发时，对方 Harness 上报的
+// file_change / 工具 path 条目是正向归属证据。本回合快照（目录级 diff）会把
+// 这些外来改动一起捕进来，必须按归属剔除，否则 Agent Team / 并发会话的编辑
+// 会污染本回合的变更卡片与撤回列表。只处理同 cwd 的线程：不同 cwd（worktree
+// 等）的相对路径不可比较，也进不了本目录快照。无归属证据的改动保持原行为。
+function foreignPaths(runtime, thread, message) {
+  const cwd = String(thread.cwd || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const mine = new Set([thread.id]);
+  for (const child of runtime.threads ?? []) {
+    if (child.parentThreadId === thread.id) mine.add(child.id);
   }
-  return touched;
+  const foreign = new Set();
+  for (const other of runtime.threads ?? []) {
+    if (mine.has(other.id)) continue;
+    if (String(other.cwd || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() !== cwd) continue;
+    const turns = (other.messages ?? []).map(m => m.coreTurnId).filter(Boolean);
+    for (const p of collectTurnPaths(runtime, turns, cwd)) foreign.add(p);
+  }
+  return foreign;
 }
 
 // Snapshot acquisition/undo stay in Workspace. Core stores their presentation.
@@ -55,6 +88,11 @@ async function projectReview(runtime, thread, message, record) {
     const touched = touchedPaths(runtime, thread, message);
     if (touched.size) changes = changes.filter(change => touched.has(change.path.toLowerCase()));
   }
+
+  // 正向归属于其他会话的改动无条件剔除（不依赖 concurrent 标记：对方可能
+  // 在本回合开始后才启动）。无归属证据的改动保持原样，不虚报归属。
+  const foreign = foreignPaths(runtime, thread, message);
+  if (foreign.size) changes = changes.filter(change => !foreign.has(change.path.toLowerCase()));
 
   core.dispatch({ threadId: thread.id, turnId: message.coreTurnId, type: 'files.updated', payload: {
     source: 'snapshot', replace: true,

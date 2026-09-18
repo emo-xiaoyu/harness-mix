@@ -76,6 +76,18 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
     const incomplete = files.find(file => file.path === 'd.txt');
     assert.equal(incomplete.source, 'snapshot', 'contentless native hint must not block the workspace snapshot');
     assert.equal(incomplete.after, 'disk\n');
+    // 工作区外改动（如 Claude 写入计划文件/全局配置/其他盘符）：保留展示并标记，
+    // 绝不能使回合失败或原生会话崩溃（历史 bug：canonicalChanges 抛错沿 emit 同步
+    // 回到 Adapter 事件泵 → 会话误判 crashed → 后续 send 全部“原生会话不可用”）。
+    const outsidePath = path.join(directory, 'outside.txt');
+    await fs.writeFile(outsidePath, 'outside\n');
+    emit({ kind: 'file-change', source: 'native', changes: [{ path: outsidePath, before: '', after: 'outside\n', complete: true }] });
+    emit({ kind: 'file-change', source: 'native', changes: [{ before: 'x', after: 'y' }] }); // 无路径：静默丢弃
+    assert.equal(thread.error, undefined);
+    files = (await rt.readReview(thread, message)).files;
+    const outside = files.find(file => file.outsideWorkspace);
+    assert.equal(outside.path, outsidePath.replace(/\\/g, '/'));
+    assert.equal(outside.after, 'outside\n');
     emit({ kind: 'completed', finalAnswer: true });
     for (let i = 0; i < 200 && thread.reviewPending; i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(thread.reviewPending, false);
@@ -87,9 +99,19 @@ const { canonicalChanges } = require('../src/main/workspace/file-changes');
     const beforeLate = structuredClone(message.coreItems);
     emit({ kind: 'file-change', changes: [{ path: 'late.txt', before: '', after: 'late' }] });
     assert.deepEqual(message.coreItems, beforeLate, 'late native diff cannot mutate a settled turn');
-    assert.throws(() => canonicalChanges(root, [{ path: '../escape.txt' }]), /outside/);
+    const escaped = canonicalChanges(root, [{ path: '../escape.txt', before: '', after: 'x' }]);
+    assert.equal(escaped.length, 1);
+    assert.equal(escaped[0].outsideWorkspace, true, 'outside-workspace change is kept and flagged, not thrown');
+    assert.equal(escaped[0].path, path.resolve(root, '../escape.txt').replace(/\\/g, '/'));
+    assert.equal(canonicalChanges(root, [{ before: 'a' }]).length, 0, 'pathless change is dropped');
     await rt.undoFile(thread.id, message.id, 'a.txt');
     assert.equal(await fs.readFile(path.join(root, 'a.txt'), 'utf8'), 'original\n');
+    // 会话未被上述异常事件破坏：同一会话可继续新回合并正常结算。
+    await rt.send(thread.id, 'after outside change');
+    emit({ kind: 'completed', finalAnswer: true });
+    for (let i = 0; i < 200 && thread.reviewPending; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.notEqual(thread.status, 'error');
+    assert.equal(thread.error, undefined);
     // 并发同目录、无原生 patch 的 Harness：各回合审查按工具触碰路径归属，
     // 另一个会话的改动不混入本回合卡片（原生 Codex 的每会话独立 diff 行为）。
     const w1 = await rt.createThread({ harnessId: 'test', cwd: root });
