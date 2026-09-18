@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 — 2026-09-18
+
+- Aligns all six `@harness-mix/native-*` runtime packages at 0.2.2 with the CLI and pins `optionalDependencies` to the same version. 0.2.1 shipped with pins still at 0.1.11, so a fresh install's postinstall could overwrite the bundled fresh Shim binaries with the old-contract 0.1.11 ones; supersedes 0.2.1. Native binaries are rebuilt from unchanged Rust sources.
+
 ## 0.2.1 — 2026-09-18
 
 - Turn transcripts now match Codex's native three-stage experience: opening remarks and inter-tool commentary stream live as progress-phase agent messages alongside command rows while the turn runs, and on completion Codex Desktop folds every progress segment and tool item under the elapsed-time bar, leaving only the final-phase conclusion visible. The previous buffer-and-reclassify-as-reasoning approach (which hid narration while running) is removed.
