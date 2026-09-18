@@ -1,6 +1,6 @@
 {
   "name": "@harness-mix/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "(Apache-2.0 OR MIT)",
   "description": "Harness Mix native Codex UI bridge for Codex, Pi, Claude Code, DeepSeek Harness, Antigravity, CodeBuddy, Kiro CLI, Cursor CLI and other native coding harnesses.",
   "keywords": [
@@ -123,12 +123,13 @@
     "test:core-concurrency": "node scripts/core-concurrency-test.cjs",
     "test:thread-title": "node scripts/thread-title-test.cjs",
     "test:handoff": "node scripts/handoff-checkpoint-test.cjs && node scripts/switch-harness-test.cjs",
-    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/codex-accounts-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-update-apply-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/handoff-checkpoint-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs && node scripts/thread-title-test.cjs && node scripts/native-job-object-test.cjs && node scripts/integrations-test.cjs && node scripts/storage-verification-test.cjs",
+    "test:core-all": "node scripts/contracts-test.cjs && node scripts/projector-test.cjs && node scripts/turn-manager-test.cjs && node scripts/sequence-test.cjs && node scripts/shadow-test.cjs && node scripts/architecture-test.cjs && node scripts/adapters-test.cjs && node scripts/dsh-adapter-test.cjs && node scripts/codex-adapter-test.cjs && node scripts/codex-accounts-test.cjs && node scripts/antigravity-adapter-test.cjs && node scripts/openclaw-adapter-test.cjs && node scripts/core-replay-test.cjs && node scripts/determinism-test.cjs && node scripts/core-runtime-test.cjs && node scripts/core-services-test.cjs && node scripts/native-file-change-test.cjs && node scripts/native-updater-test.cjs && node scripts/native-update-apply-test.cjs && node scripts/native-vendor-adapters-test.cjs && node scripts/core-concurrency-test.cjs && node scripts/concurrency-layers-test.cjs && node scripts/tool-concurrency-regression-test.cjs && node scripts/handoff-checkpoint-test.cjs && node scripts/switch-harness-test.cjs && node scripts/native-acp-depth-test.cjs && node scripts/thread-title-test.cjs && node scripts/native-job-object-test.cjs && node scripts/integrations-test.cjs && node scripts/storage-verification-test.cjs && node scripts/stuck-turn-test.cjs && node scripts/pi-cancel-race-test.cjs",
     "test:codex-accounts": "node scripts/codex-accounts-test.cjs",
     "smoke:codex-accounts-ui": "electron scripts/codex-accounts-ui-smoke.cjs",
     "test:transcript": "node scripts/transcript-test.cjs",
     "test:workspace": "node scripts/workspace-test.cjs",
     "e2e:pi": "node scripts/e2e-pi.cjs",
+    "e2e:pi-cancel": "node scripts/e2e-pi-cancel.cjs",
     "e2e:shadow-pi": "node scripts/e2e-shadow.cjs pi",
     "e2e:shadow-claude": "node scripts/e2e-shadow.cjs claude",
     "e2e:shadow-dsh": "node scripts/e2e-shadow.cjs dsh",
@@ -163,7 +164,9 @@
     "test:tool-concurrency": "node scripts/tool-concurrency-regression-test.cjs",
     "test:platform": "node scripts/platform-test.cjs",
     "test:shim": "node scripts/native-shim-test.cjs",
-    "publish:native": "node scripts/publish-native-package.cjs"
+    "publish:native": "node scripts/publish-native-package.cjs",
+    "test:stuck-turn": "node scripts/stuck-turn-test.cjs",
+    "test:pi-cancel-race": "node scripts/pi-cancel-race-test.cjs"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
