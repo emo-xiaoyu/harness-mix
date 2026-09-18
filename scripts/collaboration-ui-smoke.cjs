@@ -52,10 +52,13 @@ app.whenReady().then(async () => {
       globalThis.mentionSmokeEditor = editor;
       const teamPanel = document.querySelector('.harness-mix-team-panel');
       const compact = {name:teamPanel?.querySelector('.harness-mix-team-name')?.textContent,panels:document.querySelectorAll('.harness-mix-team-panel').length,button:teamPanel?.querySelector('.harness-mix-team-open')?.textContent,icons:teamPanel?.querySelectorAll('img').length,topMounted:teamPanel?.nextElementSibling?.id === 'thread-content-anchor'};
+      const chip = teamPanel.querySelector('.harness-mix-team-summary-members .harness-mix-team-clickable');
+      chip.click(); await new Promise(r=>setTimeout(r,0));
+      const chipOpened = globalThis.openedTeamThread; globalThis.openedTeamThread = null;
       teamPanel.querySelector('.harness-mix-team-open').click(); await new Promise(r=>setTimeout(r,30));
       const workbench=document.querySelector('.harness-mix-team-workbench');
       const builder=workbench.querySelector('[data-agent="pi"]'); builder.click(); await new Promise(r=>setTimeout(r,0));
-      const teamResult = {compact,name:workbench?.querySelector('.harness-mix-team-name')?.textContent,workbenches:document.querySelectorAll('.harness-mix-team-workbench').length,position:getComputedStyle(workbench).position,bodyOverflow:document.body.style.overflow,icons:workbench?.querySelectorAll('img').length,roles:[...workbench?.querySelectorAll('[data-agent]') ?? []].map(node=>node.getAttribute('data-agent')),lanes:workbench?.querySelectorAll('.harness-mix-team-lanes > div').length,hasTask:workbench?.textContent.includes('实现 Team Runtime'),hasRole:workbench?.textContent.includes('后端架构与 Host Runtime')&&workbench?.textContent.includes('独立代码审查与质量验收'),hasLeader:workbench?.textContent.includes('主导者'),hasMessage:workbench?.textContent.includes('Runtime 已就绪'),timeline:workbench?.querySelector('.harness-mix-team-timeline input')?.max,opened:globalThis.openedTeamThread};
+      const teamResult = {compact,chipOpened,name:workbench?.querySelector('.harness-mix-team-name')?.textContent,workbenches:document.querySelectorAll('.harness-mix-team-workbench').length,position:getComputedStyle(workbench).position,bodyOverflow:document.body.style.overflow,icons:workbench?.querySelectorAll('img').length,roles:[...workbench?.querySelectorAll('[data-agent]') ?? []].map(node=>node.getAttribute('data-agent')),lanes:workbench?.querySelectorAll('.harness-mix-team-lanes > div').length,hasTask:workbench?.textContent.includes('实现 Team Runtime'),hasRole:workbench?.textContent.includes('后端架构与 Host Runtime')&&workbench?.textContent.includes('独立代码审查与质量验收'),hasLeader:workbench?.textContent.includes('主导者'),hasMessage:workbench?.textContent.includes('Runtime 已就绪'),hasEvent:workbench?.textContent.includes('团队建立'),feedItems:workbench?.querySelectorAll('.harness-mix-team-feed-list article').length,workingLanes:workbench?.querySelectorAll('.harness-mix-team-lane[data-status="working"]').length,workingDots:workbench?.querySelectorAll('.harness-mix-team-status-dot[data-status="working"]').length,timeline:workbench?.querySelector('.harness-mix-team-timeline input')?.max,opened:globalThis.openedTeamThread};
       globalThis.teamSmoke = teamApi;
       return {atTriggerStayedNative,filtered,text,richText,badge,badgeLabel:badgeButton?.getAttribute('aria-label'),inline,selectedAgentCount,icons,disabled,sessionBadge,teamResult};
     })()`);
@@ -76,6 +79,11 @@ app.whenReady().then(async () => {
     assert.notEqual(result.teamResult.position, 'fixed', 'Team details stay embedded in the Codex conversation layout');
     assert.equal(result.teamResult.bodyOverflow, '', 'Opening Team details must not lock or cover the native Codex UI');
     assert.equal(result.teamResult.opened, 'builder-thread');
+    assert.equal(result.teamResult.chipOpened, 'builder-thread', 'Summary member chip opens the member native session');
+    assert.equal(result.teamResult.hasEvent, true, 'Feed renders team history events');
+    assert.equal(result.teamResult.feedItems, 2, 'Feed merges messages and history events');
+    assert.ok(result.teamResult.workingLanes >= 2, 'Working member lanes carry live connector animation');
+    assert.ok(result.teamResult.workingDots >= 3, 'Lead and working members get pulsing status dots');
     assert.ok(result.teamResult.icons >= 5, 'Lead/member/task/message routes use real Harness icons');
     assert.deepEqual(result.teamResult.roles, ['codex', 'pi', 'claude', 'codex', 'dsh', 'opencode', 'antigravity']);
     assert.equal(result.teamResult.lanes, 6);

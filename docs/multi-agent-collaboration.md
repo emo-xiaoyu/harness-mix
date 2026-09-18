@@ -21,7 +21,7 @@
 2. 主模型调用 `delegate_to_agent(agent_type, task)`，立即取得 `task_id`，可以继续发起其他任务。
 3. Host 创建带 `parentThreadId` 的独立原生会话。任务中需要的上下文由主模型明确传递，不复制其他 Harness 的隐藏状态、账户或权限。
 4. `update_agent_plan(steps)` 发布开发、审查、返工和最终验收计划；步骤状态为 pending / in_progress / completed。`get_delegation_status(task_ids, wait_ms)` 收取状态和最终文本；单次等待不超过 60 秒。`message_agent` 在已结束的子会话中继续对话，`cancel_delegation` 取消子任务。
-5. 结果作为真正的原生工具结果返回主模型，由主模型验证、整合并继续执行。Host 额外投影原生 `collabAgentToolCall` 协作卡片（真实子任务 ID、Harness 名称、提示词、最终状态、Worktree 补丁与改动摘要），原生桌面渲染扩展支持点击直接跳转定位到子会话、内联展开语法高亮 Diff 查看改动、以及一键合并回主项目。
+5. 结果作为真正的原生工具结果返回主模型，由主模型验证、整合并继续执行。Host 额外投影原生 `collabAgentToolCall` 协作卡片（真实子任务 ID、Harness 名称、提示词、最终状态、Worktree 补丁与改动摘要），原生桌面渲染扩展支持点击直接跳转定位到子会话、内联展开语法高亮 Diff 查看改动、以及一键合并回主项目。「创建智能体」（spawnAgent）在子会话就绪后立即结算，执行期状态由独立的 sendInput 卡片承载，桌面不会在整个执行期间停留在「创建中」。同目录并发/Agent Team 场景下，各回合的文件审查卡片只展示可归因到本会话（及其协作子会话）的改动：其他会话 Harness 上报过路径的编辑会被正向剔除，不污染本回合的 Diff 与撤回列表。
 
 `list_agents` 提供真实可用性。旧 `/delegate` 仍是独立的手动委派入口，其完成结果只回投父任务工具卡片，不自动调用父模型。
 

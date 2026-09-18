@@ -228,9 +228,12 @@ class Collaboration {
 
   emitTeam(team, action) {
     if (!this.runtime.execution.isRunning(team.owner)) return;
+    // 团队全部完成时把团队卡片结算为 done——否则它会作为未终态 tool_call
+    // 一直挂到回合结束，被投影成「执行中」。完成后若再 reopen，会以 running 复更。
+    const done = team.status === 'completed';
     this.runtime.emitCollaboration(team.owner, {
       kind: 'tool', toolCallId: `agent-team:${team.id}`, title: `Agent Team · ${team.name}`,
-      state: 'running', input: team.goal, output: JSON.stringify({ action, ...this.teamView(team) }),
+      state: done ? 'done' : 'running', input: team.goal, output: JSON.stringify({ action, ...this.teamView(team) }),
     });
   }
 
@@ -511,18 +514,25 @@ class Collaboration {
   async run(parent, job, task) {
     const rt = this.runtime;
     const turnId = job.turnId;
-    const toolCallId = `collaboration:${randomUUID()}`;
-    const operation = job.childId ? 'sendInput' : 'spawnAgent';
-    const emit = event => {
+    const title = `Agent 协作 · ${rt.adapters.get(job.agent).manifest.name}`;
+    // 「创建智能体」(spawnAgent) 与「执行中」(sendInput) 是两个独立的投影 item：
+    // spawn 在子会话就绪后立即结算为 done，否则 Desktop 原生协作卡片会在整个
+    // 执行期间一直停留在「创建中 N 个智能体」。
+    const spawnCallId = `collaboration:${randomUUID()}`;
+    const workCallId = `collaboration:${randomUUID()}`;
+    const emit = (event, operation, toolCallId) => {
       if (rt.execution.lastTurn(parent.id)?.id === turnId) rt.emitCollaboration(parent.id, { ...event,
         collaboration: { ...this.view(job), operation } });
     };
+    // 已有子会话的后续输入（message_agent / resume / 团队持久成员）不涉及创建。
+    let spawnSettled = !!job.childId;
     try {
       if (!job.workspace) {
         job.workspace = await createWorkspace(parent.cwd, job.id, job.isolation);
         await this.save();
       }
       const workerPermMode = defaultWorkerPermissionMode(job.agent);
+      if (!spawnSettled) emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
       const child = job.childId ? rt.threads.find(t => t.id === job.childId) : await rt.createThread({
         harnessId: job.agent, cwd: job.workspace.cwd, title: `${parent.title} › ${task.slice(0, 40)}`, parentThreadId: parent.id,
         options: { ...(workerPermMode ? { permissionMode: workerPermMode } : {}) },
@@ -537,7 +547,11 @@ class Collaboration {
       if (!child) throw new Error('Native child history is missing; no replacement session was created');
       job.childId = child.id;
       await this.save();
-      emit({ kind: 'tool', toolCallId, title: `Agent 协作 · ${rt.adapters.get(job.agent).manifest.name}`, input: task, state: 'running', output: JSON.stringify(this.view(job)) });
+      if (!spawnSettled) {
+        emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'done', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
+        spawnSettled = true;
+      }
+      emit({ kind: 'tool', toolCallId: workCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId);
       if (job.status !== 'running' || this.closing || !rt.execution.isRunning(parent.id)) { job.status = 'cancelled'; return; }
       // Child native file events remain visible; only the lead snapshots the shared workspace.
       const sending = rt.send(child.id, task, { collaborationOf: parent.id, isolated: job.workspace.mode === 'worktree' });
@@ -555,7 +569,7 @@ class Collaboration {
           turnInactiveSince = null;
         }
         const current = this.view(job).display_status;
-        if (current !== displayedStatus) { displayedStatus = current; emit({ kind: 'tool', toolCallId, state: 'running', output: JSON.stringify(this.view(job)) }); }
+        if (current !== displayedStatus) { displayedStatus = current; emit({ kind: 'tool', toolCallId: workCallId, state: 'running', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId); }
         if (Date.now() > until) { await rt.cancel(child.id); throw new Error('Subtask timed out after 30 minutes'); }
         await delay(100);
       }
@@ -600,7 +614,12 @@ class Collaboration {
         if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_failed'); }
       }
     }
-    finally { await this.save(); emit({ kind: 'tool', toolCallId, state: job.status === 'completed' ? 'done' : 'error', output: JSON.stringify(this.view(job)) }); }
+    finally {
+      await this.save();
+      // 创建阶段失败（如原生会话启动报错）时，把仍在「创建中」的 spawn 卡片结算为错误。
+      if (!spawnSettled) emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'error', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
+      emit({ kind: 'tool', toolCallId: workCallId, title, state: job.status === 'completed' ? 'done' : 'error', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId);
+    }
   }
 
   async cancel(job) {

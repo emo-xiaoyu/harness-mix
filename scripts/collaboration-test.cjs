@@ -84,7 +84,7 @@ async function main() {
     const waitingChild = rt.threads.find(t => t.id === jobs[0].childId);
     waitingChild && pending.get(waitingChild.id).s.emit({ kind: 'approval', requestId: 'native-approval', method: 'confirm', title: 'Allow test?' });
     assert.equal(rt.collaboration.view(jobs[0]).display_status, 'waiting_approval');
-    await wait(() => String(rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id).find(item => item.type === 'tool_call')?.output).includes('waiting_approval'));
+    await wait(() => rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id).some(item => item.type === 'tool_call' && String(item.output).includes('waiting_approval')));
     pending.get(jobs[0].childId).s.emit({ kind: 'interaction-responded', requestId: 'native-approval' });
     finish(jobs[0].childId, 'first-result');
     await wait(() => jobs[0].status === 'completed');
@@ -99,9 +99,14 @@ async function main() {
     assert.deepEqual(results.map(r => r.result), ['first-result', 'second-result']);
     const cards = rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id).filter(item => item.collaboration);
     const { projectItem } = require('../src/main/native/protocol');
-    assert.equal(projectItem(cards[0]).type, 'collabAgentToolCall');
-    assert.deepEqual(projectItem(cards[0]).receiverThreadIds, [jobs[0].childId]);
-    assert.equal(projectItem(cards[0]).agentsStates[jobs[0].childId].message, 'first-result');
+    const spawnCard = cards.find(item => item.collaboration.operation === 'spawnAgent' && item.collaboration.task_id === jobs[0].id);
+    const workCard = cards.find(item => item.collaboration.operation === 'sendInput' && item.collaboration.task_id === jobs[0].id);
+    assert.ok(spawnCard && workCard, 'Delegation projects separate spawn and execution cards');
+    assert.equal(projectItem(spawnCard).type, 'collabAgentToolCall');
+    assert.equal(projectItem(spawnCard).status, 'completed', 'Spawn card settles once the agent session exists (no stuck 创建中)');
+    assert.deepEqual(projectItem(spawnCard).receiverThreadIds, [jobs[0].childId]);
+    assert.equal(projectItem(workCard).status, 'completed');
+    assert.equal(projectItem(workCard).agentsStates[jobs[0].childId].message, 'first-result');
     assert.ok(rt.execution.isRunning(parent.id), 'Tool results do not end the native lead turn');
     await call('message_agent', { task_id: first.task_id, task: 'follow-up' });
     await wait(() => pending.size === 1);
