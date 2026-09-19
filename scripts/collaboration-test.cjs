@@ -112,6 +112,18 @@ async function main() {
     await wait(() => pending.size === 1);
     finish(jobs[0].childId, 'follow-up-result');
     assert.equal((await call('get_delegation_status', { task_ids: [first.task_id], wait_ms: 3000 }))[0].result, 'follow-up-result');
+  // 回归：apply 的同目录并发守卫不得把正在等待 MCP 工具结果的 lead 回合自身计为并发
+  // （此前条件恒真，apply_delegation_changes 不可能成功）；第三方会话占用同目录时仍必须拦截。
+  rt.collaboration.jobs.set('apply-guard-job', { id: 'apply-guard-job', owner: parent.id, agent: 'worker', status: 'completed',
+    workspace: { mode: 'worktree', cwd: path.join(root, 'guard-wt'), root: path.join(root, 'guard-wt'), source: root, branch: 'guard', baseTree: 't', baseCommit: 'c' } });
+  await assert.rejects(rt.collaboration.apply('apply-guard-job', '0'.repeat(64)),
+    error => !/结算后再应用/.test(error.message), '运行中的 lead 自身不得触发同目录并发守卫');
+  const guardIntruder = await rt.createThread({ harnessId: 'worker', cwd: root });
+  const intruderTurn = rt.send(guardIntruder.id, '占用目录');
+  await wait(() => rt.execution.isRunning(guardIntruder.id));
+  await assert.rejects(rt.collaboration.apply('apply-guard-job', '0'.repeat(64)), /结算后再应用/, '第三方同目录运行会话仍被守卫拦截');
+  await rt.cancel(guardIntruder.id);
+  await intruderTurn;
     const team = await call('create_agent_team', { name: 'Release team', goal: 'Ship a verified change', members: [{ name: 'Builder', role: 'Implement and coordinate', agent_type: 'worker' }, { name: 'Reviewer', role: 'Independently verify', agent_type: 'reviewer' }, { name: 'Frontend', role: 'Integrate the native UI', agent_type: 'worker' }, { name: 'QA', role: 'Run the regression matrix', agent_type: 'reviewer' }, { name: 'Docs', role: 'Document the delivery', agent_type: 'worker' }, { name: 'Release', role: 'Verify Git and final Diff', agent_type: 'reviewer' }] });
     assert.equal(team.lead.agent, 'lead');
     assert.match(team.lead.role, /Lead/);

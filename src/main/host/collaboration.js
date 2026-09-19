@@ -249,7 +249,11 @@ class Collaboration {
     if (job.applying) throw new Error('正在应用改动');
     if (job.appliedDigest) throw new Error('此任务已应用；后续修改请创建新任务');
     const parent = this.runtime.threads.find(t => t.id === job.owner);
-    if (!parent || this.runtime.threads.some(t => (this.runtime.execution.isRunning(t.id) || t.reviewPending) && [parent.cwd, job.workspace?.cwd].includes(t.cwd))) throw new Error('请等待主任务和工作区任务结算后再应用');
+    // lead 回合在等待本 MCP 工具返回时必然处于运行态（call() 的前置条件），子线程由下方
+    // verification gates 单独校验，因此同目录并发扫描必须排除这两者，否则条件恒真、apply 永远失败
+    if (!parent || this.runtime.threads.some(t => t.id !== job.owner && t.id !== job.childId
+      && (this.runtime.execution.isRunning(t.id) || t.reviewPending)
+      && [parent.cwd, job.workspace?.cwd].some(cwd => String(cwd).toLowerCase() === String(t.cwd).toLowerCase()))) throw new Error('其他任务正在同一目录运行或待审查，请等待其结算后再应用');
     if (job.childId) this.runtime.verificationGates.assertSatisfied(this.runtime.getThread(job.childId), '应用子任务改动');
     job.applying = true;
     try {
