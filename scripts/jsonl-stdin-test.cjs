@@ -25,6 +25,15 @@ const { JsonlProcess } = require('../src/main/host/jsonl');
   } finally {
     process.removeListener('uncaughtException', onCrash);
   }
+
+  // 子进程退出时，挂起中的请求必须以带 harnessExited 标记的错误结算——
+  // protocol.inspect 依赖该标记把确定性失败标为不可重试，抑制渲染层的重开循环。
+  {
+    const proc = new JsonlProcess(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 50)'], {}, {});
+    const pending = proc.request('never/answered', {});
+    await assert.rejects(pending, error => error.harnessExited === true && /进程已退出/.test(error.message));
+    console.log('jsonl-stdin-test: pending requests reject with the harnessExited marker');
+  }
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
