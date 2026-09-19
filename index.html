@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harness Mix — 连接多个原生 Coding Harness 的 Codex 原生 UI</title>
+<meta name="description" content="Harness Mix 接入官方 Codex Desktop 原生界面，把 Antigravity、Codex、Claude Code、Pi、DeepSeek、Cursor 等 17 个原生 Coding Harness 汇聚到同一套 UI，支持跨 Harness 任务接力与多 Agent 协同。">
+<style>
+  :root {
+    --bg: #0b0f17;
+    --bg-soft: #101725;
+    --card: #141c2e;
+    --card-hover: #1a2440;
+    --border: #23304d;
+    --text: #e6ebf5;
+    --text-dim: #94a3bc;
+    --accent: #4f8cff;
+    --accent-2: #7c5cff;
+    --green: #3ecf8e;
+    --radius: 14px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    line-height: 1.6;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* nav */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(11, 15, 23, .8);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: var(--text); }
+  .brand img { width: 28px; height: 28px; border-radius: 6px; }
+  .nav-links { display: flex; align-items: center; gap: 22px; font-size: 14px; }
+  .nav-links a { color: var(--text-dim); }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .btn-gh {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  }
+  .btn-gh:hover { background: var(--card-hover); text-decoration: none; }
+
+  /* hero */
+  .hero { padding: 88px 0 56px; text-align: center; position: relative; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: -40% 0 auto; height: 520px;
+    background:
+      radial-gradient(600px 300px at 30% 20%, rgba(79,140,255,.16), transparent),
+      radial-gradient(600px 300px at 70% 20%, rgba(124,92,255,.14), transparent);
+    pointer-events: none;
+  }
+  .hero > * { position: relative; }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 26px; }
+  .chip {
+    font-size: 13px; color: var(--text-dim);
+    border: 1px solid var(--border); background: var(--bg-soft);
+    padding: 5px 13px; border-radius: 999px;
+  }
+  .chip b { color: var(--green); font-weight: 600; }
+  h1 {
+    font-size: clamp(34px, 6vw, 56px); font-weight: 800; letter-spacing: -.02em;
+    background: linear-gradient(92deg, #fff 20%, #9db8ff 60%, #b79dff);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .tagline { max-width: 720px; margin: 20px auto 0; font-size: 18px; color: var(--text-dim); }
+  .tagline strong { color: var(--text); font-weight: 600; }
+
+  .install {
+    display: inline-flex; align-items: center; gap: 14px;
+    margin-top: 32px; padding: 13px 18px;
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 15px;
+  }
+  .install .dollar { color: var(--green); }
+  .install button {
+    background: none; border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .install button:hover { color: var(--text); border-color: var(--accent); }
+  .cta-row { margin-top: 26px; display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 26px; border-radius: 10px;
+    font-size: 15px; font-weight: 600;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary { background: linear-gradient(92deg, var(--accent), var(--accent-2)); color: #fff; }
+  .btn-ghost { border: 1px solid var(--border); color: var(--text); background: var(--bg-soft); }
+  .btn-ghost:hover { border-color: var(--accent); }
+
+  .shot {
+    margin: 56px auto 0; max-width: 960px;
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 30px 80px rgba(79,140,255,.14), 0 4px 20px rgba(0,0,0,.5);
+  }
+  .shot img { display: block; width: 100%; }
+  .shot figcaption { padding: 12px; font-size: 13px; color: var(--text-dim); background: var(--bg-soft); border-top: 1px solid var(--border); }
+
+  /* sections */
+  section { padding: 72px 0; }
+  .sec-title { text-align: center; font-size: 30px; font-weight: 800; letter-spacing: -.01em; }
+  .sec-sub { text-align: center; color: var(--text-dim); margin: 12px auto 44px; max-width: 640px; font-size: 15px; }
+
+  /* harness grid */
+  .harness-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 14px;
+  }
+  .harness {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 8px 12px; text-align: center;
+    transition: border-color .15s, transform .15s;
+  }
+  .harness:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .harness img { width: 30px; height: 30px; }
+  .harness div { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); }
+
+  /* features */
+  .feat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; }
+  .feat {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px;
+    transition: border-color .15s, background .15s;
+  }
+  .feat:hover { border-color: #3350a0; background: var(--card-hover); }
+  .feat h3 { font-size: 16.5px; margin-bottom: 8px; }
+  .feat p { font-size: 14px; color: var(--text-dim); }
+
+  /* install */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .step { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+  .step h3 { font-size: 16px; margin-bottom: 12px; }
+  .step p { font-size: 14px; color: var(--text-dim); margin-top: 10px; }
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 13.5px;
+    color: #cfe0ff;
+  }
+
+  /* docs */
+  .doc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .doc {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 15px 18px; color: var(--text); font-size: 14.5px; font-weight: 500;
+    transition: border-color .15s;
+  }
+  .doc:hover { border-color: var(--accent); text-decoration: none; }
+  .doc span.ic { font-size: 18px; }
+  .doc span.dim { margin-left: auto; color: var(--text-dim); font-size: 12.5px; font-weight: 400; }
+
+  footer { border-top: 1px solid var(--border); padding: 34px 0 44px; text-align: center; color: var(--text-dim); font-size: 14px; }
+  footer .heart { color: var(--accent-2); }
+
+  @media (max-width: 640px) {
+    .hero { padding: 60px 0 40px; }
+    .nav-links a.hide-m { display: none; }
+    section { padding: 52px 0; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="#">
+      <img src="src/assets/brand-harness-mix.png" alt="Harness Mix logo">
+      Harness Mix
+    </a>
+    <div class="nav-links">
+      <a href="#harnesses" class="hide-m">支持的 Harness</a>
+      <a href="#features" class="hide-m">功能</a>
+      <a href="#install" class="hide-m">安装</a>
+      <a href="#docs" class="hide-m">文档</a>
+      <a class="btn-gh" href="https://github.com/emo-xiaoyu/harness-mix" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="chips">
+      <span class="chip"><b>17</b> 个原生 Harness</span>
+      <span class="chip">Windows · macOS · Linux</span>
+      <span class="chip">Apache-2.0 OR MIT</span>
+      <span class="chip">npm: @harness-mix/cli</span>
+    </div>
+    <h1>Harness Mix</h1>
+    <p class="tagline">
+      接入<strong>官方 Codex Desktop 原生界面</strong>，把 Antigravity、Codex、Claude Code、Pi、DeepSeek、Cursor CLI 等
+      <strong>17 个原生 Coding Harness</strong> 汇聚到同一套 UI，并让任务在它们之间<strong>无缝接力</strong>。
+    </p>
+    <div class="install">
+      <span><span class="dollar">$</span> npm install --global @harness-mix/cli</span>
+      <button id="copy-btn" onclick="copyCmd()">复制</button>
+    </div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/emo-xiaoyu/harness-mix" target="_blank" rel="noopener">⭐ 给我们一个 Star</a>
+      <a class="btn btn-ghost" href="#install">快速开始</a>
+    </div>
+    <figure class="shot">
+      <img src="docs/images/codex-desktop-home.png" alt="Codex Desktop 原生窗口中的 Harness Mix" loading="lazy">
+      <figcaption>Harness Mix 作为原生扩展入口出现在 Codex Desktop 工具栏与 Composer 中，会话、模型、工具与权限仍由 Codex Desktop 及各 Harness 管理。</figcaption>
+    </figure>
+  </div>
+</header>
+
+<section id="harnesses" style="background: var(--bg-soft);">
+  <div class="wrap">
+    <h2 class="sec-title">一个窗口，17 个 Harness</h2>
+    <p class="sec-sub">只有本机已安装且握手成功的 Harness 才会进入真实运行；模型调用、工具执行、原生会话与凭据始终由各 Harness 自己管理。</p>
+    <div class="harness-grid" id="harness-grid"></div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2 class="sec-title">核心功能</h2>
+    <p class="sec-sub">跨 Harness 接力、多 Agent 协同、原生 Skills / MCP 管理——所有能力严格在各 Adapter manifest 中诚实声明，界面按真实能力渲染。</p>
+    <div class="feat-grid">
+      <div class="feat"><h3>🔄 跨 Harness 任务接力</h3><p>继续执行 / 执行计划 / 独立审查 / 重新分析四种接力模式，对话历史、代码改动与 Git 状态完整保留，带哈希的持久化检查点支持随时暂停恢复。</p></div>
+      <div class="feat"><h3>🤝 多 Agent 协同编排</h3><p>输入 <code>#</code> 唤起协同菜单，一个 Lead 可组织最多六个并发具名成员，支持循环审查验证、子任务级联取消与超时熔断。</p></div>
+      <div class="feat"><h3>🧩 原生 Skills 管理</h3><p>全量覆盖 17 个 Harness 原生技能目录，<code>SKILL.md</code> 或完整文件夹直接拖拽安装，Global / Project 作用域无缝切换。</p></div>
+      <div class="feat"><h3>🛠️ 原生 MCP 扩展</h3><p>本地 stdio 与远程 Streamable HTTP / SSE 协议均支持，可自定义 Header 传递，按 Harness 独立生效。</p></div>
+      <div class="feat"><h3>📚 历史会话导入与引用</h3><p>一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑，<code>#</code> 引用任意旧会话注入脱敏上下文。</p></div>
+      <div class="feat"><h3>🎨 皮肤市场</h3><p>内置 Miku、Genshin Night、Deepspace Star 等多套主题，亮暗色全界面覆盖，自动对比度保护深色可读性。</p></div>
+      <div class="feat"><h3>📋 原生消息队列</h3><p>完整接入 Codex 会话排队机制：增删改查、排序、插队抢占与自动排空，当前回合完成后顺序调度。</p></div>
+      <div class="feat"><h3>✅ 可配置验证门禁</h3><p>任务级 off / advisory / required 策略，内置一致性检查与自定义验证命令，强制模式保护隔离分支合并推送。</p></div>
+      <div class="feat"><h3>💾 会话存储治理</h3><p>schema v3 分片惰性加载、无损紧凑存储、迁移备份与体积诊断，冷启动只读任务索引。</p></div>
+      <div class="feat"><h3>🩹 失败分类与恢复</h3><p>失败回合归类为连接 / 登录 / 额度 / 被拒 / 服务异常五类，无法归类时诚实标注 unknown，并给出重试、去登录等动作建议。</p></div>
+      <div class="feat"><h3>🌐 ChatGPT 侧边栏桥接</h3><p>安全脱敏提取当前会话上下文，一键生成结构化草稿并直通注入 ChatGPT，实现跨工具协作。</p></div>
+      <div class="feat"><h3>👤 账户与用量隔离</h3><p>Codex 多账户隔离与即时切换，实时追踪 Token / Credits 用量，各 Harness 凭据、模型与审批原生自理。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install" style="background: var(--bg-soft);">
+  <div class="wrap">
+    <h2 class="sec-title">快速开始</h2>
+    <p class="sec-sub">需要 Windows、macOS 或 Linux，近期 Node.js LTS 和 npm。应用不读取、不保存 Harness 的账户密钥，请先在对应原生 CLI 中完成安装与登录。</p>
+    <div class="steps">
+      <div class="step">
+        <h3>从 npm 安装</h3>
+        <pre>npm install --global @harness-mix/cli
+harness-mix</pre>
+        <p>首次运行会重启已打开的 Codex Desktop，随后 Harness Mix 以原生扩展入口出现。</p>
+      </div>
+      <div class="step">
+        <h3>从源码构建</h3>
+        <pre>git clone https://github.com/emo-xiaoyu/harness-mix.git
+cd harness-mix
+npm install
+npm start</pre>
+        <p>macOS / Linux 已支持源码构建与启动，详见跨平台指南。</p>
+      </div>
+      <div class="step">
+        <h3>接入你的 Harness</h3>
+        <pre># 示例：Codex
+npm install -g @openai/codex
+
+# 示例：Cline
+npm i -g cline && cline auth</pre>
+        <p>各 Harness 的 CLI、登录状态、模型额度需在本机单独安装配置，Harness Mix 不代管凭据。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <h2 class="sec-title">文档</h2>
+    <p class="sec-sub">深入了解各模块的设计与实现。</p>
+    <div class="doc-list">
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/docs/harness-management.md" target="_blank" rel="noopener"><span class="ic">🧭</span>Harness 管理说明<span class="dim">docs</span></a>
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/docs/native-acp.md" target="_blank" rel="noopener"><span class="ic">🔌</span>原生 ACP 深度适配<span class="dim">docs</span></a>
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/docs/multi-agent-collaboration.md" target="_blank" rel="noopener"><span class="ic">🤝</span>多 Agent 协同编排<span class="dim">docs</span></a>
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/docs/cross-platform.md" target="_blank" rel="noopener"><span class="ic">🖥️</span>跨平台指南<span class="dim">docs</span></a>
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/docs/chatgpt-web-sidebar.md" target="_blank" rel="noopener"><span class="ic">🌐</span>ChatGPT 侧边栏桥接<span class="dim">docs</span></a>
+      <a class="doc" href="https://github.com/emo-xiaoyu/harness-mix/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span class="ic">📜</span>更新日志<span class="dim">CHANGELOG</span></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Harness Mix · 以 <span class="heart">♥</span> 构建 · License: Apache-2.0 OR MIT</p>
+    <p style="margin-top:8px;"><a href="https://github.com/emo-xiaoyu/harness-mix">GitHub 仓库</a> · 如果这个项目对你有帮助，欢迎给我们一个 Star ⭐</p>
+  </div>
+</footer>
+
+<script>
+  const harnesses = [
+    ["Antigravity", "src/assets/icons/antigravity-color.svg"],
+    ["Codex", "src/assets/icons/codex-harness.svg"],
+    ["Claude Code", "src/assets/icons/claude-color.svg"],
+    ["Pi", "src/assets/icons/pi.svg"],
+    ["Oh My Pi", "src/assets/icons/omp-color.svg"],
+    ["DeepSeek", "src/assets/icons/deepseek-color.svg"],
+    ["OpenCode", "src/assets/icons/opencode-color.svg"],
+    ["Grok", "src/assets/icons/grok-color.svg"],
+    ["OpenClaw", "src/assets/icons/openclaw-color.svg"],
+    ["Hermes", "src/assets/icons/hermes-color.svg"],
+    ["Qoder", "src/assets/icons/qoder-color.svg"],
+    ["CodeBuddy", "src/assets/icons/codebuddy-color.svg"],
+    ["Kiro CLI", "src/assets/icons/kiro-cli-color.svg"],
+    ["Cursor", "src/assets/icons/cursor.svg"],
+    ["ZCode", "src/assets/icons/zcode-color.svg"],
+    ["Trae", "src/assets/icons/trae-color.svg"],
+    ["Cline", "src/assets/icons/cline-color.svg"]
+  ];
+  document.getElementById("harness-grid").innerHTML = harnesses
+    .map(([n, s]) => `<div class="harness"><img src="${s}" alt="${n}" loading="lazy"><div>${n}</div></div>`)
+    .join("");
+
+  function copyCmd() {
+    navigator.clipboard.writeText("npm install --global @harness-mix/cli").then(() => {
+      const b = document.getElementById("copy-btn");
+      b.textContent = "已复制 ✓";
+      setTimeout(() => (b.textContent = "复制"), 1500);
+    });
+  }
+</script>
+</body>
+</html>
