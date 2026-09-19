@@ -192,7 +192,7 @@ const npmRun = (root, { install = { status: 0 } } = {}) => (cmd, args) => {
     assert.equal(readState(dir).prevVersion, 'aaa111');
   }
 
-  // --- git: interrupted apply is repaired from preUpdateHead ---
+  // --- git: interrupted apply is repaired from preUpdateHead + rebuilt ---
   {
     const root = tmp('hm-git-repair-');
     fs.mkdirSync(path.join(root, '.git'), { recursive: true });
@@ -203,13 +203,67 @@ const npmRun = (root, { install = { status: 0 } } = {}) => (cmd, args) => {
     const exec = (cmd, args) => { calls.push(args.join(' ')); return { status: 0, stdout: '', stderr: '' }; };
     const outcome = await runUpdateFlow({
       root, dataDir: dir, log: quiet, stopDesktop: async () => {}, mode: 'apply',
+      hooks: { build: () => calls.push('build-hook') },
       deps: { gitExec: exec, delay, env: {} },
     });
     assert.equal(outcome.repaired, true);
     assert.equal(outcome.restartRequired, true);
     assert.ok(calls.some(call => call.startsWith('reset --hard aaa111')));
+    assert.ok(calls.includes('build-hook'), 'repair must rebuild so binaries match the reset sources');
     assert.equal(readState(dir).phase, 'idle');
   }
 
-  console.log('native-update-apply: semver/channel/state/lock/etag/npm-apply/pending/offline/lock-skip/crash-loop-rollback/git-ff/git-repair all covered');
+  // --- deferred build (desktop-held locks) completes at the next boot ---
+  {
+    const root = tmp('hm-git-defer-');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'harness-mix', version: '0.1.2' }));
+    const dir = tmp('hm-flow-');
+    writeState(dir, { ...readState(dir), channel: 'git', appliedVersion: 'bbb222', prevVersion: 'aaa111', pendingBuild: { since: Date.now() - 1000 }, preUpdateHead: 'aaa111' });
+    const calls = [];
+    const exec = (cmd, args) => { calls.push(args.join(' ')); return { status: 0, stdout: '', stderr: '' }; };
+    let stopped = 0;
+    const outcome = await runUpdateFlow({
+      root, dataDir: dir, log: quiet, mode: 'apply', completePendingBuild: true,
+      stopDesktop: async () => { stopped += 1; },
+      hooks: { build: () => calls.push('build-hook') },
+      deps: { gitExec: exec, delay, env: {} },
+    });
+    assert.equal(outcome.repaired, true);
+    assert.equal(outcome.restartRequired, undefined);
+    assert.ok(calls.includes('build-hook'));
+    assert.equal(stopped, 1, 'boot completion stops the desktop before rebuilding');
+    assert.equal(readState(dir).pendingBuild, null);
+  }
+
+  // --- deferred build completion failure rolls back to the pre-update head ---
+  {
+    const root = tmp('hm-git-defer-fail-');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'harness-mix', version: '0.1.2' }));
+    const dir = tmp('hm-flow-');
+    writeState(dir, { ...readState(dir), channel: 'git', appliedVersion: 'bbb222', prevVersion: 'aaa111', pendingBuild: { since: Date.now() - 1000 }, preUpdateHead: 'aaa111' });
+    const calls = [];
+    const exec = (cmd, args) => { calls.push(args.join(' ')); return { status: 0, stdout: '', stderr: '' }; };
+    const outcome = await runUpdateFlow({
+      root, dataDir: dir, log: quiet, mode: 'apply', completePendingBuild: true,
+      stopDesktop: async () => {},
+      hooks: { build: () => { throw new Error('cargo failed'); } },
+      deps: { gitExec: exec, delay, env: {} },
+    });
+    assert.equal(outcome.failed, true);
+    assert.ok(calls.some(call => call.startsWith('reset --hard aaa111')));
+    const state = readState(dir);
+    assert.equal(state.pendingBuild, null);
+    assert.equal(state.appliedVersion, null);
+  }
+
+  // --- a corrupt lock file is reaped, not treated as a live holder ---
+  {
+    const data = tmp('hm-lock-');
+    fs.writeFileSync(path.join(data, 'update.lock'), '{not json');
+    acquireLock(data, 'test')();
+  }
+
+  console.log('native-update-apply: semver/channel/state/lock/etag/npm-apply/pending/offline/lock-skip/crash-loop-rollback/git-ff/git-repair+build/deferred-build/defer-fail/corrupt-lock all covered');
 })().catch(error => { console.error(error); process.exitCode = 1; });

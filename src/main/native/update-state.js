@@ -19,6 +19,7 @@ function defaultState() {
     attempts: 0,
     lastBootOkAt: 0,
     pendingVersion: null,
+    pendingBuild: null,
     lastCheckAt: 0,
     preUpdateHead: null,
     rolledBackAt: 0,
@@ -60,16 +61,28 @@ function pidAlive(pid) {
 }
 
 // Mutating update operations (apply / rollback / repair) take this lock so two
-// launchers cannot fight over the same install. Stale locks are reaped.
+// updaters — the launcher at boot and the desktop-triggered helper — cannot
+// fight over the same install. Creation is exclusive (O_EXCL via 'wx'); stale
+// locks are reaped and the create is retried, so a plain read-check-write race
+// between two processes cannot both "win".
 function acquireLock(dataDir, op) {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, LOCK_FILE);
-  let existing = null;
-  try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* no lock yet */ }
-  if (existing && pidAlive(existing.pid) && Date.now() - Number(existing.ts || 0) < LOCK_STALE_MS) {
-    throw new Error(`更新锁被进程 ${existing.pid} 持有（${existing.op || 'update'}）`);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, ts: Date.now(), op }), { flag: 'wx' });
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      let existing = null;
+      try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* corrupt lock */ }
+      if (existing && pidAlive(existing.pid) && Date.now() - Number(existing.ts || 0) < LOCK_STALE_MS) {
+        throw new Error(`更新锁被进程 ${existing.pid} 持有（${existing.op || 'update'}）`);
+      }
+      if (attempt >= 20) throw new Error('更新锁冲突：过期的更新锁无法清除');
+      try { fs.unlinkSync(file); } catch { /* another process reaped it first; retry the create */ }
+    }
   }
-  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, ts: Date.now(), op }));
   let released = false;
   return function release() {
     if (released) return;

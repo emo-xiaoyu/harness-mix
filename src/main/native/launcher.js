@@ -60,8 +60,22 @@ function cacheCodexRuntime(resources, cache) {
   return path.join(cache, 'codex.exe');
 }
 
+// PowerShell 7 (pwsh.exe) is preferred but not preinstalled on stock Windows;
+// fall back to Windows PowerShell 5.1 — Get-AppxPackage/Get-CimInstance work in
+// both. Only a missing binary (ENOENT) falls through: a failed command must
+// surface, not silently retry in the other shell.
 function powershell(source) {
-  return execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', source], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
+  const args = ['-NoLogo', '-NoProfile', '-Command', source];
+  let lastError = null;
+  for (const bin of ['pwsh.exe', 'powershell.exe']) {
+    try {
+      return execFileSync(bin, args, { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      lastError = error;
+    }
+  }
+  throw new Error(`未找到可用的 PowerShell（pwsh.exe / powershell.exe）：${lastError.message}`);
 }
 
 // Match the verified installation executable; never terminate unrelated apps.
@@ -139,7 +153,7 @@ async function launch(args = []) {
   }
   if (flags.has('--update')) {
     const outcome = await runUpdateFlow({
-      root, dataDir, mode: 'apply',
+      root, dataDir, mode: 'apply', completePendingBuild: true,
       stopDesktop: async () => stopDesktopProcesses(await inspect()),
     });
     if (outcome.updated || outcome.repaired || outcome.rolledBack) {
@@ -167,7 +181,7 @@ async function launch(args = []) {
   const skipUpdate = flags.has('--no-update') || process.env.HARNESS_MIX_AUTO_UPDATE === '0';
   if (!skipUpdate) {
     const outcome = await runUpdateFlow({
-      root, dataDir, mode: 'apply',
+      root, dataDir, mode: 'apply', completePendingBuild: true,
       stopDesktop: async () => stopDesktopProcesses(installation),
     });
     if (outcome.restartRequired) {
@@ -234,4 +248,5 @@ module.exports = {
   cacheCodexRuntime,
   isCodexTaskEnvironment,
   readLiveHostInstance,
+  stopDesktopProcesses,
 };

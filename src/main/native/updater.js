@@ -26,45 +26,79 @@ function makeGit(root, exec = spawnSync) {
   };
 }
 
+// spawn-based drop-in for spawnSync with the same { error, status, stdout, stderr }
+// result shape. Host-side callers must never block their event loop on git/npm,
+// so they hand this to makeGit()/resolveRegistry() instead of spawnSync.
+function asyncRun() {
+  return (cmd, args, options = {}) => new Promise(resolve => {
+    const child = spawn(cmd, args, { ...options, windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', chunk => { stdout += String(chunk); });
+    child.stderr?.on('data', chunk => { stderr += String(chunk); });
+    child.on('error', error => resolve({ error, stdout, stderr, status: null }));
+    child.on('close', status => resolve({ error: null, stdout, stderr, status }));
+  });
+}
+
 // remoteState classifies the checkout relative to its upstream:
 // current | ahead | diverged | dirty | available (fast-forward possible).
-function remoteState(root, git = makeGit(root)) {
-  const head = git(['rev-parse', 'HEAD']);
+async function remoteState(root, git = makeGit(root)) {
+  const head = await git(['rev-parse', 'HEAD']);
   let upstream = 'origin/main';
   try {
-    upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
   } catch { /* no upstream configured: fall back to origin/main */ }
-  git(['fetch', '--quiet', ...upstream.split('/')], 30000);
-  const remote = git(['rev-parse', upstream]);
+  // The refspec must stay a single argument: splitting `origin/release/1.2`
+  // on '/' would make git fetch two unrelated refs.
+  const [remoteName, ...ref] = upstream.split('/');
+  await git(['fetch', '--quiet', remoteName, ref.join('/')], 30000);
+  const remote = await git(['rev-parse', upstream]);
   if (remote === head) return { state: 'current', head, remote, upstream };
-  const base = git(['merge-base', 'HEAD', upstream]);
+  const base = await git(['merge-base', 'HEAD', upstream]);
   if (base === remote) return { state: 'ahead', head, remote, upstream };
   if (base !== head) return { state: 'diverged', head, remote, upstream };
-  const dirty = git(['status', '--porcelain', '--untracked-files=no']).length > 0;
+  const dirty = (await git(['status', '--porcelain', '--untracked-files=no'])).length > 0;
   if (dirty) return { state: 'dirty', head, remote, upstream };
   return { state: 'available', head, remote, upstream };
+}
+
+// Child output must never be inherited: in the host/helper context stdout may
+// be a protocol channel, and even at the launcher it interleaves with progress
+// lines. stdio is piped and only the failure tail is surfaced.
+function hookErrorDetail(error) {
+  const stderr = String((error && error.stderr) || '').trim();
+  const tail = stderr ? stderr.split('\n').slice(-3).join(' | ') : (error && error.message) || String(error);
+  return tail.slice(0, 300);
 }
 
 function defaultHooks(root) {
   return {
     install() {
-      const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-      execFileSync(npm, ['install'], { cwd: root, stdio: 'inherit', windowsHide: true });
+      try {
+        execFileSync(npmCommand(), ['install'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      } catch (error) {
+        throw new Error(`npm install 失败：${hookErrorDetail(error)}`);
+      }
     },
     build() {
-      execFileSync(process.execPath, [path.join(root, 'scripts/build-native.cjs')], { cwd: root, stdio: 'inherit', windowsHide: true });
+      try {
+        execFileSync(process.execPath, [path.join(root, 'scripts/build-native.cjs')], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      } catch (error) {
+        throw new Error(`build:native 失败：${hookErrorDetail(error)}`);
+      }
     },
   };
 }
 
-function applyUpdate(root, state, git = makeGit(root), hooks = defaultHooks(root)) {
-  git(['merge', '--ff-only', state.upstream]);
-  const changed = git(['diff', '--name-only', state.head, state.remote]).split('\n').filter(Boolean);
+async function applyUpdate(root, state, git = makeGit(root), hooks = defaultHooks(root)) {
+  await git(['merge', '--ff-only', state.upstream]);
+  const changed = (await git(['diff', '--name-only', state.head, state.remote])).split('\n').filter(Boolean);
   const install = changed.some(file => file === 'package.json' || file === 'package-lock.json');
   const rebuild = install || changed.some(file => file.startsWith('src/') || file.startsWith('scripts/'));
   try {
-    if (install) hooks.install();
-    if (rebuild) hooks.build();
+    if (install) await hooks.install();
+    if (rebuild) await hooks.build();
   } catch (error) {
     // A failed install/build would leave a half-updated tree behind; restore it.
     try { git(['reset', '--hard', state.head]); } catch { /* keep the original failure */ }
@@ -84,7 +118,7 @@ async function autoUpdate({ root, log = console.log, exec, hooks } = {}) {
   const git = makeGit(root, exec);
   let state;
   try {
-    state = remoteState(root, git);
+    state = await remoteState(root, git);
   } catch (error) {
     log(`[Harness Mix] 自动更新检查失败（不影响启动）：${error.message}`);
     return { updated: false, failed: true };
@@ -106,7 +140,7 @@ async function autoUpdate({ root, log = console.log, exec, hooks } = {}) {
       log(`[Harness Mix] 发现新版本 ${state.head.slice(0, 8)} → ${state.remote.slice(0, 8)}，正在更新…`);
       let outcome;
       try {
-        outcome = applyUpdate(root, state, git, hooks || defaultHooks(root));
+        outcome = await applyUpdate(root, state, git, hooks || defaultHooks(root));
       } catch (error) {
         log(`[Harness Mix] 更新失败并已回退（不影响启动）：${error.message}`);
         return { updated: false, failed: true };
@@ -130,10 +164,10 @@ function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
-function resolveRegistry({ env = process.env, run = spawnSync } = {}) {
+async function resolveRegistry({ env = process.env, run = spawnSync } = {}) {
   if (env.HARNESS_MIX_UPDATE_REGISTRY) return env.HARNESS_MIX_UPDATE_REGISTRY;
   if (env.npm_config_registry) return env.npm_config_registry;
-  const result = run(npmCommand(), ['config', 'get', 'registry'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  const result = await run(npmCommand(), ['config', 'get', 'registry'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   const value = result && result.status === 0 ? String(result.stdout || '').trim() : '';
   return value && value !== 'undefined' && value !== 'null' ? value : 'https://registry.npmjs.org/';
 }
@@ -209,7 +243,10 @@ function reexecLauncher(root, args = []) {
 // One launch-time update pass. Returns:
 //   { updated, restartRequired, repaired, rolledBack, pending, failed, ... }
 // restartRequired tells the caller to re-exec the launcher so new code loads.
-async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = async () => {}, mode = 'apply', deps = {} } = {}) {
+// `hooks` lets the desktop-triggered helper inject lock-aware build handling;
+// `completePendingBuild` (launcher boot path) finishes a build the helper had
+// to defer because the running Desktop held the native binaries locked.
+async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = async () => {}, mode = 'apply', hooks = null, completePendingBuild = false, deps = {} } = {}) {
   const {
     gitExec,
     run = spawnSync,
@@ -218,6 +255,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
     env = process.env,
   } = deps;
   const halt = async () => { await stopDesktop(); await delay(3000); };
+  const flowHooks = () => hooks || defaultHooks(root);
 
   const currentVersion = (readJson(path.join(root, 'package.json')) || {}).version || '0.0.0';
   const channel = detectChannel(root);
@@ -230,7 +268,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
 
   // A version the user installed by hand is not ours to track.
   if (channel === 'npm' && state.appliedVersion && state.appliedVersion !== currentVersion && state.prevVersion !== currentVersion) {
-    state = writeState(dataDir, { ...state, phase: 'idle', appliedVersion: null, prevVersion: null, attempts: 0, pendingVersion: null });
+    state = writeState(dataDir, { ...state, phase: 'idle', appliedVersion: null, prevVersion: null, attempts: 0, pendingVersion: null, pendingBuild: null });
   }
 
   let lockBusy = false;
@@ -258,16 +296,44 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
         }
         await halt();
         const target = state.appliedVersion || state.prevVersion;
-        if (target) await npmInstallGlobal(target, { run, log, delay });
+        if (target) {
+          const result = await npmInstallGlobal(target, { run, log, delay });
+          if (!result.ok) return false;
+        }
       } else if (state.channel === 'git' && state.preUpdateHead) {
         await halt();
         makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
+        // Sources are back to the old head: rebuild so the binaries match it.
+        await flowHooks().build();
       }
-      writeState(dataDir, { ...readState(dataDir), phase: 'idle', pendingVersion: null });
+      writeState(dataDir, { ...readState(dataDir), phase: 'idle', pendingVersion: null, pendingBuild: null });
       return true;
     });
     if (repaired.value) return { updated: false, repaired: true, restartRequired: true };
     if (repaired.skipped) return { updated: false, failed: true, reason: 'lock' };
+    return { updated: false, failed: true };
+  }
+
+  // 1.5) Finish a build the desktop-triggered helper deferred because the
+  // running Desktop held the native binaries locked (launcher boot path: the
+  // desktop is stopped via halt() first, so the files are writable again).
+  if (state.pendingBuild && completePendingBuild) {
+    log('[Harness Mix] 正在完成上次推迟的原生构建…');
+    const completed = await mutate(async () => {
+      await halt();
+      try {
+        await flowHooks().build();
+      } catch (error) {
+        log(`[Harness Mix] 补完成构建失败，回退到更新前版本：${error.message}`);
+        if (state.channel === 'git' && state.preUpdateHead) makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
+        writeState(dataDir, { ...readState(dataDir), pendingBuild: null, appliedVersion: null, prevVersion: null, attempts: 0 });
+        return false;
+      }
+      writeState(dataDir, { ...readState(dataDir), pendingBuild: null });
+      return true;
+    });
+    if (completed.value) return { updated: false, repaired: true };
+    if (completed.skipped) return { updated: false, failed: true, reason: 'lock' };
     return { updated: false, failed: true };
   }
 
@@ -283,9 +349,9 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
           if (!result.ok) return false;
         } else if (state.channel === 'git' && state.preUpdateHead) {
           makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
-          defaultHooks(root).build();
+          await flowHooks().build();
         }
-        writeState(dataDir, { ...readState(dataDir), phase: 'idle', appliedVersion: null, prevVersion: null, attempts: 0, pendingVersion: null, rolledBackAt: Date.now() });
+        writeState(dataDir, { ...readState(dataDir), phase: 'idle', appliedVersion: null, prevVersion: null, attempts: 0, pendingVersion: null, pendingBuild: null, rolledBackAt: Date.now() });
         return true;
       });
       if (rolledBack.value) {
@@ -300,7 +366,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
   if (channel === 'git') {
     let remote;
     try {
-      remote = remoteState(root, makeGit(root, gitExec));
+      remote = await remoteState(root, makeGit(root, gitExec));
     } catch (error) {
       log(`[Harness Mix] 自动更新检查失败（不影响启动）：${error.message}`);
       return { updated: false, failed: true };
@@ -323,7 +389,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
       let outcome = null;
       let failure = null;
       try {
-        outcome = applyUpdate(root, remote, makeGit(root, gitExec), defaultHooks(root));
+        outcome = await applyUpdate(root, remote, makeGit(root, gitExec), flowHooks());
       } catch (error) {
         failure = error;
       } finally {
@@ -350,7 +416,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
   }
   let latest = null;
   try {
-    latest = await fetchLatestVersion({ registry: resolveRegistry({ env, run }), dataDir, fetchImpl });
+    latest = await fetchLatestVersion({ registry: await resolveRegistry({ env, run }), dataDir, fetchImpl });
   } catch (error) {
     log(`[Harness Mix] 自动更新检查失败（不影响启动）：${error.message}`);
     return { updated: false, failed: true };
@@ -372,7 +438,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
     writeState(dataDir, { ...readState(dataDir), channel: 'npm', phase: 'applying', pendingVersion: target });
     const result = await npmInstallGlobal(target, { run, log, delay });
     if (!result.ok) {
-      writeState(dataDir, { ...readState(dataDir), phase: 'idle', pendingVersion: target });
+      writeState(dataDir, { ...readState(dataDir), phase: 'idle', pendingVersion: target, pendingBuild: null });
       log(`[Harness Mix] 更新失败，已安排下次启动重试（${target}）`);
       return false;
     }
@@ -388,7 +454,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
 }
 
 module.exports = {
-  autoUpdate, remoteState, applyUpdate, makeGit, defaultHooks,
+  autoUpdate, remoteState, applyUpdate, makeGit, asyncRun, defaultHooks,
   runUpdateFlow, reexecLauncher, fetchLatestVersion, npmInstallGlobal,
   resolveRegistry, isGlobalInstall, npmGlobalRoot, readJson,
 };

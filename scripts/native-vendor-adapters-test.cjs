@@ -150,5 +150,35 @@ const pi = require('../src/main/adapters/pi');
     await assert.rejects(pi.create().send(failingSession, 'hi', { emit: () => {} }, {}), /Authentication failed/);
   }
 
-  console.log('Native adapters: streaming deduplication, user suppression, question retry, exact native approvals, sanitized usage, grok images, grok compaction & UI projection PASS');
+  // qoder 解析不得回退到 PATH 上的裸 `qoder`（IDE 启动器）：它能通过 --version 可用性
+  // 探测，却把每次 --acp 会话打开变成完整 GUI 启动且永远完不成 ACP 握手。
+  // 只有无头 qodercli 或显式 HARNESS_MIX_QODER_EXECUTABLE 覆盖是合法入口。
+  {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const { nativeCommand } = require('../src/main/adapters/native-acp-command');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-qoder-path-'));
+    fs.writeFileSync(path.join(dir, process.platform === 'win32' ? 'qoder.cmd' : 'qoder'), '');
+    const originalPath = process.env.PATH;
+    const originalOverride = process.env.HARNESS_MIX_QODER_EXECUTABLE;
+    delete process.env.HARNESS_MIX_QODER_EXECUTABLE;
+    const pathWithoutQodercli = originalPath.split(path.delimiter).filter(Boolean).filter(entry => {
+      try { return !fs.existsSync(path.join(entry, process.platform === 'win32' ? 'qodercli.cmd' : 'qodercli')); } catch { return true; }
+    }).join(path.delimiter);
+    try {
+      process.env.PATH = `${dir}${path.delimiter}${pathWithoutQodercli}`;
+      assert.throws(() => nativeCommand('qoder', ['--acp']), /qodercli 未安装/, '裸 qoder（IDE 启动器）不得作为 ACP 回退');
+      const override = path.join(dir, 'custom-acp.exe');
+      fs.writeFileSync(override, '');
+      process.env.HARNESS_MIX_QODER_EXECUTABLE = override;
+      assert.equal(nativeCommand('qoder', ['--acp']).command, override, '显式覆盖仍然生效');
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalOverride === undefined) delete process.env.HARNESS_MIX_QODER_EXECUTABLE;
+      else process.env.HARNESS_MIX_QODER_EXECUTABLE = originalOverride;
+    }
+  }
+
+  console.log('Native adapters: streaming deduplication, user suppression, question retry, exact native approvals, sanitized usage, grok images, grok compaction & UI projection, qoder ACP resolution PASS');
 })().catch(error => { console.error(error); process.exitCode = 1; });

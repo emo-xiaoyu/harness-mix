@@ -3,7 +3,7 @@
 const { getHarnessSvg } = require('./icons');
 const { prepareInput } = require('./input');
 const { projectUsage, projectAccountCredits } = require('./usage');
-const { exec } = require('node:child_process');
+const { exec, spawn } = require('node:child_process');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,7 +12,8 @@ const { diff } = require('../workspace/diff');
 const {
   fetchLatestVersion,
   remoteState,
-  runUpdateFlow,
+  makeGit,
+  asyncRun,
   resolveRegistry,
 } = require('./updater');
 const {
@@ -43,9 +44,9 @@ const HARNESS_INSTALL_COMMANDS = {
   'claude-code': { win32: 'npm install -g @anthropic-ai/claude-code', default: 'npm install -g @anthropic-ai/claude-code' },
   'deepseek-harness': { win32: 'pip install deepseek-harness', default: 'pip3 install deepseek-harness' },
   opencode: { win32: 'npm install -g opencode-ai', default: 'npm install -g opencode-ai' },
-  grok: { win32: 'npm install -g @xai/grok-cli', default: 'npm install -g @xai/grok-cli' },
+  grok: { win32: 'powershell -NoProfile -ExecutionPolicy Bypass -Command iex (irm https://x.ai/cli/install.ps1)', default: 'curl -fsSL https://x.ai/cli/install.sh | bash' },
   omp: { win32: 'npm install -g @oh-my-pi/pi-coding-agent', default: 'npm install -g @oh-my-pi/pi-coding-agent' },
-  antigravity: { win32: 'npm install -g @google/antigravity-cli', default: 'npm install -g @google/antigravity-cli' },
+  antigravity: { win32: 'powershell -NoProfile -ExecutionPolicy Bypass -Command iex (irm https://antigravity.google/cli/install.ps1)', default: 'curl -fsSL https://antigravity.google/cli/install.sh | bash' },
   openclaw: { win32: 'npm install -g openclaw', default: 'npm install -g openclaw' },
   hermes: { win32: 'pip install hermes-agent', default: 'pip3 install hermes-agent' },
   cline: { win32: 'npm install -g cline', default: 'npm install -g cline' },
@@ -405,7 +406,12 @@ class NativeProtocol {
         ...(defaultThinking ? { defaultThinkingOptionId: defaultThinking } : {}) }, capabilities: this.capabilities(local, catalog) };
       if (catalog.permissionModes?.length) result.permissionModes = { modes: catalog.permissionModes.map(m => ({ id: m.id, label: m.label || m.name || m.id, ...((m.description || m.hint) ? { description: m.description || m.hint } : {}) })), defaultModeId: catalog.permissionModes.find(m => m.default)?.id || catalog.permissionModes[0].id };
       return result;
-    } catch (error) { return { status: 'error', error: { code: 'INSPECTION_FAILED', message: error.message, retryable: true } }; }
+    } catch (error) {
+      // A harness binary that exited mid-probe is deterministic misconfiguration:
+      // retrying immediately would re-spawn it (possibly a full GUI) in a loop.
+      // The renderer only keeps polling agents whose error is retryable.
+      return { status: 'error', error: { code: 'INSPECTION_FAILED', message: error.message, retryable: !error.harnessExited } };
+    }
   }
   configuration(thread) {
     const catalogEntry = this.runtime.catalogs?.get(thread.harnessId);
@@ -507,7 +513,9 @@ class NativeProtocol {
 
       if (channel === 'git') {
         try {
-          const remote = remoteState(REPO_ROOT);
+          // Async runner: a sync git fetch here would freeze the whole host
+          // (heartbeats, approvals, every thread) for the fetch timeout.
+          const remote = await remoteState(REPO_ROOT, makeGit(REPO_ROOT, asyncRun()));
           if (remote.state === 'available') {
             updateAvailable = true;
             latestVersion = `${currentVersion}+git.${remote.remote.slice(0, 7)}`;
@@ -520,7 +528,7 @@ class NativeProtocol {
       } else {
         try {
           const fetched = await fetchLatestVersion({
-            registry: resolveRegistry(),
+            registry: await resolveRegistry({ run: asyncRun() }),
             dataDir,
             timeoutMs: 6000,
           });
@@ -550,30 +558,48 @@ class NativeProtocol {
       const channel = detectChannel(REPO_ROOT);
       let currentVersion = '0.1.2';
       try { currentVersion = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || '0.1.2'; } catch {}
+      const installation = channel === 'npm' ? 'npm' : 'windows-installer';
+      // The heavy flow must run in a detached helper, never in this host:
+      // 1) process.stdout here is the JSONL protocol channel to the Desktop —
+      //    updater/npm/cargo output would corrupt it;
+      // 2) minutes of synchronous git/npm/cargo work would freeze the event
+      //    loop (heartbeats, approvals, every thread);
+      // 3) the host lives inside the shim's kill-on-close job — it cannot
+      //    stop the Desktop without killing itself mid-update.
+      // The helper defers what the running Desktop locks and stops it last;
+      // the Desktop keeps polling harnessmix/update/status from the state file.
       try {
-        const outcome = await runUpdateFlow({
-          root: REPO_ROOT,
-          dataDir,
-          mode: 'apply',
-          log: (msg) => console.log(msg),
-        });
+        fs.mkdirSync(dataDir, { recursive: true });
+        const logFile = path.join(dataDir, 'update.log');
+        const fd = fs.openSync(logFile, 'a');
+        try {
+          const helper = spawn(process.execPath, [path.join(REPO_ROOT, 'scripts', 'native-update.cjs')], {
+            stdio: ['ignore', fd, fd],
+            detached: true,
+            windowsHide: true,
+            env: process.env,
+          });
+          helper.unref();
+        } finally {
+          fs.closeSync(fd);
+        }
         return {
           status: {
-            version: outcome.to || currentVersion,
-            installation: channel === 'npm' ? 'npm' : 'windows-installer',
-            phase: outcome.updated || outcome.repaired ? 'succeeded' : 'failed',
+            version: currentVersion,
+            installation,
+            phase: 'installing',
             updatedAt: Date.now(),
-            error: outcome.failed ? (outcome.reason || '更新失败并已回退') : null,
+            error: null,
           },
         };
       } catch (err) {
         return {
           status: {
             version: currentVersion,
-            installation: channel === 'npm' ? 'npm' : 'windows-installer',
+            installation,
             phase: 'failed',
             updatedAt: Date.now(),
-            error: err.message.slice(0, 450),
+            error: `无法启动更新助手：${err.message}`.slice(0, 450),
           },
         };
       }
@@ -718,7 +744,7 @@ class NativeProtocol {
       }
 
       return new Promise((resolve) => {
-        exec(command, { timeout: 180000, shell: true }, async (err, stdout, stderr) => {
+        exec(command, { timeout: 600000, shell: true, maxBuffer: 10 * 1024 * 1024 }, async (err, stdout, stderr) => {
           const adapter = this.runtime.adapters.get(local);
           if (adapter) {
             try {
