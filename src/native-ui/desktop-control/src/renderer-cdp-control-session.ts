@@ -66,9 +66,9 @@ function sleep(milliseconds: number): Promise<void> {
 }
 
 function sameAgents(actual: readonly string[], expected: readonly string[]): boolean {
-  return (
-    actual.length === expected.length && actual.every((agent, index) => agent === expected[index])
-  );
+  // The renderer bundle and the controller keep independently ordered agent
+  // catalogs; only the enabled set is contractual.
+  return actual.length === expected.length && expected.every((agent) => actual.includes(agent));
 }
 
 function isPrimaryRendererUrl(value: string): boolean {
