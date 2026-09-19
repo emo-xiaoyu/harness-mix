@@ -123,5 +123,40 @@ function fakeSession() {
   fatalSession.host = { async request() { fatalAttempts++; throw new Error('Authentication required'); } };
   await assert.rejects(adapter.send(fatalSession, '不可重试的错误', {}, { images: [] }), /Authentication required/);
   assert.equal(fatalAttempts, 1, 'Unrelated app-server errors are never retried or hidden');
-  console.log('codex adapter: native notifications, usage, multi-question and approvals passed');
+
+  // cancel() 必须能结算每种挂起的原生请求形状：requestUserInput 的条目经由 group
+  // 结算（条目本身没有 resolve，直接调用会 TypeError 并吞掉后续 interrupt）。
+  const cancelSession = fakeSession();
+  const cancelledAnswer = queueRequest({ id: 21, method: 'item/tool/requestUserInput', params: {
+    threadId: 'thread-native', turnId: 'turn-c', itemId: 'q-c', isBlocking: true,
+    questions: [{ id: 'pick', header: '选择', question: '选择一项', options: [{ label: 'A' }, { label: 'B' }] }],
+  } }, cancelSession, () => {});
+  const cancelledApproval = queueRequest({ id: 22, method: 'item/commandExecution/requestApproval', params: {
+    threadId: 'thread-native', turnId: 'turn-c', itemId: 't-c', command: 'npm test', availableDecisions: ['accept', 'decline'],
+  } }, cancelSession, () => {});
+  const cancelledElicitation = queueRequest({ id: 23, method: 'mcpServer/elicitation/request', params: {
+    threadId: 'thread-native', serverName: 'harness-mix', mode: 'select', message: 'Allow?',
+  } }, cancelSession, () => {});
+  const cancelRequests = [];
+  cancelSession.host = { request: (method) => { cancelRequests.push(method); return Promise.resolve({}); } };
+  cancelSession.state.turn = { resolve() {}, reject() {} };
+  await adapter.cancel(cancelSession);
+  assert.equal(cancelSession.pendingApprovals.size, 0);
+  assert.deepEqual(await cancelledAnswer, { answers: {} }, 'group 条目以空答案结算');
+  assert.deepEqual(await cancelledApproval, { decision: 'decline' });
+  assert.deepEqual(await cancelledElicitation, { action: 'cancel', content: null });
+  assert.equal(cancelRequests.length, 0, 'turn/start 尚在途（无 nativeTurnId）时不发 interrupt');
+  assert.equal(cancelSession.state.turn, null, '本地回合被释放，线程不会卡在「当前回合尚未结束」');
+
+  // nativeTurnId 已知时：interrupt 发出后释放本地回合。
+  const interruptSession = fakeSession();
+  const interrupts = [];
+  interruptSession.host = { request: (method) => { interrupts.push(method); return Promise.resolve({}); } };
+  interruptSession.state.nativeTurnId = 'turn-live';
+  interruptSession.state.turn = { resolve() {}, reject() {} };
+  await adapter.cancel(interruptSession);
+  assert.deepEqual(interrupts, ['turn/interrupt']);
+  assert.equal(interruptSession.state.turn, null);
+
+  console.log('codex adapter: native notifications, usage, multi-question, approvals and cancel shapes passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

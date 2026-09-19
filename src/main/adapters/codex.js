@@ -471,15 +471,22 @@ function create() {
     },
 
     async cancel(session) {
+      // 三类原生请求各有 wire 形状（与 close() 对齐）；requestUserInput 条目没有自身 resolve，
+      // 只能经由 group 结算，直接调 pending.resolve 会 TypeError 并吞掉后续的 interrupt
       for (const pending of session.pendingApprovals?.values() ?? []) {
-        pending.resolve({ action: 'decline' });
+        if (pending.group) pending.group.resolve({ answers: pending.group.answers });
+        else if (pending.method === 'mcpServer/elicitation/request') pending.resolve({ action: 'cancel', content: null });
+        else if (pending.method === 'item/permissions/requestApproval') pending.resolve({ permissions: {}, scope: 'turn' });
+        else pending.resolve({ decision: 'decline' });
       }
       session.pendingApprovals?.clear();
-      if (!session.state.nativeTurnId) return;
-      await Promise.race([
-        session.host.request('turn/interrupt', { threadId: session.nativeSessionId, turnId: session.state.nativeTurnId }).catch(() => {}),
-        new Promise((r) => setTimeout(r, 2_000)),
-      ]);
+      if (session.state.nativeTurnId) {
+        await Promise.race([
+          session.host.request('turn/interrupt', { threadId: session.nativeSessionId, turnId: session.state.nativeTurnId }).catch(() => {}),
+          new Promise((r) => setTimeout(r, 2_000)),
+        ]);
+      }
+      // turn/start 往返期间 nativeTurnId 还没写入，此时取消也必须结算本地回合，否则线程被永久卡住
       if (session.state.turn) {
         session.state.turn.resolve();
         session.state.turn = null;
