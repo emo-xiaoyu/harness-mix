@@ -30,7 +30,6 @@ if (process.argv.includes('--fixture')) {
   (async () => {
     for (const [id, key, argv] of [
       ['qoder', 'HARNESS_MIX_QODER_EXECUTABLE', ['--acp']],
-      ['zcode', 'HARNESS_MIX_ZCODE_ACP_EXECUTABLE', []],
       ['trae', 'HARNESS_MIX_TRAE_EXECUTABLE', []],
     ]) {
       const previous = process.env[key];
@@ -42,6 +41,22 @@ if (process.argv.includes('--fixture')) {
         process.env[key] = __filename;
         assert.deepEqual(nativeCommand(id, argv), { command: process.execPath, args: [__filename, ...argv] });
       } finally { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; }
+    }
+    // ZCode 走原生 app-server 适配器，不再是 ACP；解析只认无头 zcode.cjs /
+    // HARNESS_MIX_ZCODE_EXECUTABLE，旧 ACP 键与 nativeCommand('zcode') 已移除。
+    assert.throws(() => nativeCommand('zcode', []), /Unknown native CLI/);
+    {
+      const zcode = require('../src/main/adapters/zcode');
+      assert.equal(zcode.manifest.capabilities.approvals, true);
+      assert.equal(zcode.manifest.capabilities.fork, false);
+      assert.deepEqual(zcode.manifest.integrations.skills, { global: ['.zcode/skills', '.agents/skills'], project: ['.zcode/skills', '.agents/skills'] });
+      const previous = process.env.HARNESS_MIX_ZCODE_EXECUTABLE;
+      try {
+        delete process.env.HARNESS_MIX_ZCODE_EXECUTABLE;
+        process.env.HARNESS_MIX_ZCODE_EXECUTABLE = __filename;
+        assert.deepEqual(zcode.resolveLaunch(), { command: process.execPath, args: [__filename, 'app-server', '--stdio'] });
+        // 无覆盖且无桌面版捆绑 CLI 时必须明确报错（有的机器装有桌面版，此时允许回退）
+      } finally { if (previous === undefined) delete process.env.HARNESS_MIX_ZCODE_EXECUTABLE; else process.env.HARNESS_MIX_ZCODE_EXECUTABLE = previous; }
     }
     for (const name of ['kiro', 'cursor']) {
       const module = require('../src/main/adapters/' + name);

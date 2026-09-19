@@ -36,4 +36,4 @@ This project has no committed Git history yet — adopt Conventional Commits (`f
 
 ## Security & Configuration Tips
 
-Harness Mix never reads or stores credentials — accounts, keys, and permissions belong to the native harnesses. Keep it that way: do not proxy or persist tokens, and do not fabricate permission decisions in adapters; route approvals through `respond()` to the native protocol.
+Harness Mix never reads or stores credentials — accounts, keys, and permissions belong to the native harnesses. Keep it that way: do not proxy or persist tokens, and do not fabricate permission decisions in adapters; route approvals through `respond()` to the native protocol. The one sanctioned interaction with harness credentials is passive: the ZCode adapter may point the ZCode agent at its own config files and push a key-free provider declaration (`provider/updateAccountConfig` with `access: {type, entitled}` only) so the agent resolves its own shared credentials locally. Never read, log, persist, or transmit credential values, and never inline API keys into adapter pushes or config files.
