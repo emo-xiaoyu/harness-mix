@@ -373,29 +373,46 @@ function nativeAttachments(session, attachments) {
 
 function attachSession(launch, { thread, emit, diagnostic }) {
   const session = {
-    proc: null, cwd: thread.cwd, model: null, emit, diagnostic,
+    proc: null, threadRef: thread, cwd: thread.cwd, model: null, emit, diagnostic,
     state: {
       sessionId: null, active: false, turn: null, closed: false,
       models: [], usage: undefined, context: undefined, turnText: '',
       pending: new Map(), seenEvents: new Set(), afterSeq: 0, pollTimer: null, polling: false,
+      // 取消后到下一回合开始之间的 turn.completed/turn.failed 属于被停掉的旧回合，
+      // 不得结算新回合（否则下一轮秒回空文本）
+      suppressCompletions: false,
+      // 进程代际：重连后旧进程的迟到 onExit/onEvent 不得污染新会话状态
+      generation: 0,
       // 附件临时文件（base64 落盘）：会话关闭时清理
       tempFiles: [],
       // 子进程 stderr 尾部：进程异常退出时并入错误消息，连接页可见真实原因
       stderrTail: [],
     },
   };
+  bindProcess(session, launch, thread);
+  return session;
+}
+
+// (Re)bind a transport process onto an existing session object. Reconnects
+// reuse this: the generation guard makes the retired process's late
+// exit/event callbacks no-ops.
+function bindProcess(session, launch, thread) {
+  const generation = ++session.state.generation;
+  const stale = () => generation !== session.state.generation;
   session.proc = new JsonlProcess(launch.command, launch.args, {
-    cwd: thread.cwd, env: { ...process.env, ...agentEnvironment(), ...(thread.environment || {}) }, jsonrpc: false,
+    cwd: session.cwd, env: { ...process.env, ...agentEnvironment(), ...(thread.environment || {}) }, jsonrpc: false,
   }, {
-    onRequest: request => handleServerRequest(session, request),
-    onEvent: value => handleNotification(session, value),
+    onRequest: request => { if (stale()) return {}; return handleServerRequest(session, request); },
+    onEvent: value => { if (!stale()) handleNotification(session, value); },
     onDiagnostic: line => {
+      if (stale()) return;
       const text = String(line);
       session.state.stderrTail.push(text);
       if (session.state.stderrTail.length > 12) session.state.stderrTail.shift();
-      diagnostic?.(text);
+      diagnosticGuard(session, text);
     },
     onExit: error => {
+      if (stale()) return;
       session.state.closed = true;
       if (session.state.pollTimer) { clearInterval(session.state.pollTimer); session.state.pollTimer = null; }
       // Server requests parked on user answers can no longer be answered.
@@ -408,7 +425,48 @@ function attachSession(launch, { thread, emit, diagnostic }) {
       session.state.active = false;
     },
   });
-  return session;
+}
+
+function diagnosticGuard(session, text) {
+  try { session.diagnostic?.(text); } catch { /* renderer diagnostics must not break the pump */ }
+}
+
+// The context projection rides the subscribe snapshot (and state.updated
+// patches); normalize it to the keys projectUsage consumes (tokens/contextWindow).
+function captureProjection(session, projection) {
+  if (!projection || typeof projection !== 'object') return;
+  const used = Number(projection.contextUsed);
+  const window = Number(projection.contextWindow);
+  if (Number.isFinite(used) && Number.isFinite(window) && window > 0) {
+    session.state.context = { tokens: used, contextWindow: window };
+  }
+}
+
+// A dead transport between turns used to hang the next send forever (requests
+// to an exited JsonlProcess never settle). Restore the same native session on
+// a fresh process and replay the confirmed mode/model selections.
+async function reconnectSession(session, applySelections) {
+  const thread = session.threadRef;
+  session.diagnostic?.('ZCode 原生进程已退出，正在恢复原生会话…');
+  try { session.proc?.stop(); } catch { /* already gone */ }
+  if (session.state.pollTimer) { clearInterval(session.state.pollTimer); session.state.pollTimer = null; }
+  session.state.pending.clear();
+  session.state.closed = false;
+  session.state.turnText = '';
+  session.state.afterSeq = 0;
+  // 新进程 = 新事件空间：eventId 可能与旧进程撞号（fixture 计数器如此，真实
+  // 服务端亦不保证跨进程唯一）。跨重连保留去重集会把恢复后的全部事件当
+  // 重复丢弃，回合永不结算。
+  session.state.seenEvents.clear();
+  bindProcess(session, resolveLaunch(), thread);
+  await startSession(session, { ...thread, restore: true, nativeSessionId: session.state.sessionId });
+  const subscribed = await session.proc.request('session/subscribe', { sessionId: session.state.sessionId, deliveryKind: 'desktop-continuous', includeSnapshot: true }).catch(() => null);
+  if (Number.isFinite(Number(subscribed?.eventSeq))) session.state.afterSeq = Number(subscribed.eventSeq);
+  captureProjection(session, subscribed?.snapshot?.projection);
+  startEventPolling(session);
+  // 新进程没有任何供应商声明：重放账号推送，否则 setModel/send 全被拒。
+  await pushAccountConfig(session);
+  await applySelections();
 }
 
 function emitInteraction(session, method, params, requestId) {
@@ -515,6 +573,22 @@ function credentialValueFor(providerId) {
   }
 }
 
+// The agent's stream recovery (streamRecovery, recoveredFromRequestId) replays
+// the tail window of the model stream after every upstream hiccup: the same
+// span arrives a second time, the replay extending a few characters past the
+// first copy, under fresh eventIds the eventId dedup cannot catch. Flatten by
+// trimming any replayed overlap — a delta that begins with the accumulated
+// text's own tail. A genuine continuation cannot repeat the exact 12+ chars it
+// just ended with, while a replayed window always does.
+function trimStreamReplayOverlap(accumulated, delta) {
+  if (!accumulated) return delta;
+  const longest = Math.min(accumulated.length, delta.length);
+  for (let length = longest; length >= 12; length -= 1) {
+    if (accumulated.endsWith(delta.slice(0, length))) return delta.slice(length);
+  }
+  return delta;
+}
+
 function settleTurn(session, error) {
   const turn = session.state.turn;
   session.state.turn = null;
@@ -536,12 +610,18 @@ function projectSessionEvent(session, payload, eventId) {
   const emit = session.emit;
   switch (payload.type) {
     case 'part.delta': {
-      if (payload.field === 'text') { session.state.turnText += payload.delta; emit({ kind: 'text-delta', text: payload.delta }); }
+      if (payload.field === 'text') {
+        const delta = trimStreamReplayOverlap(session.state.turnText, payload.delta);
+        if (delta) { session.state.turnText += delta; emit({ kind: 'text-delta', text: delta }); }
+      }
       else if (payload.field === 'reasoning') emit({ kind: 'thinking-delta', text: payload.delta });
       break;
     }
     case 'model.streaming': {
-      if (payload.kind === 'text_delta' && payload.delta) { session.state.turnText += payload.delta; emit({ kind: 'text-delta', text: payload.delta }); }
+      if (payload.kind === 'text_delta' && payload.delta) {
+        const delta = trimStreamReplayOverlap(session.state.turnText, payload.delta);
+        if (delta) { session.state.turnText += delta; emit({ kind: 'text-delta', text: delta }); }
+      }
       else if (payload.kind === 'reasoning_delta' && payload.delta) emit({ kind: 'thinking-delta', text: payload.delta });
       break;
     }
@@ -568,9 +648,11 @@ function projectSessionEvent(session, payload, eventId) {
     }
     case 'turn.started': {
       session.state.turnText = '';
+      session.state.suppressCompletions = false;
       break;
     }
     case 'turn.completed': {
+      if (session.state.suppressCompletions) break;
       session.state.usage = usageView(payload);
       emit({ kind: 'usage', usage: session.state.usage });
       // SSE 在部分网络下只经拉取通道送达:若无流式 delta,补发完整回复
@@ -580,6 +662,7 @@ function projectSessionEvent(session, payload, eventId) {
       break;
     }
     case 'turn.failed': {
+      if (session.state.suppressCompletions) break;
       const message = payload.error?.message ?? 'ZCode 回合失败';
       emit({ kind: 'error', message });
       settleTurn(session, new Error(message));
@@ -614,11 +697,7 @@ function handleNotification(session, value) {
   }
   const projection = patch.projection;
   if (projection && typeof projection === 'object') {
-    const used = Number(projection.contextUsed);
-    const window = Number(projection.contextWindow);
-    if (Number.isFinite(used) && Number.isFinite(window) && window > 0) {
-      session.state.context = { usedTokens: used, contextWindow: window };
-    }
+    captureProjection(session, projection);
   }
 }
 
@@ -693,6 +772,7 @@ function create() {
         await startSession(session, thread);
         const subscribed = await session.proc.request('session/subscribe', { sessionId: session.state.sessionId, deliveryKind: 'desktop-continuous', includeSnapshot: true }).catch(() => null);
         if (Number.isFinite(Number(subscribed?.eventSeq))) session.state.afterSeq = Number(subscribed.eventSeq);
+        captureProjection(session, subscribed?.snapshot?.projection);
         startEventPolling(session);
         // The user's mode choice rides on the thread options (new-thread
         // preference or mid-session selector); apply it like the desktop does.
@@ -709,6 +789,15 @@ function create() {
 
     async send(session, prompt, _hooks, attachments) {
       if (session.state.active) throw new Error('ZCode 当前回合尚未结束');
+      if (session.state.closed) {
+        await reconnectSession(session, async () => {
+          if (session.permissionMode) await this.setPermissionMode(session, session.permissionMode)
+            .catch(error => session.diagnostic?.(`ZCode 恢复权限模式失败：${error.message}`));
+          if (session.model) await this.setModel(session, session.model)
+            .catch(error => session.diagnostic?.(`ZCode 恢复模型选择失败：${error.message}`));
+          else await ensureModelCatalog(session).catch(() => {});
+        });
+      }
       session.state.active = true;
       const settled = new Promise((resolve, reject) => { session.state.turn = { resolve, reject }; });
       const images = nativeAttachments(session, attachments);
@@ -732,13 +821,18 @@ function create() {
       }
       for (const resolve of session.state.pending.values()) resolve({ cancelled: true });
       session.state.pending.clear();
+      // 旧回合的迟到 turn.completed/turn.failed 不得结算下一个回合；见
+      // projectSessionEvent 的 suppressCompletions 守卫（turn.started 复位）。
+      session.state.suppressCompletions = true;
       settleTurn(session, null);
     },
 
     async respond(session, requestId, response) {
       const resolvePending = session.state.pending.get(requestId);
       if (!resolvePending) throw new Error('ZCode 原生请求已经结束');
-      if (response?.cancelled || response?.confirmed === false || response?.optionId === 'decline') resolvePending({ cancelled: true });
+      // decline 必须走 buildAnswer 映射成 {decision:'deny'}；短路成 {cancelled:true}
+      // 会让服务端把「拒绝」当「无应答」处理。
+      if (response?.cancelled || response?.confirmed === false) resolvePending({ cancelled: true });
       else resolvePending({ optionId: response?.optionId, value: response?.value });
     },
 
@@ -820,7 +914,7 @@ function create() {
   };
 }
 
-module.exports = { manifest, create, resolveLaunch, modelView, usageView, handleNotification };
+module.exports = { manifest, create, resolveLaunch, modelView, usageView, handleNotification, trimStreamReplayOverlap };
 
 // ZCode scans, per scope: .zcode/skills then .agents/skills (deeper workspace levels win).
 // https://zcode.z.ai/en/docs/skill

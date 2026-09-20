@@ -72,7 +72,7 @@ if (mode === 'app-server') {
         assert.ok(!JSON.stringify(params).includes('apiKey'), '推送体不得包含 apiKey 值');
         send({ id, result: { receivedRevision: params.revision, providerCount: providerIds.length, status: 'received' } });
       } else if (method === 'session/send') {
-        assert.ok(['hello', '带路径图', '纯base64图'].includes(params.content), `意外的回合内容：${params.content}`);
+        assert.ok(['hello', '带路径图', '纯base64图', '流恢复', '拒绝流程', '重连后回合'].includes(params.content), `意外的回合内容：${params.content}`);
         if (Array.isArray(params.attachments)) {
           // 实测约束：dataBase64 通道只会退化为元数据占位符，附件必须走 localPath
           for (const attachment of params.attachments) {
@@ -86,6 +86,20 @@ if (mode === 'app-server') {
         send({ id, result: { accepted: true, sessionId: params.sessionId, stateRevision: 2 } });
         const push = payload => send({ method: 'session/event', params: { deliveryKind: 'desktop-continuous', eventId: `evt-${nextId++}`, type: payload.type, payload } });
         turnCount += 1;
+        if (params.content === '流恢复') {
+          // 流恢复重放：上游断流后 agent 重发“尾窗口（+增量）”，eventId 是新的，
+          // 去重拦不住——适配器必须剪掉与累积文本的重叠，只下发增量。
+          const replay = () => {
+            push({ type: 'turn.started', turnNumber: turnCount, input: params.content });
+            push({ type: 'model.streaming', kind: 'text_delta', delta: 'abcdefgh1234' });
+            push({ type: 'model.streaming', kind: 'text_delta', delta: 'abcdefgh1234' });
+            push({ type: 'model.streaming', kind: 'text_delta', delta: 'abcdefgh1234下一步' });
+            push({ type: 'model.streaming', kind: 'text_delta', delta: '继续' });
+            push({ type: 'turn.completed', response: 'abcdefgh1234下一步继续', tokenCount: 5, usage: { inputTokens: 3, outputTokens: 2 }, toolCallCount: 0, duration: 0.1 });
+          };
+          setTimeout(replay, 30);
+          continue;
+        }
         if (turnCount > 1) {
           // 附件回合：简化事件流，回合直接完成
           const simple = () => {
@@ -109,6 +123,7 @@ if (mode === 'app-server') {
             const decision = data.result?.decision;
             push({ type: 'permission.resolved', toolCallId: 't2', decision });
             if (decision === 'allow') push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', toolName: 'write_file', output: 'written' });
+            else push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', toolName: 'write_file', output: `decision:${decision}` });
             const askId = nextId++;
             pendingServerRequests.set(askId, askData => {
               push({ type: 'turn.completed', response: `你好（${decision}/${askData.result?.value}）`, tokenCount: 42, usage: { inputTokens: 30, outputTokens: 12 }, toolCallCount: 2, duration: 1.5, cacheStats: { cacheReadTokens: 7 } });
@@ -231,7 +246,8 @@ const zcode = require('../src/main/adapters/zcode');
     assert.deepEqual(usageEvent.usage, { inputTokens: 30, outputTokens: 12, cachedInputTokens: 7, totalTokens: 42 });
     assert.ok(events.some(event => event.kind === 'completed' && event.finalAnswer === true));
     const context = await adapter.getContextUsage(session);
-    assert.deepEqual(context, { usedTokens: 1234, contextWindow: 200000 });
+    // projectUsage 只认 tokens/contextUsedTokens；usedTokens 键永远匹配不上
+    assert.deepEqual(context, { tokens: 1234, contextWindow: 200000 });
 
     // 附件：runtime 已给路径的图直接走 localPath；纯 base64 落盘为临时文件后同通道发送
     await adapter.send(session, '带路径图', null, { images: [
@@ -247,11 +263,61 @@ const zcode = require('../src/main/adapters/zcode');
     assert.ok(fs.existsSync(tempFile), 'base64 附件必须物化为临时文件');
     assert.equal(fs.readFileSync(tempFile).toString(), 'png-bytes', '落盘内容必须与 base64 解码一致');
 
-    // 取消：向 server 发送 session/stop 并本地结算
+    // 流恢复重放去重：重放窗口整体与累积文本尾部重叠，只允许增量透出
+    const trim = zcode.trimStreamReplayOverlap;
+    assert.equal(trim('', 'abc'), 'abc', '空累积不裁剪');
+    assert.equal(trim('你好', 'xy'), 'xy', '无重叠不裁剪');
+    assert.equal(trim(`xx${'0123456789AB'}`, `${'0123456789AB'}cd`), 'cd', '12 字符重叠必须裁剪');
+    assert.equal(trim(`xx${'0123456789A'}`, `${'0123456789A'}cd`), `${'0123456789A'}cd`, '11 字符重叠低于阈值不裁剪');
+    assert.equal(trim('abcdefgh1234', 'abcdefgh1234'), '', '纯重放（无增量）整段丢弃');
+    const replayMark = events.length;
+    await adapter.send(session, '流恢复');
+    const replayText = events.slice(replayMark).filter(event => event.kind === 'text-delta').map(event => event.text).join('');
+    assert.equal(replayText, 'abcdefgh1234下一步继续', '重放窗口必须剪掉，只透出增量');
+    assert.ok(events.slice(replayMark).some(event => event.kind === 'completed'), '流恢复回合必须正常完成');
+
+    // 取消：向 server 发送 session/stop 并本地结算；旧回合迟到的 turn.completed
+    // 不得结算新回合（suppressCompletions 直到下一次 turn.started 才复位）
     await adapter.cancel(session);
+    assert.equal(session.state.suppressCompletions, true, '取消后必须压制迟到 completion');
     await adapter.close(session);
     assert.equal(fs.existsSync(tempFile), false, 'close 后必须清理附件临时文件');
-    console.log('zcode adapter: protocol framing, session lifecycle, model catalog, permissions, questions, deltas, tools, usage, attachments, collaboration and cancel PASS');
+
+    // 拒绝权限：decline 必须映射为 {decision:'deny'}（fixture 会把 decision 回显进回合响应）
+    {
+      const declineEvents = [];
+      const declineSession = await adapter.open({ thread: { cwd: process.cwd() }, emit: e => declineEvents.push(e), diagnostic: () => {} });
+      try {
+        const declineWaitFor = async predicate => {
+          for (let i = 0; i < 100; i++) {
+            const hit = declineEvents.find(predicate);
+            if (hit) return hit;
+            await new Promise(resolve => setTimeout(resolve, 30));
+          }
+          return null;
+        };
+        const turn = adapter.send(declineSession, '拒绝流程', null);
+        const approval = await declineWaitFor(event => event.kind === 'approval' && String(event.requestId).includes('requestPermission'));
+        assert.ok(approval, 'decline 流程：权限卡片必须投影');
+        await adapter.respond(declineSession, approval.requestId, { optionId: 'decline' });
+        const question = await declineWaitFor(event => event.kind === 'approval' && String(event.requestId).includes('requestUserInput'));
+        assert.ok(question, 'decline 流程：提问卡片必须投影');
+        await adapter.respond(declineSession, question.requestId, { optionId: '是' });
+        await turn;
+        const denyTool = declineEvents.find(event => event.kind === 'tool' && event.toolCallId === 't2' && event.state === 'done');
+        assert.equal(denyTool?.output, 'decision:deny', 'decline 应答必须是 deny（不得短路成 cancelled）');
+        // 进程死亡自愈：下一次 send 重连恢复（resume 失败则回退新会话），不得永久挂起
+        declineSession.proc.stop();
+        for (let i = 0; i < 100 && !declineSession.state.closed; i++) await new Promise(resolve => setTimeout(resolve, 30));
+        assert.equal(declineSession.state.closed, true, '进程死后 closed 必须置位');
+        declineEvents.length = 0;
+        // '流恢复' 分支无权限交互：重连后的新 fixture 进程第一轮即可自动完成
+        await adapter.send(declineSession, '流恢复', null);
+        assert.equal(declineSession.state.closed, false, 'send 自愈后 closed 必须复位');
+        assert.ok(declineEvents.some(event => event.kind === 'completed'), '重连回合必须完成');
+      } finally { await adapter.close(declineSession); }
+    }
+    console.log('zcode adapter: protocol framing, session lifecycle, model catalog, permissions, questions, deltas, tools, usage, attachments, collaboration, decline-to-deny, crash self-heal and cancel PASS');
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

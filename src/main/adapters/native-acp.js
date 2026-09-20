@@ -407,7 +407,19 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
           } else throw new Error(`Native ${kind} option unavailable`);
         } finally { s.configuring = false; }
       },
-      async setModel(s, model) { await adapter.configure(s, 'model', model.id); s.model = catalog(s).models.find(m => m.id === model.id); s.confirmed.model = s.model; delete s.confirmed.thinking; return s.model; },
+      async setModel(s, model) {
+        const previousThinking = s.confirmed.thinking;
+        await adapter.configure(s, 'model', model.id); s.model = catalog(s).models.find(m => m.id === model.id); s.confirmed.model = s.model;
+        // Some natives reset the effort selector on model switches (qodercli
+        // Max→Flash resets reasoning_effort to its default). Replay the
+        // confirmed level while the new model still offers it, so the UI
+        // selection and the native session stay in sync.
+        if (previousThinking && catalog(s).thinkingLevels.some(o => o.id === previousThinking)) {
+          try { await adapter.configure(s, 'thinking', previousThinking); s.confirmed.thinking = previousThinking; }
+          catch (error) { delete s.confirmed.thinking; s.diagnostic?.(`${name}: thinking level not restored after model switch: ${error.message}`); }
+        } else delete s.confirmed.thinking;
+        return s.model;
+      },
       async setThinkingLevel(s, level) {
         if (!catalog(s).thinkingLevels.some(o => o.id === level)) throw new Error('Native effort unavailable for this model');
         await adapter.configure(s, 'thinking', level); s.confirmed.thinking = level;

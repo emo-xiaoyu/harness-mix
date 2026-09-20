@@ -25,7 +25,8 @@ if (process.argv.includes('--fixture')) {
       result = { sessionId: sid, configOptions: configs };
     }
     if (r.method === 'session/set_config_option') {
-      configs = configs.map(c => c.id === r.params.configId ? { ...c, currentValue: r.params.value } : c);
+      // 模拟 qodercli 的模型切换重置思考档位（Max→Flash 实测重置回默认档）
+      configs = configs.map(c => c.id === r.params.configId ? { ...c, currentValue: r.params.value } : (r.params.configId === 'model' && c.id === 'thought_level' ? { ...c, currentValue: 'medium' } : c));
       result = { configOptions: configs };
     }
     if (r.method === 'session/fork') { if (r.params._meta) assert.equal(r.params._meta?.kiro?.messageId, 'native-end'); result = { sessionId: randomUUID() }; }
@@ -58,6 +59,11 @@ if (process.argv.includes('--fixture')) {
         events.length = 0;
         await adapter.setModel(s, { id: 'other' });
         if (vendor !== 'cursor-cli') await adapter.setThinkingLevel(s, 'high');
+        if (vendor === 'qoder') {
+          // 模型切换重置原生 effort 后，已确认的思考档位必须重放（fixture 模拟了重置）
+          await adapter.setModel(s, { id: 'native[variant]' });
+          assert.equal(s.state.configOptions.find(c => c.id === 'thought_level').currentValue, 'high', '模型切换后确认的思考档位必须重放');
+        }
         const first = adapter.send(s, 'wait', { emit: e => events.push(e) });
         await assert.rejects(adapter.send(s, 'busy', { emit: () => {} }), /busy/);
         await assert.rejects(adapter.setModel(s, { id: 'other' }), /busy/);
