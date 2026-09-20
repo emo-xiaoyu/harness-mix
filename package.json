@@ -106,6 +106,7 @@
     "e2e:native:pi": "node scripts/e2e-native-host.cjs --live --harness=pi",
     "e2e:native:dsh": "node scripts/e2e-native-host.cjs --live --harness=deepseek-harness",
     "e2e:native:claude": "node scripts/e2e-native-host.cjs --live --harness=claude-code",
+    "e2e:zcode": "node scripts/zcode-live-probe.cjs",
     "start:codex": "node scripts/launch-codex.cjs",
     "check": "node scripts/check.cjs",
     "test:contracts": "node scripts/contracts-test.cjs",

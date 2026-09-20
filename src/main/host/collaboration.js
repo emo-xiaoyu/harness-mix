@@ -70,6 +70,10 @@ function defaultWorkerPermissionMode(agent) {
     case 'pi':
     case 'omp':
       return 'no-approve';
+    case 'zcode':
+      // Worker threads run in kernel-isolated workspaces with nobody watching
+      // approval cards; yolo is the ZCode selector's no-prompts mode.
+      return 'yolo';
     default:
       return undefined;
   }

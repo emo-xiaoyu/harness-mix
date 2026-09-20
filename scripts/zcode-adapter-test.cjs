@@ -10,6 +10,8 @@ const mode = process.argv[2];
 if (mode === 'app-server') {
   // Fixture: minimal ZCode app-server speaking the verified protocol subset.
   let nextId = 100;
+  let turnCount = 0;
+  const seenModes = [];
   const send = payload => process.stdout.write(`${JSON.stringify(payload)}\n`);
   const notify = (method, params) => send({ method, params });
   let buffer = '';
@@ -50,6 +52,12 @@ if (mode === 'app-server') {
         send({ id, result: { sessionId: params.sessionId, accepted: true } });
       } else if (method === 'session/setThoughtLevel') {
         send({ id, result: { sessionId: params.sessionId, accepted: true } });
+      } else if (method === 'session/setMode') {
+        assert.ok(['plan', 'build', 'edit', 'yolo'].includes(params.mode), `setMode 必须使用规范模式枚举，收到 ${params.mode}`);
+        assert.equal(params.expectedRevision, undefined, 'setMode 无需 expectedRevision');
+        seenModes.push(params.mode);
+        assert.deepEqual(seenModes, ['build', 'yolo'].slice(0, seenModes.length), `setMode 序列应为 open 应用线程选项→显式切换：${seenModes}`);
+        send({ id, result: { sessionId: params.sessionId, mode: params.mode, accepted: true } });
       } else if (method === 'provider/updateAccountConfig') {
         // 安全属性:账号声明必须零密钥——仅凭据条目名(connectionKey)参与链接
         const providerIds = Object.keys(params.providers ?? {});
@@ -64,9 +72,30 @@ if (mode === 'app-server') {
         assert.ok(!JSON.stringify(params).includes('apiKey'), '推送体不得包含 apiKey 值');
         send({ id, result: { receivedRevision: params.revision, providerCount: providerIds.length, status: 'received' } });
       } else if (method === 'session/send') {
-        assert.equal(params.content, 'hello');
+        assert.ok(['hello', '带路径图', '纯base64图'].includes(params.content), `意外的回合内容：${params.content}`);
+        if (Array.isArray(params.attachments)) {
+          // 实测约束：dataBase64 通道只会退化为元数据占位符，附件必须走 localPath
+          for (const attachment of params.attachments) {
+            assert.equal(attachment.kind, 'image', 'Harness Mix 只路由图片附件');
+            assert.ok(attachment.filename && attachment.mimeType, '附件必须带 filename 与 mimeType');
+            assert.ok(typeof attachment.localPath === 'string' && attachment.localPath, '附件必须走 localPath 通道');
+            assert.equal(attachment.dataBase64, undefined, '不得使用会降级的 dataBase64 通道');
+            assert.ok(Number.isInteger(attachment.sizeBytes) && attachment.sizeBytes > 0, '附件需携带 sizeBytes 提示');
+          }
+        }
         send({ id, result: { accepted: true, sessionId: params.sessionId, stateRevision: 2 } });
         const push = payload => send({ method: 'session/event', params: { deliveryKind: 'desktop-continuous', eventId: `evt-${nextId++}`, type: payload.type, payload } });
+        turnCount += 1;
+        if (turnCount > 1) {
+          // 附件回合：简化事件流，回合直接完成
+          const simple = () => {
+            push({ type: 'turn.started', turnNumber: turnCount, input: params.content });
+            push({ type: 'part.delta', messageId: 'm2', partId: 'p3', field: 'text', delta: '图已收到' });
+            push({ type: 'turn.completed', response: '图已收到', tokenCount: 9, usage: { inputTokens: 5, outputTokens: 4 }, toolCallCount: 0, duration: 0.2 });
+          };
+          setTimeout(simple, 30);
+          continue;
+        }
         const runTurn = () => {
           push({ type: 'turn.started', turnNumber: 0, input: params.content });
           push({ type: 'part.delta', messageId: 'm1', partId: 'p1', field: 'reasoning', delta: '思考' });
@@ -134,14 +163,19 @@ const zcode = require('../src/main/adapters/zcode');
   process.env.HARNESS_MIX_ZCODE_CREDENTIALS = path.join(fixtureBase, 'credentials.json');
   delete process.env.ZCODE_DATA_BASE_DIR;
   assert.deepEqual(zcode.resolveLaunch(), { command: process.execPath, args: [__filename, 'app-server', '--stdio'] });
+  assert.equal(zcode.manifest.capabilities.permissionModes, true, 'manifest 必须声明 permissionModes 能力');
+  assert.equal(zcode.manifest.capabilities.attachments, true, 'manifest 必须声明 attachments 能力');
+  assert.equal(zcode.manifest.capabilities.collaborationTools, true, 'manifest 必须声明 collaborationTools（工人/团队成员角色）');
   const adapter = zcode.create();
   const events = [];
   let session;
   try {
     session = await adapter.open({
-      thread: { cwd: process.cwd() },
+      thread: { cwd: process.cwd(), options: { permissionMode: 'build' } },
       emit: event => events.push(event),
       diagnostic: () => {},
+      // 协作描述符在 open 时传入（工人/成员角色不需要 harness 侧 MCP 工具）
+      collaboration: { command: process.execPath, args: ['bridge.cjs'], env: { HARNESS_MIX_COLLAB_KEY: 'fixture' } },
     });
     assert.equal(session.state.sessionId, 'sess-fix');
     const sessionEvent = events.find(event => event.kind === 'session');
@@ -155,6 +189,14 @@ const zcode = require('../src/main/adapters/zcode');
     const selected = await adapter.setModel(session, models[0]);
     assert.equal(selected.id, 'glm-4.6');
     await adapter.setThinkingLevel(session, 'low');
+
+    // 权限模式目录与官方桌面选择器一致；线程选项在 open 时已生效
+    const catalog = await adapter.describeFor(session);
+    assert.deepEqual(catalog.permissionModes.map(mode => mode.id), ['plan', 'build', 'edit', 'yolo']);
+    assert.equal(catalog.permissionModes.find(mode => mode.default)?.id, 'build', '原生默认档是 build');
+    assert.equal(catalog.permissionModes.find(mode => mode.dangerous)?.id, 'yolo', '完全访问必须标记 dangerous');
+    await adapter.setPermissionMode(session, 'yolo');
+    await assert.rejects(() => adapter.setPermissionMode(session, 'auto'), /未知的 ZCode 权限模式/, '目录外模式必须拒绝');
 
     // 权限/提问卡片先于回合结束出现，respond 后回合才完成
     const settled = adapter.send(session, 'hello');
@@ -191,10 +233,25 @@ const zcode = require('../src/main/adapters/zcode');
     const context = await adapter.getContextUsage(session);
     assert.deepEqual(context, { usedTokens: 1234, contextWindow: 200000 });
 
+    // 附件：runtime 已给路径的图直接走 localPath；纯 base64 落盘为临时文件后同通道发送
+    await adapter.send(session, '带路径图', null, { images: [
+      { name: 'shot.png', mime: 'image/png', data: 'aGVsbG8=', path: path.join(fixtureBase, 'shot.png') },
+    ] });
+    await adapter.send(session, '纯base64图', null, { images: [
+      { name: 'paste.png', mime: 'image/png', data: Buffer.from('png-bytes').toString('base64') },
+    ] });
+    const textAfter = events.filter(event => event.kind === 'text-delta').map(event => event.text).join('');
+    assert.ok(textAfter.includes('图已收到'), '附件回合必须完成');
+    assert.equal(session.state.tempFiles.length, 1, '仅 base64-only 图片落盘');
+    const tempFile = session.state.tempFiles[0];
+    assert.ok(fs.existsSync(tempFile), 'base64 附件必须物化为临时文件');
+    assert.equal(fs.readFileSync(tempFile).toString(), 'png-bytes', '落盘内容必须与 base64 解码一致');
+
     // 取消：向 server 发送 session/stop 并本地结算
     await adapter.cancel(session);
     await adapter.close(session);
-    console.log('zcode adapter: protocol framing, session lifecycle, model catalog, permissions, questions, deltas, tools, usage and cancel PASS');
+    assert.equal(fs.existsSync(tempFile), false, 'close 后必须清理附件临时文件');
+    console.log('zcode adapter: protocol framing, session lifecycle, model catalog, permissions, questions, deltas, tools, usage, attachments, collaboration and cancel PASS');
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

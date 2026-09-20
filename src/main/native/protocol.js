@@ -404,7 +404,7 @@ class NativeProtocol {
       const defaultSource = sourceModels.find(m => m && m.isDefault === true) || sourceModels[0];
       const result = { status: 'ready', catalog: { models, ...(defaultSource ? { defaultModel: modelRef(defaultSource) } : {}), thinkingOptions,
         ...(defaultThinking ? { defaultThinkingOptionId: defaultThinking } : {}) }, capabilities: this.capabilities(local, catalog) };
-      if (catalog.permissionModes?.length) result.permissionModes = { modes: catalog.permissionModes.map(m => ({ id: m.id, label: m.label || m.name || m.id, ...((m.description || m.hint) ? { description: m.description || m.hint } : {}) })), defaultModeId: catalog.permissionModes.find(m => m.default)?.id || catalog.permissionModes[0].id };
+      if (catalog.permissionModes?.length) result.permissionModes = { modes: catalog.permissionModes.map(m => ({ id: m.id, label: m.label || m.name || m.id, ...((m.description || m.hint) ? { description: m.description || m.hint } : {}), ...(m.dangerous ? { dangerous: true } : {}) })), defaultModeId: catalog.permissionModes.find(m => m.default)?.id || catalog.permissionModes[0].id };
       return result;
     } catch (error) {
       // A harness binary that exited mid-probe is deterministic misconfiguration:

@@ -14,15 +14,34 @@
 //   turn.started, part.delta {field:text|reasoning|input|output, delta},
 //   tool.updated (kinds scheduled|started|progress|result|error), turn.completed
 //   {response, tokenCount, usage, toolCallCount, duration}, turn.failed {error}.
+// - session/send also accepts attachments: [{kind:'image', filename,
+//   mimeType, sizeBytes?, dataBase64?|localPath?}] (union also covers
+//   audio/video/pdf/file, but Harness Mix only routes images). Verified live:
+//   localPath delivers the image to the model; dataBase64 degrades to a
+//   "[Attached image/*: name]" metadata placeholder, so base64-only images are
+//   materialized to a temp file and sent as localPath instead.
+// - collaboration: the protocol has NO runtime MCP registration RPC and the
+//   plugin root (~/.zcode/cli/plugins) is the user's own native storage, which
+//   Harness Mix never rewrites — so ZCode joins multi-agent work as a
+//   dispatchable worker / Agent-Team member / /delegate target (all
+//   kernel-driven), but cannot take the `#` lead role yet. Lead-side wiring
+//   would need a harness-mix plugin installed via the sanctioned
+//   plugins/install RPC plus a PATH-resolved bridge shim; documented as the
+//   follow-up design.
 // - models arrive via state.updated patches {model:{available:[{providerId, modelId,...}]}}
 //   once the logged-in account materializes; session/setModel {sessionId, model}.
 // - server requests: session/requestRuntimePreferences (answer the fixed
 //   preference block), interaction/requestOfficialMcpAuthHeaders (decline),
 //   interaction/requestPermission (surfaces as an approval card, answered
 //   {decision:'allow'|'deny'}), interaction/requestUserInput (question card).
+// - permission modes: session/setMode {sessionId, mode} with the canonical
+//   enum plan|build|edit|yolo|auto ('auto' is internal); the desktop selector's
+//   计划模式/变更前确认/自动编辑/完全访问 map onto the first four.
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { JsonlProcess, cliSpawn } = require('../host/jsonl');
 
 const manifest = {
@@ -30,11 +49,14 @@ const manifest = {
   name: 'ZCode',
   icon: 'zcode-color.svg',
   capabilities: {
+    // Dispatchable worker + Agent-Team member; the `#` lead role stays off
+    // until MCP injection exists (see the header note).
+    collaborationTools: true,
     plan: true, streaming: true, thinking: false, tools: true,
     approvals: true, questions: true, models: true, thinkingLevels: true,
-    permissionModes: false, resume: true, fork: false, forkFromMessage: false,
+    permissionModes: true, resume: true, fork: false, forkFromMessage: false,
     compaction: false, nativeDiff: false, nativePatch: false,
-    usage: true, contextUsage: true, cost: false, attachments: false,
+    usage: true, contextUsage: true, cost: false, attachments: true,
   },
 };
 
@@ -44,6 +66,17 @@ const RUNTIME_PREFERENCES = {
   askUserQuestionAutoResolutionEnabled: true,
   modelContextBudgetStrategy: 'preflight-v1',
 };
+
+// Same four modes the official desktop selector offers; ids are the
+// session/setMode enum. `default` marks the agent's own startup mode (build)
+// so the renderer shows a real selection instead of a placeholder; `dangerous`
+// is presentation-only and gets projected to the renderer catalog.
+const PERMISSION_MODES = [
+  { id: 'plan', label: '计划模式', description: '探索并制定计划；批准计划后才执行变更。' },
+  { id: 'build', label: '变更前确认', description: '自动允许读取；写入或执行操作前询问。', default: true },
+  { id: 'edit', label: '自动编辑', description: '自动允许读取和写入；执行操作前询问。' },
+  { id: 'yolo', label: '完全访问', description: '无需批准提示即可运行所有工具操作。', dangerous: true },
+];
 
 // Headless entry resolution. The desktop-bundled zcode.cjs is the primary
 // source; a standalone CLI on PATH and explicit env overrides also work.
@@ -313,6 +346,31 @@ function asText(value) {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
+// dataBase64-only images degrade to a metadata placeholder on this wire
+// (verified live), so materialize them to a temp file and hand over localPath.
+const IMAGE_EXTENSIONS = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/svg+xml': '.svg' };
+function materializeImage(session, image) {
+  const extension = IMAGE_EXTENSIONS[image.mime] ?? '.png';
+  const file = path.join(os.tmpdir(), `harness-mix-zcode-${randomUUID()}${extension}`);
+  fs.writeFileSync(file, Buffer.from(image.data, 'base64'));
+  session.state.tempFiles.push(file);
+  return file;
+}
+
+function nativeAttachments(session, attachments) {
+  return (attachments?.images ?? []).map(image => {
+    const localPath = image.path || (image.data ? materializeImage(session, image) : null);
+    if (!localPath) return null;
+    return {
+      kind: 'image',
+      filename: image.name ?? 'image.png',
+      mimeType: image.mime ?? 'image/png',
+      localPath,
+      ...(image.data ? { sizeBytes: Math.floor(image.data.length * 3 / 4) } : {}),
+    };
+  }).filter(Boolean);
+}
+
 function attachSession(launch, { thread, emit, diagnostic }) {
   const session = {
     proc: null, cwd: thread.cwd, model: null, emit, diagnostic,
@@ -320,6 +378,8 @@ function attachSession(launch, { thread, emit, diagnostic }) {
       sessionId: null, active: false, turn: null, closed: false,
       models: [], usage: undefined, context: undefined, turnText: '',
       pending: new Map(), seenEvents: new Set(), afterSeq: 0, pollTimer: null, polling: false,
+      // 附件临时文件（base64 落盘）：会话关闭时清理
+      tempFiles: [],
       // 子进程 stderr 尾部：进程异常退出时并入错误消息，连接页可见真实原因
       stderrTail: [],
     },
@@ -619,9 +679,14 @@ function create() {
       }
     },
 
-    async describe() { return { models: null, thinkingLevels: [], permissionModes: [] }; },
+    async describe() { return { models: null, thinkingLevels: [], permissionModes: PERMISSION_MODES }; },
 
-    async open({ thread, emit, diagnostic = () => {} }) {
+    async open({ thread, emit, diagnostic = () => {}, collaboration }) {
+      // `collaboration` is accepted (worker/Agent-Team membership works through
+      // kernel-driven dispatch) but the lead-side MCP tools are not wired yet —
+      // see the header note; deliberately NOT setting collaborationEnabled
+      // keeps the `#`-lead gate honest until that lands.
+      void collaboration;
       const launch = resolveLaunch();
       const session = attachSession(launch, { thread, emit, diagnostic });
       try {
@@ -629,6 +694,9 @@ function create() {
         const subscribed = await session.proc.request('session/subscribe', { sessionId: session.state.sessionId, deliveryKind: 'desktop-continuous', includeSnapshot: true }).catch(() => null);
         if (Number.isFinite(Number(subscribed?.eventSeq))) session.state.afterSeq = Number(subscribed.eventSeq);
         startEventPolling(session);
+        // The user's mode choice rides on the thread options (new-thread
+        // preference or mid-session selector); apply it like the desktop does.
+        if (thread.options?.permissionMode) await this.setPermissionMode(session, thread.options.permissionMode);
         await pushAccountConfig(session);
         await ensureModelCatalog(session).catch(() => {});
         emit({ kind: 'session', nativeSessionId: session.state.sessionId });
@@ -639,12 +707,17 @@ function create() {
       }
     },
 
-    async send(session, prompt) {
+    async send(session, prompt, _hooks, attachments) {
       if (session.state.active) throw new Error('ZCode 当前回合尚未结束');
       session.state.active = true;
       const settled = new Promise((resolve, reject) => { session.state.turn = { resolve, reject }; });
+      const images = nativeAttachments(session, attachments);
       try {
-        const result = await session.proc.request('session/send', { sessionId: session.state.sessionId, content: prompt });
+        const result = await session.proc.request('session/send', {
+          sessionId: session.state.sessionId,
+          content: prompt,
+          ...(images.length ? { attachments: images } : {}),
+        });
         if (result && result.accepted === false) throw new Error('ZCode 拒绝了这条消息');
       } catch (error) {
         settleTurn(session, error);
@@ -698,8 +771,14 @@ function create() {
       return {
         models: session.state.models.length ? session.state.models : null,
         thinkingLevels: levels.map(level => ({ id: level, label: level })),
-        permissionModes: [],
+        permissionModes: PERMISSION_MODES,
       };
+    },
+
+    async setPermissionMode(session, mode) {
+      if (!PERMISSION_MODES.some(entry => entry.id === mode)) throw new Error(`未知的 ZCode 权限模式：${mode}`);
+      await session.proc.request('session/setMode', { sessionId: session.state.sessionId, mode });
+      session.permissionMode = mode;
     },
 
     async setModel(session, model) {
@@ -731,6 +810,7 @@ function create() {
       if (session.state.pollTimer) { clearInterval(session.state.pollTimer); session.state.pollTimer = null; }
       for (const resolve of session.state.pending.values()) resolve({ cancelled: true });
       session.state.pending.clear();
+      for (const file of session.state.tempFiles.splice(0)) { try { fs.rmSync(file, { force: true }); } catch { /* best-effort cleanup */ } }
       settleTurn(session, null);
       if (session.state.sessionId) {
         session.proc.request('session/close', { sessionId: session.state.sessionId }).catch(() => {});
