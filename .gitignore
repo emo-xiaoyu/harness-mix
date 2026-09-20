@@ -9,3 +9,5 @@ output/
 .agents/
 src/main/native/rs/target/
 src/native-ui/*/dist/
+out/
+.video_agent/
