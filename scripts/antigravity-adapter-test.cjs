@@ -619,7 +619,28 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   // 19. Close session
   await adapter.close(session);
 
-  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, and turn pruning passed');
+  // 20. WinINET system proxy → env passthrough. Console children cannot see
+  // the Windows system proxy; agy only honors HTTP(S)_PROXY env vars, so
+  // without this passthrough its OAuth refresh black-holes and every spawn
+  // re-triggers interactive login.
+  const { systemProxyEnv, parseWininetProxyTarget, parseWininetProxyOverride, withProxyScheme } = require('../src/main/native/process-utils');
+  assert.deepEqual(parseWininetProxyTarget('127.0.0.1:7897'), { http: '127.0.0.1:7897', https: '127.0.0.1:7897' });
+  assert.deepEqual(parseWininetProxyTarget('http=1.2.3.4:8080;https=5.6.7.8:8443;ftp=9.9.9.9:21'), { http: '1.2.3.4:8080', https: '5.6.7.8:8443' });
+  assert.deepEqual(parseWininetProxyTarget('socks=127.0.0.1:7890'), { http: 'socks5://127.0.0.1:7890', https: 'socks5://127.0.0.1:7890' });
+  assert.equal(parseWininetProxyTarget(''), null);
+  assert.equal(withProxyScheme('127.0.0.1:7897'), 'http://127.0.0.1:7897');
+  assert.equal(withProxyScheme('socks5://127.0.0.1:7890'), 'socks5://127.0.0.1:7890');
+  assert.equal(
+    parseWininetProxyOverride('localhost;127.*;192.168.*;10.*;172.16.*;172.31.*;<local>'),
+    'localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12',
+  );
+  assert.equal(parseWininetProxyOverride('*.corp.example;internal.example'), 'localhost,127.0.0.1,::1,.corp.example,internal.example');
+  assert.equal(parseWininetProxyOverride(''), null);
+  const proxyEnv = await systemProxyEnv();
+  assert.equal(typeof proxyEnv, 'object');
+  for (const value of Object.values(proxyEnv)) assert.equal(typeof value, 'string');
+
+  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, turn pruning, and system proxy passthrough passed');
 })().catch((err) => {
   console.error(err);
   process.exitCode = 1;

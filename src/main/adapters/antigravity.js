@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
-const { terminateTree } = require('../native/process-utils');
+const { terminateTree, systemProxyEnv } = require('../native/process-utils');
 
 const manifest = {
   id: 'antigravity',
@@ -78,6 +78,13 @@ function resolveExecutable() {
     if (fs.existsSync(local)) return local;
   }
   return 'agy';
+}
+
+// agy 是 Go 程序，只认 HTTP(S)_PROXY 环境变量、读不到 Windows 系统代理（WinINET）。
+// 宿主进程通常没有代理 env，网络受限环境下直连 Google 会黑洞：令牌刷新 10s 超时、
+// OAuth code 交换失败 → keyring 里的登录态永远写不回去，agy 每次启动都重新弹登录。
+async function agyChildEnv() {
+  return { ...process.env, ...(await systemProxyEnv()) };
 }
 
 function parseModelsOutput(output) {
@@ -177,8 +184,9 @@ function parseAntigravityUsageCommand(command, fetchedAt = new Date().toISOStrin
 }
 
 async function fetchAntigravityQuota(executable = resolveExecutable()) {
+  const env = await agyChildEnv();
   return new Promise((resolve) => {
-    execFile(executable, ['--print=/usage', '--output-format', 'stream-json'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+    execFile(executable, ['--print=/usage', '--output-format', 'stream-json'], { env, windowsHide: true, timeout: 15000 }, (err, stdout) => {
       if (err || !stdout) return resolve(null);
       for (const line of stdout.split(/\r?\n/)) {
         if (!line.trim()) continue;
@@ -916,7 +924,7 @@ function create(emit, options = {}) {
 
         const child = spawnProcess(bin, args, {
           cwd: session.cwd,
-          env: { ...process.env, ...bridge.environment },
+          env: { ...(await agyChildEnv()), ...bridge.environment },
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
@@ -1284,8 +1292,9 @@ function create(emit, options = {}) {
 
     async listModelsFor(_session) {
       const bin = resolveExecutable();
+      const env = await agyChildEnv();
       return new Promise((resolve) => {
-        execFile(bin, ['models'], { windowsHide: true, timeout: 20000 }, (error, stdout) => {
+        execFile(bin, ['models'], { env, windowsHide: true, timeout: 20000 }, (error, stdout) => {
           if (error) return resolve([]);
           resolve(parseModelsOutput(stdout));
         });
@@ -1311,8 +1320,9 @@ function create(emit, options = {}) {
 
     async describe() {
       const bin = resolveExecutable();
+      const env = await agyChildEnv();
       const stdout = await new Promise((resolve) => {
-        execFile(bin, ['models'], { windowsHide: true, timeout: 20000 }, (error, out) => {
+        execFile(bin, ['models'], { env, windowsHide: true, timeout: 20000 }, (error, out) => {
           if (error) return resolve('');
           resolve(out);
         });
