@@ -435,7 +435,10 @@ class NativeProtocol {
       }).filter(Boolean)
       : globalLevels;
     const thinking = thread.options?.thinking;
+    const selectedLabel = selectedEntry ? (selectedEntry.name || selectedEntry.id) : (typeof selected === 'object' && selected ? (selected.name || selected.id) : selected);
     return { ...(selected ? { effectiveModel: modelRef(selected) } : {}),
+      // 渲染端目录未命中时兜底显示模型名（composer 优先用 resolvedModelLabel）
+      ...(selectedLabel ? { resolvedModelLabel: String(selectedLabel) } : {}),
       // 可选集合存在时，生效档位必须属于其中（共享契约校验）；目录未加载时保留原样
       ...(thinking && (!thinkingOptions.length || thinkingOptions.some(o => o.id === thinking)) ? { effectiveThinkingOptionId: thinking } : {}),
       ...(thinkingOptions.length ? { availableThinkingOptions: thinkingOptions } : {}),

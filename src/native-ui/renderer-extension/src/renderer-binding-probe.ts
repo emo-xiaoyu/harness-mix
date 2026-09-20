@@ -1487,7 +1487,15 @@ export function installRendererBindingProbe(
     }
     if (isDraft) mounted.hostId = requestHostId;
     const availability = hostHarnessAvailabilityState(requestHostId).availability[agent];
-    if (availability !== "ready") {
+    // A locked thread already proved this harness owns it: the ownership
+    // inspection restored the agent from the host itself. A stale or never
+    // refreshed availability cache on a secondary host must not wedge the
+    // model picker (label falls back to "Select model" and submission stays
+    // blocked forever), so locked threads fetch the catalog regardless and
+    // let the inspect result speak for itself.
+    const lockedOwnership =
+      mounted.ownershipStatus === "ready" && state.phase === "locked";
+    if (availability !== "ready" && !lockedOwnership) {
       mounted.modelView = {
         status:
           adapterStatus.state !== "ready" || availability === "checking"

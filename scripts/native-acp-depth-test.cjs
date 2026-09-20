@@ -104,10 +104,15 @@ if (process.argv.includes('--fixture')) {
     const unresponsive = nativeAcp({ id: 'cursor-cli', name: 'Cursor', args: [], timeoutMs: 500,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--ignore-cancel'] }) }).create();
     const stalled = await unresponsive.open({ thread: { cwd: process.cwd() }, emit: () => {} });
+    const stalledSid = stalled.nativeSessionId;
     const stalledTurn = unresponsive.send(stalled, 'wait', { emit: () => {} });
     const failedTurn = assert.rejects(stalledTurn);
     await assert.rejects(unresponsive.cancel(stalled)); await failedTurn;
-    assert.ok(stalled.fault); await assert.rejects(unresponsive.send(stalled, 'again', { emit: () => {} }));
+    assert.ok(stalled.fault);
+    // 进程死后下一次 send 透明重连（restore 同一原生会话），不再永久毒化线程
+    await unresponsive.send(stalled, 'again', { emit: () => {} });
+    assert.equal(stalled.nativeSessionId, stalledSid);
+    assert.equal(stalled.fault, null);
     await unresponsive.close(stalled);
     const idle = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 1000, turnIdleTimeoutMs: 100,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture'] }) }).create();

@@ -257,7 +257,28 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
         } catch (error) { await adapter.close(s); throw error; }
       },
       async send(s, prompt, hooks, attachments) {
-        if (s.active || s.configuring || s.closed || s.fault) throw s.fault || new Error('Native session is busy or closed');
+        if (s.active || s.configuring) throw s.fault || new Error('Native session is busy or closed');
+        // A native CLI that died between turns (crash-on-exit bugs, idle
+        // reaping) used to poison the thread until a desktop restart: the
+        // session stayed cached with its fault and every later send rethrew
+        // it. Restore the native session once instead, replaying the
+        // confirmed model/thinking/permission selections.
+        if (s.fault || s.closed) {
+          const confirmed = { ...s.confirmed };
+          try {
+            ++s.generation;
+            s.fault = null; s.closed = false;
+            s.interactions.close();
+            s.diagnostic?.(`${name}: native session disconnected between turns, restoring ${s.nativeSessionId}`);
+            await connect(s, true);
+            if (confirmed.model) await adapter.setModel(s, confirmed.model).catch(error => s.diagnostic?.(`${name}: model restore after reconnect failed: ${error.message}`));
+            if (confirmed.thinking) await adapter.setThinkingLevel(s, confirmed.thinking).catch(error => s.diagnostic?.(`${name}: thinking restore after reconnect failed: ${error.message}`));
+            if (confirmed.mode) await adapter.setPermissionMode(s, confirmed.mode).catch(error => s.diagnostic?.(`${name}: permission mode restore after reconnect failed: ${error.message}`));
+          } catch (error) {
+            s.fault = s.fault || error;
+            throw s.fault;
+          }
+        }
         if (attachments?.images?.length && (!manifest.capabilities.attachments || !s.state.agentCapabilities.promptCapabilities?.image)) throw new Error(`${name} native image input is not supported`);
         s.active = true; s.tools.clear(); s.cancelRequested = false; s.turnAnswer = ''; s.turnProgressSeen = false; s.turnTextSeen = false;
         s.turnSettling = false; s.turnDrainWake = null;
