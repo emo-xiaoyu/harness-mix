@@ -3047,6 +3047,28 @@ export function installRendererBindingProbe(
         composerId: mounted.composerId,
         agent: controller.get(mounted.composer).agent,
         phase: controller.get(mounted.composer).phase,
+        // Diagnostic surface for live composer debugging: the raw external
+        // model/permission views plus the controller-held selection refs.
+        ownership: mounted.ownershipStatus,
+        modelView: {
+          status: mounted.modelView.status,
+          ...(mounted.modelView.catalog
+            ? { catalogModels: mounted.modelView.catalog.models.map((m) => m.ref.id.slice(0, 24)) }
+            : {}),
+          ...(mounted.modelView.selected ? { selected: mounted.modelView.selected.id.slice(0, 24) } : {}),
+          ...(mounted.modelView.error ? { error: mounted.modelView.error.slice(0, 160) } : {}),
+        },
+        ...(controller.get(mounted.composer).phase === "locked" && mounted.composerId
+          ? {
+              controllerModel: ((): string | undefined => {
+                const agent = controller.get(mounted.composer).agent;
+                if (agent === "codex") return undefined;
+                const model = controller.modelForAgent(mounted.composer, agent);
+                return model ? model.id.slice(0, 24) : undefined;
+              })(),
+            }
+          : {}),
+        permissionView: mounted.permissionModeView.status,
       }));
       return {
         version: 2,

@@ -779,10 +779,15 @@ class NativeProtocol {
       const adapter = this.runtime.adapters && typeof this.runtime.adapters.get === 'function' ? this.runtime.adapters.get(thread.harnessId) : null;
       const rawCredits = adapter && typeof adapter.credits === 'function' ? adapter.credits() : null;
       const credits = projectAccountCredits(rawCredits);
+      // projectUsage() returns null for an empty source (harnesses that never
+      // report usage, e.g. qodercli). The external inspection schema accepts an
+      // absent usage but not an explicit null: emitting "usage": null made the
+      // renderer's strict parse fail and wedge the whole ownership restore.
+      const projectedUsage = usage ? projectUsage(usage) : null;
       return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: routeModel(externalId(thread.harnessId)), locked: true,
         ...this.configuration(thread), history: this.capabilities(thread.harnessId, catalog).history,
         workspace: await this.runtime.inspectThreadWorkspace(thread.id),
-        ...(usage ? { usage: projectUsage(usage) } : {}),
+        ...(projectedUsage ? { usage: projectedUsage } : {}),
         ...(credits ? { accountCredits: credits } : {}) };
     }
     if (method === 'thread/start') {
