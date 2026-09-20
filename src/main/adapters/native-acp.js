@@ -27,7 +27,8 @@ function extractToolOutput(tool, update) {
 const options = list => (list || []).flatMap(o => Array.isArray(o.options) ? options(o.options) : typeof o.value === 'string' ? [o] : []);
 const finite = n => Number.isFinite(n) && n >= 0;
 function config(s, kind) {
-  const ids = { model: ['model'], thinking: ['effortLevel', 'thought_level'], mode: ['mode'] }[kind];
+  // qoder names its effort selector `reasoning_effort` and files it under the model category.
+  const ids = { model: ['model'], thinking: ['effortLevel', 'thought_level', 'reasoning_effort'], mode: ['mode'] }[kind];
   return s.state.configOptions.find(o => ids.includes(o.id) || o.category === (kind === 'thinking' ? 'thought_level' : kind));
 }
 function catalog(s) {
@@ -415,13 +416,14 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
         } else await adapter.send(s, '/' + name, hooks);
       },
       async fork(source, context) {
-        if (!kiro || context.message) throw new Error('Native fork boundary unsupported');
-        const checkpoint = await require('./kiro-history').latestKiroCheckpoint(source.cwd, source.nativeSessionId);
+        if (!manifest.capabilities.fork || context.message) throw new Error('Native fork boundary unsupported');
+        // Kiro forks at a message checkpoint; Qoder forks at the session head with the standard params.
+        const checkpoint = kiro ? await require('./kiro-history').latestKiroCheckpoint(source.cwd, source.nativeSessionId) : null;
         const probe = await adapter.open({ thread: { ...source, restore: true }, emit: () => {}, diagnostic: context.diagnostic });
         try {
-          if (!probe.state.agentCapabilities.sessionCapabilities?.fork) throw new Error('Kiro did not advertise session/fork');
-          const result = await probe.request('session/fork', { sessionId: source.nativeSessionId, cwd: source.cwd, _meta: { kiro: { messageId: checkpoint } } });
-          if (!result.sessionId || result.sessionId === source.nativeSessionId) throw new Error('Kiro fork did not return a new native session');
+          if (!probe.state.agentCapabilities.sessionCapabilities?.fork) throw new Error(`${name} did not advertise session/fork`);
+          const result = await probe.request('session/fork', { sessionId: source.nativeSessionId, cwd: source.cwd, ...(kiro ? { _meta: { kiro: { messageId: checkpoint } } } : {}) });
+          if (!result.sessionId || result.sessionId === source.nativeSessionId) throw new Error(`${name} fork did not return a new native session`);
           return { session: await adapter.open({ thread: { ...source, nativeSessionId: result.sessionId, restore: true }, emit: context.emit, diagnostic: context.diagnostic }) };
         } finally { await adapter.close(probe); }
       },

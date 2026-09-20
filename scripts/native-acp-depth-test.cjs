@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { nativeAcp, project } = require('../src/main/adapters/native-acp');
+const { nativeAcp, project, catalog } = require('../src/main/adapters/native-acp');
 const { AcpInteractions } = require('../src/main/adapters/acp-interactions');
 const { historyUsage, branch, latestAssistantAfterUser } = require('../src/main/adapters/codebuddy-history');
 const { projectUsage } = require('../src/main/native/usage');
@@ -28,7 +28,7 @@ if (process.argv.includes('--fixture')) {
       configs = configs.map(c => c.id === r.params.configId ? { ...c, currentValue: r.params.value } : c);
       result = { configOptions: configs };
     }
-    if (r.method === 'session/fork') { assert.equal(r.params._meta?.kiro?.messageId, 'native-end'); result = { sessionId: randomUUID() }; }
+    if (r.method === 'session/fork') { if (r.params._meta) assert.equal(r.params._meta?.kiro?.messageId, 'native-end'); result = { sessionId: randomUUID() }; }
     if (r.method === '_kiro/session/context') result = { usagePercentage: 23 };
     if (r.method === 'session/prompt') {
       if (r.params.prompt[0].text === 'image') assert.deepEqual(r.params.prompt[1], { type: 'image', data: 'AA==', mimeType: 'image/png' });
@@ -48,7 +48,7 @@ if (process.argv.includes('--fixture')) {
 } else {
   (async () => {
     for (const vendor of ['codebuddy', 'kiro-cli', 'cursor-cli', 'qoder', 'zcode', 'trae', 'cline']) {
-      const module = nativeAcp({ id: vendor, name: vendor, args: [], timeoutMs: 2000, command: () => ({ command: process.execPath, args: [__filename, '--fixture'] }) });
+      const module = nativeAcp({ id: vendor, name: vendor, args: [], timeoutMs: 2000, command: () => ({ command: process.execPath, args: [__filename, '--fixture'] }), ...(vendor === 'qoder' ? { capabilities: { fork: true } } : {}) });
       const adapter = module.create(), events = [];
       let s;
       try {
@@ -83,6 +83,12 @@ if (process.argv.includes('--fixture')) {
             await fs.appendFile(path.join(dir, 'messages.jsonl'), '\n' + JSON.stringify({ id: 'rewritten', payload: { type: 'tombstone' } }));
             await assert.rejects(adapter.fork({ cwd: process.cwd(), nativeSessionId: s.nativeSessionId }, { emit: () => {} }), /Compacted/);
           } finally { if (saved === undefined) delete process.env.KIRO_HOME; else process.env.KIRO_HOME = saved; }
+        }
+        if (vendor === 'qoder') {
+          // qoder fork 走标准 Zed 参数（无 kiro checkpoint _meta）
+          const forked = await adapter.fork({ cwd: process.cwd(), nativeSessionId: s.nativeSessionId }, { emit: () => {} });
+          assert.notEqual(forked.session.nativeSessionId, s.nativeSessionId);
+          await adapter.close(forked.session);
         }
       } finally { await adapter.close(s); }
     }
@@ -157,6 +163,14 @@ if (process.argv.includes('--fixture')) {
     assert.equal(latestAssistantAfterUser([{ type: 'message', id: 'new-u', role: 'user', content: [{ type: 'input_text', text: 'new' }] },
       { type: 'message', id: 'new-a', role: 'assistant', content: [{ type: 'output_text', text: 'native final' }] }], 'new-u'), 'native final');
     assert.throws(() => branch([{ type: 'message', id: 'a', parentId: 'a' }]), /parent chain/);
+    // qoder 的思考档位 id 是 reasoning_effort（category=model），必须照常映射
+    const qoderCatalog = catalog({ vendor: 'qoder', state: { configOptions: [
+      { id: 'model', currentValue: 'qfmodel', options: [{ value: 'qfmodel', name: 'Qwen3.8-Flash' }] },
+      { id: 'reasoning_effort', category: 'model', currentValue: 'xhigh', options: [{ value: 'xhigh', name: 'Extra High' }, { value: 'none', name: 'None' }] },
+      { id: 'mode', currentValue: 'default', options: [{ value: 'default' }, { value: 'yolo' }] },
+    ], models: null, modes: null } });
+    assert.deepEqual(qoderCatalog.thinkingLevels.map(o => o.id), ['xhigh', 'none']);
+    assert.deepEqual(qoderCatalog.permissionModes.map(o => o.id), ['default', 'yolo']);
     // 进度事件重置 idle，heartbeat-only 不重置：心跳场景下 idle 应当照常起效。
     const heartbeatOnly = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 1000, turnIdleTimeoutMs: 80, turnPromptTimeoutMs: 60_000, cancelGraceMs: 1000,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--ignore-prompt', '--heartbeat'] }) }).create();

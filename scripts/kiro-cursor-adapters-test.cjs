@@ -72,6 +72,15 @@ if (process.argv.includes('--fixture')) {
         assert.deepEqual(nativeCommand(module.manifest.id, ['acp']), { command: process.execPath, args: ['acp'] });
       } finally { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; }
     }
+    // Qoder：官方 qodercli --acp。能力按 1.1.58 实测声明（fork 走标准 Zed 参数，
+    // 思考档位是 reasoning_effort 配置项；CLI 从不发送 usage_update）。
+    {
+      const module = require('../src/main/adapters/qoder');
+      const caps = module.manifest.capabilities;
+      assert.deepEqual(module.manifest.integrations.skills, { global: ['.qoder/skills'], project: ['.qoder/skills'] });
+      for (const [capability, expected] of [['fork', true], ['questions', false], ['thinkingLevels', true], ['usage', false], ['contextUsage', false], ['resume', true], ['permissionModes', true], ['models', true], ['attachments', true], ['approvals', true], ['compaction', false]])
+        assert.equal(caps[capability], expected, `qoder ${capability}`);
+    }
     // Cline：官方 `cline --acp`；诚实能力声明（无 plan/原生 diff/thinking 档/独立提问），
     // 保留 resume 与 plan/act 权限模式；命令只认 cline 与 HARNESS_MIX_CLINE_EXECUTABLE。
     {

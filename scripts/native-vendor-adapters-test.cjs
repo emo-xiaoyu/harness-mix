@@ -162,6 +162,14 @@ const pi = require('../src/main/adapters/pi');
     fs.writeFileSync(path.join(dir, process.platform === 'win32' ? 'qoder.cmd' : 'qoder'), '');
     const originalPath = process.env.PATH;
     const originalOverride = process.env.HARNESS_MIX_QODER_EXECUTABLE;
+    // nativeCommand 在 PATH 之外还探测固定根（APPDATA/npm、LOCALAPPDATA/Kiro-Cli、
+    // ~/.local/bin）：本机真实安装的 qodercli 会从这些根解析成功，让“必须抛错”的
+    // 断言失效。测试期间把这几个根全部沙箱到临时目录。
+    const sandbox = { APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+    process.env.APPDATA = dir;
+    process.env.LOCALAPPDATA = dir;
+    process.env.USERPROFILE = dir;
+    process.env.HOME = dir;
     delete process.env.HARNESS_MIX_QODER_EXECUTABLE;
     const pathWithoutQodercli = originalPath.split(path.delimiter).filter(Boolean).filter(entry => {
       try { return !fs.existsSync(path.join(entry, process.platform === 'win32' ? 'qodercli.cmd' : 'qodercli')); } catch { return true; }
@@ -175,6 +183,10 @@ const pi = require('../src/main/adapters/pi');
       assert.equal(nativeCommand('qoder', ['--acp']).command, override, '显式覆盖仍然生效');
     } finally {
       process.env.PATH = originalPath;
+      for (const [key, value] of Object.entries(sandbox)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       if (originalOverride === undefined) delete process.env.HARNESS_MIX_QODER_EXECUTABLE;
       else process.env.HARNESS_MIX_QODER_EXECUTABLE = originalOverride;
     }
