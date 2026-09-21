@@ -81,9 +81,19 @@ const PERMISSION_MODES = [
 // Headless entry resolution. The desktop-bundled zcode.cjs is the primary
 // source; a standalone CLI on PATH and explicit env overrides also work.
 // The desktop app executable itself is NOT a headless CLI — never guess it
-// (the Qoder IDE-launcher lesson).
+// (the Qoder IDE-launcher lesson). The ZCode installer offers per-user
+// (%LOCALAPPDATA%\Programs) and per-machine (Program Files) layouts; probe
+// both, per-user first so existing installs keep their original path.
 function bundledCli() {
-  if (process.platform === 'win32') return path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs');
+  if (process.platform === 'win32') {
+    const candidates = [
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ZCode', 'resources', 'glm', 'zcode.cjs'),
+    ];
+    return candidates.find((file) => {
+      try { return fs.existsSync(file) && fs.statSync(file).isFile(); } catch { return false; }
+    }) || null;
+  }
   if (process.platform === 'darwin') return path.join(process.env.HOME || '', 'Applications', 'ZCode.app', 'Contents', 'Resources', 'glm', 'zcode.cjs');
   return null;
 }
@@ -128,12 +138,6 @@ function workspaceIdentity(cwd) {
 // (createNodeProviderRuntimePathEnv); the agent requires BOTH paths and
 // without the builtin file the provider registry stays empty ("Select a
 // model before continuing").
-function bundledCli() {
-  if (process.platform === 'win32') return path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs');
-  if (process.platform === 'darwin') return path.join(process.env.HOME || '', 'Applications', 'ZCode.app', 'Contents', 'Resources', 'glm', 'zcode.cjs');
-  return null;
-}
-
 function providerConfigPaths() {
   const desktopDir = bundledCli() ? path.dirname(path.dirname(bundledCli())) : null;
   const builtin = process.env.HARNESS_MIX_ZCODE_BUILTIN_CONFIG
