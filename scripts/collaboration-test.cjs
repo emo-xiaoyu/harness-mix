@@ -235,6 +235,68 @@ async function main() {
       assert.deepEqual(onAgain, { collaboration: true, agentTeam: true });
     } finally { await prefsRt.close(); }
 
+    // 上一段已取消 lead 回合：先开一个新的运行中回合再驱动后续回归
+    await rt.send(parent.id, '#worker 继续回归验证');
+
+    // 回归：用户在 UI 直接停止 worker 线程（= runtime.cancel）不得把团队任务永久卡在
+    // in_progress——此前 runtime.cancel 直改 job 状态、绕过团队簿记，该成员从此无法
+    // 再被委派（delegate_to_agent 以 already running 拒绝）
+    const stopTeam = await call('create_agent_team', { name: 'Stop team', goal: 'Survive direct worker stops', members: [{ name: 'Runner', role: 'Run until stopped', agent_type: 'worker' }] });
+    const stopTask = (await call('assign_team_task', { team_id: stopTeam.team_id, title: 'Run', description: 'Run until stopped', assignee: stopTeam.members[0].id })).task;
+    const stopJob = await call('delegate_to_agent', { agent_type: 'worker', task: 'run', team_id: stopTeam.team_id, member_id: stopTeam.members[0].id, team_task_id: stopTask.id, isolation: 'shared' });
+    await wait(() => { const child = rt.collaboration.jobs.get(stopJob.task_id).childId; return child && pending.has(child); });
+    const stopChild = rt.collaboration.jobs.get(stopJob.task_id).childId;
+    await rt.cancel(stopChild);
+    const stopTeamObj = rt.collaboration.teams.get(stopTeam.team_id);
+    await wait(() => stopTeamObj.tasks.find(t => t.id === stopTask.id).status === 'pending');
+    assert.equal(stopTeamObj.members.find(m => m.id === stopTeam.members[0].id).status, 'ready', '直接停止 worker 后成员回到 ready');
+    const rerunJob = await call('delegate_to_agent', { agent_type: 'worker', task: 'run again', team_id: stopTeam.team_id, member_id: stopTeam.members[0].id, team_task_id: stopTask.id, isolation: 'shared' });
+    await wait(() => pending.has(rt.collaboration.jobs.get(rerunJob.task_id).childId));
+    finish(rt.collaboration.jobs.get(rerunJob.task_id).childId, 'rerun-result');
+    await wait(() => rt.collaboration.jobs.get(rerunJob.task_id).status === 'completed');
+    assert.equal(rt.collaboration.teams.get(stopTeam.team_id).tasks.find(t => t.id === stopTask.id).status, 'completed', '同一任务在直接停止后可被重新委派并完成');
+
+    // 回归：子会话线程被删除后，后续输入回落新建替代会话——此前抛
+    // 'Native child history is missing' 使该作业永久报废
+    const goneJob = await call('delegate_to_agent', { agent_type: 'worker', task: 'original work', isolation: 'shared' });
+    await wait(() => { const child = rt.collaboration.jobs.get(goneJob.task_id).childId; return child && pending.has(child); });
+    const goneChild = rt.collaboration.jobs.get(goneJob.task_id).childId;
+    finish(goneChild, 'original-result');
+    await wait(() => rt.collaboration.jobs.get(goneJob.task_id).status === 'completed');
+    await rt.removeThread(goneChild);
+    assert.equal(rt.collaboration.jobs.get(goneJob.task_id).childId, goneChild, '删除线程不抹掉作业的会话记录');
+    await call('message_agent', { task_id: goneJob.task_id, task: 'continue in a replacement session' });
+    await wait(() => {
+      const revivedChild = rt.collaboration.jobs.get(goneJob.task_id).childId;
+      return revivedChild && revivedChild !== goneChild && pending.has(revivedChild);
+    });
+    finish(rt.collaboration.jobs.get(goneJob.task_id).childId, 'replacement-result');
+    await wait(() => rt.collaboration.jobs.get(goneJob.task_id).status === 'completed');
+    assert.equal((await call('get_delegation_status', { task_ids: [goneJob.task_id], wait_ms: 0 }))[0].result, 'replacement-result', '替代会话产出可被正常收集');
+
+    // 回归：委派超时必须落 failed+error——此前先 cancel 子线程再抛错，runtime.cancel 的
+    // 直改把作业标成 cancelled，catch 的记录分支（仅认 running）吞掉了超时错误
+    const timeoutRoot = await fs.mkdtemp(path.resolve('output/collaboration-timeout-'));
+    const timeoutRt = new HostRuntime({ dataDirectory: path.join(timeoutRoot, 'data'), delegationTimeoutMs: 150 });
+    try {
+      await timeoutRt.store.load();
+      const tLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; }, async send() {}, async cancel() {}, async close() {} };
+      const tWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit }; },
+        async send(s) { tPending.set(s.id, s); }, async cancel() {}, async close() {} };
+      const tPending = new Map();
+      timeoutRt.adapters.set('lead', tLead); timeoutRt.status.lead = { available: true };
+      timeoutRt.adapters.set('worker', tWorker); timeoutRt.status.worker = { available: true };
+      const tParent = await timeoutRt.createThread({ harnessId: 'lead', cwd: timeoutRoot });
+      await timeoutRt.send(tParent.id, '#worker stuck');
+      const tJob = await timeoutRt.collaboration.call(tParent.id, 'delegate_to_agent', { agent_type: 'worker', task: 'never settles', isolation: 'shared' });
+      await wait(() => timeoutRt.collaboration.jobs.get(tJob.task_id).status === 'failed');
+      const failedJob = timeoutRt.collaboration.jobs.get(tJob.task_id);
+      assert.match(failedJob.error, /timed out/, '超时错误被记录');
+      assert.notEqual(failedJob.status, 'cancelled', '超时不得误报为已取消');
+    } finally { await timeoutRt.close(); }
+
     // 同目录外部并发（另一个独立会话正在运行）→ 用户收到 toast 警告，
     // 且新委派的 worker 默认升级为隔离模式（auto）；非 Git 目录下 auto 回落 shared。
     // 用系统临时目录：output/ 位于本仓库内，auto 在仓库内会真实创建 worktree。

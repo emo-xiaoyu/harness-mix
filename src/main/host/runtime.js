@@ -666,11 +666,13 @@ class HostRuntime {
     const thread = this.threads.find(t => t.id === threadId);
     // send 进行中（会话恢复 / prompt 尚未投递）时 abort 可能落空：按票据登记取消请求，由 #send 在投递前结算
     if (this.sending.has(threadId)) this.cancelRequests.set(threadId, this.sendTickets.get(threadId));
-    // If this thread is a collaboration child task, mark the collaboration job as cancelled immediately
+    // If this thread is a collaboration child task, stop its job through the shared
+    // settle path so the team graph (task/member status) is unwedged too — a bare
+    // status write here previously left the team task in_progress forever.
     const childJob = [...this.collaboration.jobs.values()].find(j => j.childId === threadId && j.status === 'running');
     if (childJob) {
-      childJob.status = 'cancelled';
-      void this.collaboration.save();
+      childJob.status = this.collaboration.closing ? 'interrupted' : 'cancelled';
+      void this.collaboration.settleStoppedJob(childJob).catch(() => {});
     }
     // Record the user's cancellation immediately so UI and Core become idle without waiting on subtasks
     if (thread && this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: 'completed', stopReason: 'cancelled' } });
@@ -1093,6 +1095,7 @@ class HostRuntime {
       await removeWorkspace(thread.workspace).catch(() => {});
     }
     this.threads = this.threads.filter((t) => t.id !== threadId);
+    await this.collaboration.forgetThread(threadId).catch(() => {});
     await this.#save();
     await this.store.remove(threadId);
     this.#broadcast();

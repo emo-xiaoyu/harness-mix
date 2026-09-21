@@ -258,7 +258,9 @@ class Collaboration {
     if (!parent || this.runtime.threads.some(t => t.id !== job.owner && t.id !== job.childId
       && (this.runtime.execution.isRunning(t.id) || t.reviewPending)
       && [parent.cwd, job.workspace?.cwd].some(cwd => String(cwd).toLowerCase() === String(t.cwd).toLowerCase()))) throw new Error('其他任务正在同一目录运行或待审查，请等待其结算后再应用');
-    if (job.childId) this.runtime.verificationGates.assertSatisfied(this.runtime.getThread(job.childId), '应用子任务改动');
+    // 子线程已删除时无从查询其门禁策略：review+digest+用户显式授权仍是硬前置，这里跳过
+    const childThread = job.childId ? this.runtime.threads.find(t => t.id === job.childId) : null;
+    if (childThread) this.runtime.verificationGates.assertSatisfied(childThread, '应用子任务改动');
     job.applying = true;
     try {
       const result = await applyWorkspace(job.workspace, digest);
@@ -382,9 +384,12 @@ class Collaboration {
       for (const recipient of recipients) {
         if (!recipient.childId || rt.execution.isRunning(recipient.childId)) continue;
         const envelope = `[Harness Mix Agent Team message]\nTeam: ${team.name} (${team.id})\nFrom: ${participant.name}\nType: ${message.kind}\n${args.task_id ? `Task: ${args.task_id}\n` : ''}Message: ${args.message}\n\nTreat this as teammate input. Inspect shared team state with get_team_state, coordinate through send_team_message, and update only your assigned tasks.`;
-        message.delivery = 'native_session';
         const recipientJob = [...this.jobs.values()].reverse().find(job => job.teamId === team.id && job.memberId === recipient.id && job.childId === recipient.childId);
-        void rt.send(recipient.childId, envelope, { collaborationOf: team.owner, isolated: recipientJob?.workspace?.mode === 'worktree' }).catch(error => {
+        // 投递状态在结果落定后才置位：先报 native_session 再失败会让邮箱读者看到
+        // 与事实相反的送达渠道
+        void rt.send(recipient.childId, envelope, { collaborationOf: team.owner, isolated: recipientJob?.workspace?.mode === 'worktree' }).then(() => {
+          message.delivery = 'native_session'; void this.saveTeams();
+        }, error => {
           message.delivery = 'mailbox'; message.deliveryError = error.message; void this.saveTeams();
         });
       }
@@ -541,7 +546,9 @@ class Collaboration {
       }
       const workerPermMode = defaultWorkerPermissionMode(job.agent);
       if (!spawnSettled) emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
-      const child = job.childId ? rt.threads.find(t => t.id === job.childId) : await rt.createThread({
+      // resume/follow-up 时既有子会话可能已被删除：回落新建替代会话（同一 Harness、
+      // 同一工作区），而不是永久报错把该作业废弃
+      const child = (job.childId && rt.threads.find(t => t.id === job.childId)) || await rt.createThread({
         harnessId: job.agent, cwd: job.workspace.cwd, title: `${parent.title} › ${task.slice(0, 40)}`, parentThreadId: parent.id,
         options: { ...(workerPermMode ? { permissionMode: workerPermMode } : {}) },
         onCreated: async thread => {
@@ -552,7 +559,6 @@ class Collaboration {
           await this.save();
         }
       });
-      if (!child) throw new Error('Native child history is missing; no replacement session was created');
       job.childId = child.id;
       await this.save();
       if (!spawnSettled) {
@@ -560,16 +566,27 @@ class Collaboration {
         spawnSettled = true;
       }
       emit({ kind: 'tool', toolCallId: workCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId);
-      if (job.status !== 'running' || this.closing || !rt.execution.isRunning(parent.id)) { job.status = 'cancelled'; return; }
+      // 终态保持：cancel()/close() 已写入的 cancelled/interrupted 不得在此被覆写——
+      // 关机竞态下覆写成 cancelled 会让重启后的 resume_delegation 拒绝恢复该作业
+      if (job.status !== 'running' || this.closing || !rt.execution.isRunning(parent.id)) {
+        if (job.status === 'running') {
+          job.status = this.closing ? 'interrupted' : 'cancelled';
+          await this.settleStoppedJob(job);
+        }
+        return;
+      }
       // Child native file events remain visible; only the lead snapshots the shared workspace.
       const sending = rt.send(child.id, task, { collaborationOf: parent.id, isolated: job.workspace.mode === 'worktree' });
       let sendDone = false, sendError;
       void sending.then(() => { sendDone = true; }, error => { sendDone = true; sendError = error; });
-      const until = Date.now() + 30 * 60 * 1000;
+      const timeoutMs = rt.delegationTimeoutMs ?? 30 * 60 * 1000;
+      const until = Date.now() + timeoutMs;
       let displayedStatus = 'running';
       let turnInactiveSince = null;
       while (job.status === 'running' && !this.closing && !this.cancelling.has(parent.id) && rt.execution.isRunning(parent.id)) {
-        const childRunning = rt.execution.isRunning(child.id) || child.reviewPending;
+        // 已删除的 worker 线程：core 回合可能仍呈 running 态（removeThread 不结算回合），
+        // 不得据此继续等待，否则作业空转到超时
+        const childRunning = rt.threads.some(t => t.id === child.id) && (rt.execution.isRunning(child.id) || child.reviewPending);
         if (!childRunning) {
           if (!turnInactiveSince) turnInactiveSince = Date.now();
           if (sendDone || Date.now() - turnInactiveSince > 2000) break;
@@ -578,10 +595,23 @@ class Collaboration {
         }
         const current = this.view(job).display_status;
         if (current !== displayedStatus) { displayedStatus = current; emit({ kind: 'tool', toolCallId: workCallId, state: 'running', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId); }
-        if (Date.now() > until) { await rt.cancel(child.id); throw new Error('Subtask timed out after 30 minutes'); }
+        if (Date.now() > until) {
+          // 先落失败再取消子线程：runtime.cancel 会把 running 作业标记为 cancelled，
+          // 若先取消后抛错，catch 的记录分支（仅认 running）会吞掉超时错误并误报已取消
+          job.status = 'failed';
+          job.error = `Subtask timed out after ${Math.round(timeoutMs / 60000)} minutes`;
+          await rt.cancel(child.id);
+          throw new Error(job.error);
+        }
         await delay(100);
       }
       if (job.status !== 'running') return;
+      if (!rt.threads.some(t => t.id === child.id)) {
+        // 子线程在执行中被删除：按停止结算，而不是把未完成的 core 回合误判为 completed
+        job.status = 'cancelled';
+        await this.settleStoppedJob(job);
+        return;
+      }
       if (sendError) throw sendError;
       const turn = rt.execution.lastTurn(child.id);
       if (!turn || turn.status === 'error') throw new Error(turn?.error || child.error || 'Subtask failed');
@@ -630,6 +660,24 @@ class Collaboration {
     }
   }
 
+  // 所有「作业在运行中被外力终止」的路径（取消工具、lead 停止级联、用户直接停止/
+  // 删除 worker 线程、宿主关机）共用的收尾：团队图里不得残留 in_progress 的任务——
+  // 否则该成员永远无法被再次委派（delegate_to_agent 会以 already running 拒绝）。
+  async settleStoppedJob(job) {
+    if (job.teamId) {
+      const team = this.teams.get(job.teamId);
+      const member = team?.members.find(entry => entry.id === job.memberId);
+      const teamTask = team?.tasks.find(entry => entry.id === job.teamTaskId);
+      const interrupted = job.status === 'interrupted';
+      const memberStatus = interrupted ? 'interrupted' : 'ready';
+      let changed = false;
+      if (member && member.status !== memberStatus) { member.status = memberStatus; changed = true; }
+      if (teamTask?.status === 'in_progress') { teamTask.status = interrupted ? 'interrupted' : 'pending'; teamTask.updatedAt = Date.now(); changed = true; }
+      if (team && changed) { this.refreshTeamStatus(team); await this.publishTeam(team, interrupted ? 'task_interrupted' : 'task_cancelled'); }
+    }
+    await this.save();
+  }
+
   async cancel(job) {
     if (job.status !== 'running') return;
     job.status = this.closing ? 'interrupted' : 'cancelled';
@@ -643,15 +691,7 @@ class Collaboration {
       }
     } finally {
       job.cancelling = false;
-      if (job.teamId) {
-        const team = this.teams.get(job.teamId);
-        const member = team?.members.find(entry => entry.id === job.memberId);
-        const teamTask = team?.tasks.find(entry => entry.id === job.teamTaskId);
-        if (member) member.status = this.closing ? 'interrupted' : 'ready';
-        if (teamTask?.status === 'in_progress') { teamTask.status = this.closing ? 'interrupted' : 'pending'; teamTask.updatedAt = Date.now(); }
-        if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, this.closing ? 'task_interrupted' : 'task_cancelled'); }
-      }
-      await this.save();
+      await this.settleStoppedJob(job);
     }
   }
 
@@ -667,6 +707,18 @@ class Collaboration {
     } finally { this.cancelling.delete(owner); }
   }
   isParticipant(thread, owner) { return thread.id === owner || [...this.jobs.values()].some(j => j.owner === owner && j.childId === thread.id); }
+
+  // 线程删除后不得残留悬空的成员会话引用，否则团队视图会永远显示一个
+  // 已不存在的 working 成员、消息投递也会反复打到死 id 上
+  async forgetThread(threadId) {
+    let changed = false;
+    for (const team of this.teams.values()) {
+      for (const member of team.members) {
+        if (member.childId === threadId) { delete member.childId; changed = true; }
+      }
+    }
+    if (changed) await this.saveTeams();
+  }
   async close() {
     await this.initialize();
     this.closing = true;
