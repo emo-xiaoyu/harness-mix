@@ -118,7 +118,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通�
 | **DeepSeek** | 普通 Web Remote / 协作 ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
 | **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
 | **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ➖ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
 | **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
 | **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
 | **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
@@ -353,7 +353,7 @@ Theme assets ship with the project and the images use licensed material from thi
 | **DeepSeek** | Plain Web Remote / collaboration ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
 | **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
 | **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ➖ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
 | **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
 | **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
 | **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
