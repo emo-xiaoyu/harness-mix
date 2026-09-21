@@ -119,6 +119,17 @@ Antigravity、Pi、Claude Code、Codex、Grok、CodeBuddy；DSH/OpenClaw 的当�
 `output/harness-health/1789191914230/report.json`（文本）和
 `output/harness-health/1789191791797/report.json`（图片）。
 
+2026-09-21 Hermes 实机验证（v0.21.3，自定义 Anthropic 兼容端点）：ACP initialize 实测
+上报 PromptCapabilities(image=True) 与 loadSession=true；session/new 强制要求 mcpServers
+字段，注入行为完整的 stdio MCP 服务器后正常创建会话（acp-capabilities-probe 自带的
+极简 dummy server 会让 Hermes 的 MCP 客户端握手挂起，属探针局限，非 Hermes 问题）。
+图片回路：8x8 红色 PNG 经 session/prompt image 块送入并到达 provider API（当日可用
+的 MiniMax Anthropic 兼容端点对图片请求返回 500，模型层不可见 —— 与 OpenClaw 早前
+"当前模型拒绝图片仍计 ✅" 的口径一致，harness 侧接线已打通）。文本回路经同一端点
+的 MiniMax-M3 实测通过（one-shot 回复正常）。日志：
+`output/openclaw-thinking-probe/`、`output/openclaw-mcp-probe/`（同日 OpenClaw
+thinking/MCP 实测证据也在此目录）。
+
 ## 参考与图标
 
 协议字段对照了上游 adapters 提交（7cc4db87）
