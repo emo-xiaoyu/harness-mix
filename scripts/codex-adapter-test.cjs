@@ -77,6 +77,46 @@ function fakeSession() {
   assert.equal(compactDone.nativeRef.checkpointId, 'compact-turn');
   assert.ok(compactEvents.some(event => event.kind === 'text-delta' && /Codex 压缩/.test(event.text)));
 
+  // listCommands：无会话返回静态目录；skills/list → 插入型命令（slug 化、与 compact 去重、
+  // enabled!==false 过滤、id 满足 UI 契约字符集）；旧版 app-server 无该 RPC 时回落静态目录
+  const staticList = await adapter.listCommands(null);
+  assert.deepEqual(staticList, [{ id: 'compact', label: '压缩上下文', description: '由 Codex 原生 app-server 压缩当前 Thread', action: 'execute' }]);
+
+  const skillsSession = fakeSession();
+  skillsSession.cwd = 'E:\\harness-mix';
+  const skillsRequests = [];
+  skillsSession.host = { async request(method, params) {
+    skillsRequests.push({ method, params });
+    return { data: [{ skills: [
+      { name: 'Agent Browser', description: 'Drive a real browser end to end.', shortDescription: '浏览器自动化', enabled: true, scope: 'user', interface: { displayName: 'Agent Browser', defaultPrompt: 'Browse' } },
+      { name: 'commit', description: 'Create a git commit', enabled: true, scope: 'repo' },
+      { name: 'Compact', description: 'should dedupe against compact', enabled: true, scope: 'user' },
+      { name: 'turned-off', description: 'disabled by config', enabled: false, scope: 'user' },
+      { name: '重复技能', description: 'slug 与重复技能相同', enabled: true, scope: 'system' },
+    ] }], nextCursor: null };
+  } };
+  const listed = await adapter.listCommands(skillsSession);
+  assert.deepEqual(skillsRequests, [{ method: 'skills/list', params: { cwds: ['E:\\harness-mix'] } }]);
+  assert.equal(listed[0].id, 'compact');
+  assert.equal(listed[0].action, 'execute', 'compact execute 条目保持首位');
+  const browser = listed.find(c => c.id === 'agent-browser');
+  assert.ok(browser, '"Agent Browser" slug 化为 agent-browser');
+  assert.equal(browser.label, '/Agent Browser', 'label 优先 interface.displayName');
+  assert.equal(browser.text, '/agent-browser ', '插入文本用 slug 触发原生技能');
+  assert.equal(browser.action, 'insert');
+  assert.ok(browser.description.includes('浏览器自动化') && browser.description.includes('Codex 技能·user'), '描述含短述与来源标注');
+  const commit = listed.find(c => c.id === 'commit');
+  assert.ok(commit.description.includes('Codex 技能·repo'), 'scope 标注随条目');
+  assert.ok(!commit.description.includes('displayName'), '无 shortDescription 时回落 description');
+  assert.equal(listed.filter(c => c.id === 'compact').length, 1, 'slug 化的 Compact 与静态 compact 去重');
+  assert.deepEqual(listed.map(c => c.id), ['compact', 'agent-browser', 'commit'], 'enabled:false 过滤；非 ASCII name slug 化为空即跳过');
+  assert.ok(listed.every(c => /^[A-Za-z0-9._:-]+$/.test(c.id)), 'id 满足 UI 契约字符集');
+
+  const legacySession = fakeSession();
+  legacySession.cwd = 'E:\\harness-mix';
+  legacySession.host = { async request(method) { throw new Error(`unknown method ${method}`); } };
+  assert.deepEqual(await adapter.listCommands(legacySession), staticList, '旧版 app-server 缺 skills/list 时回落静态目录');
+
   assert.equal(usageView({ last: { totalTokens: 50 }, total: {}, modelContextWindow: 200 }).contextPercent, 25);
   assert.deepEqual(modelView({ model: 'gpt-x', displayName: 'GPT X', supportedReasoningEfforts: [], isDefault: true }).id, 'gpt-x');
 

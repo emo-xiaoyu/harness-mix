@@ -119,6 +119,12 @@ function usageView(tokenUsage) {
   };
 }
 
+/** Skill name → UI 契约 id（[A-Za-z0-9._:-]+，≤128）；"Agent Browser" → "agent-browser" */
+function slugifySkillId(name) {
+  if (typeof name !== 'string') return '';
+  return name.trim().toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 128);
+}
+
 function emitTool(item, session, emit, state = toolState(item)) {
   emit({
     kind: 'tool', toolCallId: item.id, title: toolTitle(item), state,
@@ -528,8 +534,32 @@ function create() {
       } else pending.resolve({ decision });
     },
 
-    listCommands() {
-      return [{ id: 'compact', label: '压缩上下文', description: '由 Codex 原生 app-server 压缩当前 Thread', action: 'execute' }];
+    // 原生 app-server 的 skills/list 即斜杠命令目录（/<skill-name> 触发插入）；
+    // 旧版 app-server 无该 RPC 时回落静态目录。无会话（session==null）不拉起进程。
+    async listCommands(session) {
+      const base = [{ id: 'compact', label: '压缩上下文', description: '由 Codex 原生 app-server 压缩当前 Thread', action: 'execute' }];
+      if (!session) return base;
+      try {
+        const rows = await listAll(session.host, 'skills/list', { cwds: [session.cwd] });
+        const seen = new Set(['compact']);
+        const skills = [];
+        for (const row of rows) {
+          for (const skill of row?.skills ?? []) {
+            if (skill?.enabled === false) continue;
+            const id = slugifySkillId(skill.name);
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            skills.push({
+              id,
+              label: '/' + (skill.interface?.displayName || skill.name),
+              description: `${String(skill.shortDescription || skill.description || '').slice(0, 512)}（Codex 技能·${skill.scope || 'user'}）`,
+              action: 'insert',
+              text: '/' + id + ' ',
+            });
+          }
+        }
+        return [...base, ...skills];
+      } catch { return base; }
     },
 
     async executeCommand(session, id, { emit }) {

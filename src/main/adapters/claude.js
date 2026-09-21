@@ -13,7 +13,10 @@ const manifest = {
   capabilities: { collaborationTools: true, streaming: true, thinking: true, tools: true, approvals: true, questions: true, models: true, thinkingLevels: true, permissionModes: true, resume: true, fork: true, forkFromMessage: true, compaction: true, usage: true, contextUsage: true, attachments: true },
 };
 
-/** Claude Code 原生权限模式（SDK PermissionMode 全集），与其 TUI/Desktop 一致 */
+/** Claude Code 原生权限模式（SDK PermissionMode 配置值全集），与其 TUI/Desktop 一致。
+ * 实测校准（本机 claude 2.1.220 `--help` 与 code.claude.com/docs/en/permission-modes）：
+ * CLI 旗标选项为 acceptEdits/auto/bypassPermissions/manual/dontAsk/plan，其中 manual 只是
+ * default 的 CLI 别名（SDK/钩子配置值仍为 default），auto/dontAsk 为新增档；此处按 SDK 配置值列出。 */
 const CLAUDE_PERMISSION_MODES = [
   { id: "default", label: "默认（询问）", description: "编辑和其他受保护操作前询问" },
   { id: "plan", label: "规划模式", description: "探索并制定计划；批准计划后退出规划" },
@@ -457,12 +460,17 @@ function create() {
       if (!session?.query) return base;
       try {
         const commands = await session.query.supportedCommands();
-        return [
-          ...base,
-          ...commands.filter((c) => c.name !== 'compact').map((c) => ({
-            id: c.name, label: '/' + c.name, description: c.description ?? '', action: 'insert', text: '/' + c.name + ' ',
-          })),
-        ];
+        const seen = new Set(['compact']); // 与既有 id（含原生 compact）去重
+        const mapped = [];
+        for (const c of commands) {
+          if (!c?.name || seen.has(c.name)) continue;
+          seen.add(c.name);
+          mapped.push({
+            id: c.name, label: '/' + c.name, action: 'insert', text: '/' + c.name + ' ',
+            description: `${c.description ?? ''}${c.argumentHint ? `（参数：${c.argumentHint}）` : ''}`,
+          });
+        }
+        return [...base, ...mapped];
       } catch { return base; }
     },
     async executeCommand(session, id, hooks) {
