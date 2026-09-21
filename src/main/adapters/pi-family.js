@@ -52,19 +52,45 @@ function emitAll(emitEvent, mapped) {
   for (const item of Array.isArray(mapped) ? mapped : [mapped]) if (item) emitEvent(item);
 }
 
-/** Pi 家族（Pi / Oh My Pi）的权限模型 = 项目信任（project trust）：启动时用 --approve / --no-approve 覆盖一次 */
+/** Pi 家族工厂的权限模型按家族成员原生面注入；两者的启动旗标不同，不得共用目录。
+ * Pi（pi-coding-agent）的权限模型 = 项目信任（project trust）：启动时用 --approve / --no-approve 覆盖一次。
+ * 实测校准（本机 pi 0.84.2 `pi --help`）：--approve/-a「Trust project-local files for this run」、
+ * --no-approve/-na「Ignore project-local files for this run」；default 即不传旗标（走 defaultProjectTrust 全局设置）。 */
 const PI_PERMISSION_MODES = [
   { id: "default", label: "默认", description: "按全局设置处理项目级设置与扩展（defaultProjectTrust）" },
   { id: "approve", label: "信任项目", description: "本次信任该项目的设置与扩展（--approve）" },
   { id: "no-approve", label: "忽略项目资源", description: "本次不加载项目级设置与扩展（--no-approve）" },
 ];
 
+/** OMP（Pi 的 fork）权限模型已与 Pi 分叉：启动旗标为 --approval-mode always-ask|write|yolo
+ * （覆盖 tools.approvalMode，仅本次运行不持久化；--auto-approve/--yolo 是 yolo 捷径），
+ * 无 --approve/--no-approve。实测本机 @oh-my-pi/pi-coding-agent 18.1.19：
+ * src/cli/flag-tables.ts（--approval-mode 合法值）、src/cli/args.ts（--auto-approve/--yolo 解析）、
+ * src/config/settings-schema.ts（三档语义，描述为上游原文的中文转写）。 */
+const OMP_APPROVAL_MODES = [
+  { id: "always-ask", label: "Always ask", description: "自动放行只读工具；写入与执行类工具需确认。" },
+  { id: "write", label: "Write", description: "自动放行只读与写入工具；执行类工具（bash、浏览器、任务等）需确认。" },
+  { id: "yolo", label: "Yolo", description: "自动放行全部层级工具；用户策略仍可要求确认或拦截。", dangerous: true },
+];
+
+/** Pi 的权限模式 → 启动旗标（default 不传旗标） */
+function piPermissionLaunchArgs(mode) {
+  if (mode === "approve") return ["--approve"];
+  if (mode === "no-approve") return ["--no-approve"];
+  return [];
+}
+
+/** OMP 的权限模式 → 启动旗标（--approval-mode 逐值下发，不持久化） */
+function ompPermissionLaunchArgs(mode) {
+  return OMP_APPROVAL_MODES.some((entry) => entry.id === mode) ? ["--approval-mode", mode] : [];
+}
+
 /**
  * Pi 家族 Adapter 工厂：Pi 与 Oh My Pi（OMP，Pi 的 fork）共用 --mode rpc 协议。
  * 会话/模型/工具/权限都由原生程序维护，这里只做事件投影。
  * @param {{ id: string, name: string, icon: string, bin: string, packageHint: string, aliases?: string[] }} options
  */
-function piFamily({ id, name, icon, bin, packageHint, aliases }) {
+function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes = PI_PERMISSION_MODES, permissionLaunchArgs = piPermissionLaunchArgs }) {
   const manifest = {
     id,
     name,
@@ -117,8 +143,8 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
         const args = thread.restore && thread.nativeSessionFile
           ? ['--session', thread.nativeSessionFile]
           : ["--session-id", thread.nativeSessionId, "--name", sanitizeName(thread.title)];
-        if (thread.options?.permissionMode === "approve") args.push("--approve");
-        if (thread.options?.permissionMode === "no-approve") args.push("--no-approve");
+        // 权限模式只在该原生 CLI 真正支持的旗标集内映射（Pi 项目信任 vs OMP --approval-mode）
+        args.push(...permissionLaunchArgs(thread.options?.permissionMode));
         const process = spawnProcess(args, thread.cwd, {
           onEvent: event => forwardEvent(process, event, emitEvent),
           onDiagnostic: (message) => diagnostic(message),
@@ -239,7 +265,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
           return {
             models: (modelsData?.models ?? []).map((m) => ({ id: m.id, name: m.name || m.id, provider: m.provider, contextWindow: m.contextWindow })),
             thinkingLevels: (levelsData?.levels ?? []).map((l) => ({ id: l, label: l })),
-            permissionModes: PI_PERMISSION_MODES,
+            permissionModes,
           };
         } finally {
           process.stop();
@@ -251,7 +277,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
           this.listModelsFor(session),
           session.process.command({ type: 'get_available_thinking_levels' }),
         ]);
-        return { models, thinkingLevels: (levels?.levels ?? []).map(id => ({ id, label: id })), permissionModes: PI_PERMISSION_MODES };
+        return { models, thinkingLevels: (levels?.levels ?? []).map(id => ({ id, label: id })), permissionModes };
       },
 
       /** 任务级 Fork：另起进程，用 CLI --fork 从源会话分叉出全新原生会话 */
@@ -369,7 +395,8 @@ function piFamily({ id, name, icon, bin, packageHint, aliases }) {
   }
 
   // forwardEvent 暴露给回放/单测（runtime 经由 create().open() 闭包使用同一份实现）
-  return { manifest, create, project, forwardEvent };
+  // permissionModes 暴露注入的本成员权限目录（测试/契约侧可校验，不必拉起原生进程）
+  return { manifest, create, project, forwardEvent, permissionModes };
 }
 
-module.exports = { piFamily, PI_PERMISSION_MODES };
+module.exports = { piFamily, PI_PERMISSION_MODES, OMP_APPROVAL_MODES, piPermissionLaunchArgs, ompPermissionLaunchArgs };
