@@ -992,23 +992,28 @@ export function installRendererBindingProbe(
   const refreshCommands = async (mounted: MountedComposer): Promise<void> => {
     const generation = ++mounted.commandRequestGeneration;
     const agent = controller.get(mounted.composer).agent;
-    const hostId = threadIdFromComposerModelTarget(mounted.modelTarget)
-      ? mounted.hostId
-      : activeModelHostId();
+    const threadId = threadIdFromComposerModelTarget(mounted.modelTarget);
+    const hostId = threadId ? mounted.hostId : activeModelHostId();
     const requestControl = modelControl;
     const client = modelClientForHostFrom(requestControl, hostId);
     mounted.control.harnessCommands.setCommands([]);
     if (agent === "codex" || !client) return;
     try {
-      const catalog = await client.inspectHarnessCommands({ harnessId: externalHarnessIds[agent] });
+      // Dynamic native command catalogs (ACP availableCommands, Claude
+      // supportedCommands, Pi get_commands, OpenCode GET /command, OpenClaw
+      // commands.list) only arrive from listCommands with a live Session, so a
+      // Thread-bound Composer inspects Thread commands; drafts fall back to the
+      // session-less Harness catalog.
+      const catalog = threadId
+        ? await client.inspectThreadCommands({ threadId })
+        : await client.inspectHarnessCommands({ harnessId: externalHarnessIds[agent] });
       if (
         disposed ||
         mountedByComposer.get(mounted.composer) !== mounted ||
         mounted.commandRequestGeneration !== generation ||
         requestControl !== modelControl ||
-        (threadIdFromComposerModelTarget(mounted.modelTarget)
-          ? mounted.hostId
-          : activeModelHostId()) !== hostId ||
+        threadIdFromComposerModelTarget(mounted.modelTarget) !== threadId ||
+        (threadId ? mounted.hostId : activeModelHostId()) !== hostId ||
         controller.get(mounted.composer).agent !== agent
       )
         return;
