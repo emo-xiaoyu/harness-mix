@@ -12,9 +12,10 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(bundle.outputFiles[0].text);
     const result = await win.webContents.executeJavaScript(`(async () => {
       const api = Mentions.installHarnessMentions(async () => ({agents:[{id:'pi',name:'Pi',available:true,lead:true},{id:'claude',name:'Claude Code',available:true,lead:true},{id:'dsh',name:'DeepSeek Harness',available:false,lead:false}],sessions:[{id:'c2Vzc2lvbg',title:'旧版登录审查',harnessId:'claude',cwd:'E:/project',running:false}]}));
-      const teamState = {action:'message_sent',team_id:'team-1',lead_thread_id:'lead-thread',name:'Release Team',goal:'实现并验证 Agent Team',status:'active',updated_at:2,lead:{id:'lead',name:'Team Lead',role:'Codex · 协调与验收',agent:'codex',display_status:'working'},members:[{id:'member-1',name:'Backend',role:'后端架构与 Host Runtime',agent:'pi',childId:'builder-thread',display_status:'working'},{id:'member-2',name:'Reviewer',role:'独立代码审查与质量验收',agent:'claude',display_status:'ready'},{id:'member-3',name:'Frontend',role:'Codex 原生界面集成',agent:'codex',display_status:'working'},{id:'member-4',name:'QA',role:'测试矩阵与回归验证',agent:'dsh',display_status:'ready'},{id:'member-5',name:'Docs',role:'文档与交付说明',agent:'opencode',display_status:'ready'},{id:'member-6',name:'Release',role:'Git、Diff 与最终发布检查',agent:'antigravity',display_status:'blocked'}],tasks:[{id:'task-1',title:'实现 Team Runtime',assignee:'member-1',dependsOn:[],status:'in_progress'},{id:'task-2',title:'独立验证实现',assignee:'member-2',dependsOn:['task-1'],status:'blocked'},{id:'task-3',title:'实现内嵌团队页面',assignee:'member-3',dependsOn:[],status:'in_progress'},{id:'task-4',title:'执行完整回归',assignee:'member-4',dependsOn:['task-1','task-3'],status:'blocked'},{id:'task-5',title:'更新协作文档',assignee:'member-5',dependsOn:[],status:'completed'},{id:'task-6',title:'核对最终 Diff',assignee:'member-6',dependsOn:['task-2','task-4'],status:'blocked'}],messages:[{id:'message-1',from:'member-1',fromName:'Backend',to:'member-2',body:'Runtime 已就绪，请准备审查。',at:1}]};
+      const teamState = {action:'message_sent',team_id:'team-1',lead_thread_id:'lead-thread',name:'Release Team',goal:'实现并验证 Agent Team',status:'active',updated_at:2,lead:{id:'lead',name:'Team Lead',role:'Codex · 协调与验收',agent:'codex',display_status:'working'},members:[{id:'member-1',name:'Backend',role:'后端架构与 Host Runtime',agent:'pi',childId:'builder-thread',display_status:'working'},{id:'member-2',name:'Reviewer',role:'独立代码审查与质量验收',agent:'claude',display_status:'ready',unread:2},{id:'member-3',name:'Frontend',role:'Codex 原生界面集成',agent:'codex',display_status:'working'},{id:'member-4',name:'QA',role:'测试矩阵与回归验证',agent:'dsh',display_status:'ready'},{id:'member-5',name:'Docs',role:'文档与交付说明',agent:'opencode',display_status:'ready'},{id:'member-6',name:'Release',role:'Git、Diff 与最终发布检查',agent:'antigravity',display_status:'blocked'}],tasks:[{id:'task-1',title:'实现 Team Runtime',assignee:'member-1',dependsOn:[],status:'in_progress'},{id:'task-2',title:'独立验证实现',assignee:'member-2',dependsOn:['task-1'],status:'blocked'},{id:'task-3',title:'实现内嵌团队页面',assignee:'member-3',dependsOn:[],status:'in_progress'},{id:'task-4',title:'执行完整回归',assignee:'member-4',dependsOn:['task-1','task-3'],status:'blocked'},{id:'task-5',title:'更新协作文档',assignee:'member-5',dependsOn:[],status:'completed'},{id:'task-6',title:'核对最终 Diff',assignee:'member-6',dependsOn:['task-2','task-4'],status:'blocked'},{id:'task-7',title:'修复构建失败',assignee:'member-2',dependsOn:[],status:'failed'},{id:'task-8',title:'恢复中断任务',assignee:'member-1',dependsOn:[],status:'interrupted'}],messages:[{id:'message-1',from:'member-1',fromName:'Backend',to:'member-2',body:'Runtime 已就绪，请准备审查。',at:1}]};
       globalThis.openedTeamThread = null;
-      const teamApi = Mentions.installTeamCards({inspectTeam:async () => ({team:teamState,snapshots:[{id:'snapshot-1',action:'team_created',at:1,team:{...teamState,tasks:[],messages:[]}},{id:'snapshot-2',action:'message_sent',at:2,team:teamState}]}),openThread:async id => { globalThis.openedTeamThread=id; },activeThread:() => ({threadId:'lead-thread',anchor:document.querySelector('#thread-content-anchor')})});
+      globalThis.userActions = [];
+      const teamApi = Mentions.installTeamCards({inspectTeam:async () => ({team:teamState,snapshots:[{id:'snapshot-1',action:'team_created',at:1,team:{...teamState,tasks:[],messages:[]}},{id:'snapshot-2',action:'message_sent',at:2,team:teamState}]}),openThread:async id => { globalThis.openedTeamThread=id; },activeThread:() => ({threadId:'lead-thread',anchor:document.querySelector('#thread-content-anchor')}),userAction: async input => { globalThis.userActions.push(input); }});
       const editor = document.querySelector('textarea');
       editor.focus(); editor.value = '@cl'; editor.setSelectionRange(editor.value.length,editor.value.length); editor.dispatchEvent(new Event('input',{bubbles:true}));
       await new Promise(r=>setTimeout(r,30));
@@ -59,8 +60,19 @@ app.whenReady().then(async () => {
       const workbench=document.querySelector('.harness-mix-team-workbench');
       const builder=workbench.querySelector('[data-agent="pi"]'); builder.click(); await new Promise(r=>setTimeout(r,0));
       const teamResult = {compact,chipOpened,name:workbench?.querySelector('.harness-mix-team-name')?.textContent,workbenches:document.querySelectorAll('.harness-mix-team-workbench').length,position:getComputedStyle(workbench).position,bodyOverflow:document.body.style.overflow,icons:workbench?.querySelectorAll('img').length,roles:[...workbench?.querySelectorAll('[data-agent]') ?? []].map(node=>node.getAttribute('data-agent')),lanes:workbench?.querySelectorAll('.harness-mix-team-lanes > div').length,hasTask:workbench?.textContent.includes('实现 Team Runtime'),hasRole:workbench?.textContent.includes('后端架构与 Host Runtime')&&workbench?.textContent.includes('独立代码审查与质量验收'),hasLeader:workbench?.textContent.includes('主导者'),hasMessage:workbench?.textContent.includes('Runtime 已就绪'),hasEvent:workbench?.textContent.includes('团队建立'),feedItems:workbench?.querySelectorAll('.harness-mix-team-feed-list article').length,workingLanes:workbench?.querySelectorAll('.harness-mix-team-lane[data-status="working"]').length,workingDots:workbench?.querySelectorAll('.harness-mix-team-status-dot[data-status="working"]').length,timeline:workbench?.querySelector('.harness-mix-team-timeline input')?.max,opened:globalThis.openedTeamThread};
+      // 看板操作面：失败/中断任务的操作按钮发起 protocol 级 userAction；进行中任务
+      // 有取消按钮（带确认，不在此触发）；lead 工作中时「继续协作」呈禁用态
+      const failedCard = workbench.querySelector('[data-task-id="task-7"]');
+      const interruptedCard = workbench.querySelector('[data-task-id="task-8"]');
+      const runningCard = workbench.querySelector('[data-task-id="task-1"]');
+      const retryButton = [...failedCard.querySelectorAll('.harness-mix-team-action')].find(node => node.textContent === '重试');
+      const resumeTaskButton = [...interruptedCard.querySelectorAll('.harness-mix-team-action')].find(node => node.textContent === '恢复');
+      retryButton.click(); resumeTaskButton.click(); await new Promise(r=>setTimeout(r,30));
+      const continueButton = [...workbench.querySelectorAll('button')].find(node => node.textContent === '继续协作');
+      const reviewerLane = workbench.querySelector('[data-agent="claude"].harness-mix-team-member');
+      const actionResult = {retryPresent:!!retryButton, resumePresent:!!resumeTaskButton, reassignPresent:[...failedCard.querySelectorAll('.harness-mix-team-action')].some(node => node.textContent === '改派'), cancelPresent:[...runningCard.querySelectorAll('.harness-mix-team-action')].some(node => node.textContent === '取消'), actionCalls:globalThis.userActions.slice(), continueDisabled:continueButton?.disabled === true, unreadBadge:reviewerLane?.textContent.includes('💬2')};
       globalThis.teamSmoke = teamApi;
-      return {atTriggerStayedNative,filtered,text,richText,badge,badgeLabel:badgeButton?.getAttribute('aria-label'),inline,selectedAgentCount,icons,disabled,sessionBadge,teamResult};
+      return {atTriggerStayedNative,filtered,text,richText,badge,badgeLabel:badgeButton?.getAttribute('aria-label'),inline,selectedAgentCount,icons,disabled,sessionBadge,teamResult,actionResult};
     })()`);
     assert.equal(result.atTriggerStayedNative, true);
     assert.equal(result.filtered, 1);
@@ -92,6 +104,16 @@ app.whenReady().then(async () => {
     assert.equal(result.teamResult.hasLeader, true);
     assert.equal(result.teamResult.hasMessage, true);
     assert.equal(result.teamResult.timeline, '1');
+    assert.equal(result.actionResult.retryPresent, true, '失败任务卡出现重试按钮');
+    assert.equal(result.actionResult.reassignPresent, true, '失败任务卡出现改派按钮');
+    assert.equal(result.actionResult.resumePresent, true, '中断任务卡出现恢复按钮');
+    assert.equal(result.actionResult.cancelPresent, true, '进行中任务卡出现取消按钮');
+    assert.equal(result.actionResult.continueDisabled, true, 'lead 工作中时继续协作为禁用态');
+    assert.equal(result.actionResult.unreadBadge, true, '成员卡渲染未读徽标');
+    assert.deepEqual(result.actionResult.actionCalls, [
+      { action: 'task/reassign', threadId: 'lead-thread', teamId: 'team-1', taskId: 'task-7', memberId: 'member-2' },
+      { action: 'task/reassign', threadId: 'lead-thread', teamId: 'team-1', taskId: 'task-8', memberId: 'member-1' },
+    ], '看板按钮发起 protocol 级 userAction');
     const out = path.resolve('output/collaboration-ui'); await fs.mkdir(out, { recursive: true });
     await win.webContents.executeJavaScript('window.scrollTo(0,0)');
     await fs.writeFile(path.join(out, 'team-inline-compact.png'), (await win.webContents.capturePage()).toPNG());

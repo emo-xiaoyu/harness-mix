@@ -69,6 +69,17 @@ const { ThreadStore } = require('../src/main/host/thread-store');
     const failed = await gates.run(thread);
     assert.equal(failed.status, 'failed');
     assert.equal(gates.inspect(thread).satisfied, true, 'advisory failures do not block delivery');
+    // advisory()：off 策略的 apply 零配置安全网——跑内建检查，不跑用户命令、
+    // 不写 latestReport、不改线程策略；显式策略下不附加
+    gates.configure(thread, { mode: 'off', commands: [`"${process.execPath}" -e "process.exit(3)"`] });
+    const advisory = await gates.advisory(thread);
+    assert.equal(advisory.mode, 'advisory');
+    assert.deepEqual(advisory.commands, [], 'advisory 不跑用户命令');
+    assert.ok(advisory.checks.some(check => check.id === 'turnCompleted'), '内建检查在列');
+    assert.equal(gates.inspect(thread).policy.mode, 'off', '线程策略保持 off');
+    assert.equal(gates.inspect(thread).report, null, 'advisory 不写 latestReport');
+    gates.configure(thread, { mode: 'advisory' });
+    assert.equal(await gates.advisory(thread), null, '显式策略下不附加安全网');
     assert.throws(() => normalizePolicy({ commands: [{ command: '' }] }), /Invalid verification command/);
     assert.throws(() => normalizePolicy({ commands: [{ command: 'tool --token sk-1234567890abcdef' }] }), /credential-like data/);
     console.log('PASS: schema v2 compact migration, backup, storage metrics and configurable verification gates');

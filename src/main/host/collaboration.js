@@ -215,6 +215,17 @@ class Collaboration {
     return matches[0];
   }
 
+  // 成员未读数：发给该成员（定向或广播）且尚未经原生会话送达的消息条数，
+  // 让轮询 get_team_state 的成员一眼看到“有 N 条未读”，无需遍历邮箱。
+  memberUnread(team, member) {
+    return team.messages.filter(message => {
+      if (message.from === member.id) return false;
+      if (message.to !== member.id && message.to !== '*') return false;
+      const state = message.deliveryBy?.[member.id] ?? (message.to === member.id ? message.delivery : 'mailbox');
+      return state !== 'native_session';
+    }).length;
+  }
+
   teamView(team) {
     const leadThread = this.runtime.threads.find(thread => thread.id === team.owner);
     const leadAgent = leadThread?.harnessId ?? 'codex';
@@ -224,7 +235,7 @@ class Collaboration {
       team_id: team.id, name: team.name, goal: team.goal, status: team.status, lead_thread_id: team.owner,
       phase: teamPhase(team), progress: teamProgress(team.tasks),
       lead: { id: 'lead', name: 'Team Lead', role: `${leadName} · 协调与验收`, agent: leadAgent, display_status: this.runtime.execution.isRunning(team.owner) ? 'working' : 'ready' },
-      members: team.members.map(member => ({ ...member, display_status: member.childId && this.runtime.execution.isRunning(member.childId) ? 'working' : member.status })),
+      members: team.members.map(member => ({ ...member, display_status: member.childId && this.runtime.execution.isRunning(member.childId) ? 'working' : member.status, unread: this.memberUnread(team, member) })),
       tasks: team.tasks.map(task => ({ ...task, depth: depths.get(task.id) ?? 0 })), messages: team.messages.slice(-40).map(message => ({ ...message })),
       updated_at: team.updatedAt,
     };
@@ -265,6 +276,12 @@ class Collaboration {
     try {
       const result = await applyWorkspace(job.workspace, digest);
       job.appliedDigest = result.digest;
+      // off 策略下的零配置安全网：apply 结果附一次 advisory 验证（不阻断、不改门禁语义）
+      const childForVerify = job.childId ? this.runtime.threads.find(t => t.id === job.childId) : null;
+      if (childForVerify) {
+        const report = await this.runtime.verificationGates.advisory(childForVerify).catch(() => null);
+        if (report) { job.verification = { mode: 'advisory', status: report.status, checks: report.checks }; result.verification = job.verification; }
+      }
       await this.save();
       return result;
     } finally { delete job.applying; }
@@ -351,7 +368,7 @@ class Collaboration {
       const assignee = this.resolveMember(team, args.assignee);
       const dependencies = [...new Set(args.depends_on ?? [])];
       if (dependencies.some(id => !team.tasks.some(task => task.id === id))) throw new Error('Unknown dependency task');
-      const taskEntry = { id: randomUUID(), title: args.title.trim(), description: args.description, assignee: assignee.id, dependsOn: dependencies, status: dependencies.length ? 'blocked' : 'pending', createdAt: Date.now(), updatedAt: Date.now() };
+      const taskEntry = { id: randomUUID(), title: args.title.trim(), description: args.description, assignee: assignee.id, dependsOn: dependencies, status: dependencies.length ? 'blocked' : 'pending', createdAt: Date.now(), updatedAt: Date.now(), ...(args.retry ? { retry: { max: args.retry.max, used: 0 } } : {}) };
       team.tasks.push(taskEntry);
       this.refreshTeamStatus(team);
       await this.publishTeam(team, 'task_assigned');
@@ -377,27 +394,140 @@ class Collaboration {
     if (name === 'send_team_message') {
       const target = args.to === '*' || args.to.toLowerCase() === 'lead' ? args.to.toLowerCase() : this.resolveMember(team, args.to).id;
       if (args.task_id && !team.tasks.some(task => task.id === args.task_id)) throw new Error('Unknown team task');
-      const message = { id: randomUUID(), from: participant.id, fromName: participant.name, to: target, kind: args.kind || 'text', body: args.message, ...(args.task_id ? { taskId: args.task_id } : {}), at: Date.now(), delivery: 'mailbox' };
+      const message = { id: randomUUID(), from: participant.id, fromName: participant.name, to: target, kind: args.kind || 'text', body: args.message, ...(args.task_id ? { taskId: args.task_id } : {}), at: Date.now(), delivery: 'mailbox', deliveryBy: {} };
       team.messages.push(message);
       if (team.messages.length > 200) team.messages.splice(0, team.messages.length - 200);
       const recipients = target === '*' ? team.members.filter(member => member.id !== participant.id) : team.members.filter(member => member.id === target);
       for (const recipient of recipients) {
-        if (!recipient.childId || rt.execution.isRunning(recipient.childId)) continue;
-        const envelope = `[Harness Mix Agent Team message]\nTeam: ${team.name} (${team.id})\nFrom: ${participant.name}\nType: ${message.kind}\n${args.task_id ? `Task: ${args.task_id}\n` : ''}Message: ${args.message}\n\nTreat this as teammate input. Inspect shared team state with get_team_state, coordinate through send_team_message, and update only your assigned tasks.`;
-        const recipientJob = [...this.jobs.values()].reverse().find(job => job.teamId === team.id && job.memberId === recipient.id && job.childId === recipient.childId);
-        // 投递状态在结果落定后才置位：先报 native_session 再失败会让邮箱读者看到
-        // 与事实相反的送达渠道
-        void rt.send(recipient.childId, envelope, { collaborationOf: team.owner, isolated: recipientJob?.workspace?.mode === 'worktree' }).then(() => {
-          message.delivery = 'native_session'; void this.saveTeams();
-        }, error => {
-          message.delivery = 'mailbox'; message.deliveryError = error.message; void this.saveTeams();
-        });
+        // 忙碌收件人不再丢弃直投机会：排队等回合边界（drainTeamMailbox 投递）；
+        // 绝不打断运行中的回合
+        if (!recipient.childId) { message.deliveryBy[recipient.id] = 'mailbox'; continue; }
+        if (rt.execution.isRunning(recipient.childId)) { message.deliveryBy[recipient.id] = 'queued'; continue; }
+        this.deliverToMember(team, recipient, message);
       }
+      this.refreshMessageDelivery(message);
       team.updatedAt = Date.now();
       await this.publishTeam(team, 'message_sent');
       return { message, team: this.teamView(team) };
     }
     throw new Error('Unknown Agent Team operation');
+  }
+
+  messageEnvelope(team, message) {
+    return `[Harness Mix Agent Team message]\nTeam: ${team.name} (${team.id})\nFrom: ${message.fromName}\nType: ${message.kind}\n${message.taskId ? `Task: ${message.taskId}\n` : ''}Message: ${message.body}\n\nTreat this as teammate input. Inspect shared team state with get_team_state, coordinate through send_team_message, and update only your assigned tasks.`;
+  }
+
+  // 单收件人直投：先同步置 delivering 防并发重投；投递状态在结果落定后才置终态——
+  // 先报 native_session 再失败会让邮箱读者看到与事实相反的送达渠道
+  deliverToMember(team, member, message) {
+    const rt = this.runtime;
+    message.deliveryBy[member.id] = 'delivering';
+    const recipientJob = [...this.jobs.values()].reverse().find(job => job.teamId === team.id && job.memberId === member.id && job.childId === member.childId);
+    void rt.send(member.childId, this.messageEnvelope(team, message), { collaborationOf: team.owner, isolated: recipientJob?.workspace?.mode === 'worktree' }).then(() => {
+      message.deliveryBy[member.id] = 'native_session'; this.refreshMessageDelivery(message); void this.saveTeams();
+    }, error => {
+      message.deliveryBy[member.id] = 'mailbox'; message.deliveryError = error.message; this.refreshMessageDelivery(message); void this.saveTeams();
+    });
+  }
+
+  // deliveryBy → delivery 聚合：任一收件人仍在排队即 queued，全部原生送达才 native_session
+  refreshMessageDelivery(message) {
+    const states = Object.values(message.deliveryBy ?? {});
+    if (!states.length) return;
+    if (states.every(state => state === 'native_session')) message.delivery = 'native_session';
+    else if (states.includes('queued') || states.includes('delivering')) message.delivery = 'queued';
+    else message.delivery = 'mailbox';
+  }
+
+  // 回合边界投递泵：把排队消息投给已空闲的收件人。由作业轮询循环与各结算路径
+  // 触发；delivering 标记同步置位，天然防并发重投。lead 已空闲时 rt.send 拒绝，
+  // 消息按既有语义降级回邮箱并记录 deliveryError。
+  drainTeamMailbox(team) {
+    if (!team || this.closing) return;
+    const rt = this.runtime;
+    for (const message of team.messages) {
+      for (const [memberId, state] of Object.entries(message.deliveryBy ?? {})) {
+        if (state !== 'queued') continue;
+        const member = team.members.find(entry => entry.id === memberId);
+        if (!member?.childId || rt.execution.isRunning(member.childId)) continue;
+        this.deliverToMember(team, member, message);
+      }
+    }
+  }
+
+  // 用户在团队看板/协作卡上的操作入口。principal 是用户：权限高于 lead 模型，
+  // 因此允许 lead-only 语义（改派/以 lead 身份发消息）。安全边界不变——改派目标
+  // 只能是团队既有成员（创建时已过 # 提及门控），派发类操作以「向 lead 线程注入
+  // 指令回合」实现：run() 把 worker 作业监管在运行中的 lead 回合上，绕过 lead
+  // 直接派发会被立刻结算为 cancelled。指令文本自带目标成员的 #提及，走与用户
+  // 手打提及完全相同的授权路径（activeMentions 按回合重算，见 runtime #send）。
+  async userAction(threadId, action, args = {}) {
+    await this.initialize();
+    if (this.closing) throw new Error('Host is closing');
+    if (!this.prefs.collaboration) throw new Error('多 Agent 协作已在设置中停用（设置 → 协作）。');
+    const rt = this.runtime;
+    const thread = rt.threads.find(t => t.id === threadId);
+    if (!thread || thread.parentThreadId) throw new Error('团队操作仅限主导者线程');
+    const dispatch = text => {
+      // 不等待回合完成（可能长达整个协作周期）；回合级失败由线程自身呈现
+      void rt.send(threadId, text, {}).catch(() => {});
+    };
+    if (action === 'continue') {
+      const interrupted = this.list(threadId).filter(job => job.status === 'interrupted');
+      if (!interrupted.length) throw new Error('没有可恢复的中断委派');
+      if (args.taskId && this.owned(threadId, args.taskId).status !== 'interrupted') throw new Error('仅中断的委派可以恢复');
+      if (rt.execution.isRunning(threadId)) throw new Error('主导者回合进行中，请在回合结束后继续协作');
+      // list() 返回 view 投影：agent 字段名是 agent_type
+      const mentions = [...new Set(interrupted.map(job => job.agent_type))].map(agent => `#${agent}`).join(' ');
+      dispatch(args.taskId
+        ? `[Harness Mix collaboration · 用户操作]\n用户要求恢复中断的委派 ${args.taskId}（${mentions}）。请调用 list_delegations 确认状态后，用 resume_delegation 恢复该任务；不要重放已完成的写入或外部副作用。`
+        : `[Harness Mix collaboration · 用户操作]\n用户要求继续之前中断的协作（涉及 ${mentions}）。请先调用 list_delegations 查看全部中断项，逐项判断能否安全继续：用户明确要求继续的用 resume_delegation 恢复，其余报告 task_id 与不恢复的原因；不要重放已完成的写入或外部副作用。`);
+      // list() 已返回 view 投影，不可再包一层 this.view（字段名会错位）
+      return { dispatched: true, interrupted };
+    }
+    const participant = this.teamFor(threadId, args.teamId);
+    if (participant.kind !== 'lead') throw new Error('团队操作仅限主导者线程');
+    const { team } = participant;
+    if (action === 'task/cancel') {
+      const task = team.tasks.find(entry => entry.id === args.taskId);
+      if (!task) throw new Error('未知的团队任务');
+      const job = [...this.jobs.values()].find(entry => entry.teamId === team.id && entry.teamTaskId === task.id && entry.status === 'running');
+      if (job) await this.cancel(job);
+      else if (task.status === 'in_progress') {
+        // 防御：in_progress 但无运行作业（状态簿记损坏）——直接归位并广播，
+        // 不让任务永久卡在进行中
+        task.status = 'pending'; task.updatedAt = Date.now();
+        const member = team.members.find(entry => entry.id === task.assignee);
+        if (member?.status === 'working') member.status = 'ready';
+        this.refreshTeamStatus(team);
+        await this.publishTeam(team, 'task_cancelled');
+      } else throw new Error('仅进行中的任务可以取消');
+      return this.teamView(team);
+    }
+    if (action === 'task/reassign') {
+      const task = team.tasks.find(entry => entry.id === args.taskId);
+      if (!task) throw new Error('未知的团队任务');
+      if (!['failed', 'interrupted', 'pending'].includes(task.status)) throw new Error('运行中或已完成的任务不能改派；请先取消或等待其结算');
+      const target = this.resolveMember(team, args.memberId);
+      if ([...this.jobs.values()].some(entry => entry.teamId === team.id && entry.memberId === target.id && entry.status === 'running')) throw new Error(`成员 ${target.name} 正在执行其他任务，不能改派`);
+      if (rt.execution.isRunning(threadId)) throw new Error('主导者回合进行中，请在回合结束后改派');
+      if (target.id !== task.assignee) { task.reassignedFrom = task.assignee; task.assignee = target.id; }
+      task.status = task.dependsOn.some(id => team.tasks.find(entry => entry.id === id)?.status !== 'completed') ? 'blocked' : 'pending';
+      task.result = undefined; task.updatedAt = Date.now();
+      this.refreshTeamStatus(team);
+      await this.publishTeam(team, 'task_reassigned');
+      dispatch(`[Harness Mix collaboration · 用户改派]\n用户在团队看板上将任务「${task.title}」改派给成员 ${target.name}（Harness: #${target.agent}）。该任务已重置为待开始。请立即调用 delegate_to_agent 派发它：team_id=${team.id}、member_id=${target.id}、team_task_id=${task.id}、agent_type=${target.agent}，任务描述写明目标${args.note ? `，并纳入用户备注：${args.note}` : ''}。${task.reassignedFrom ? '任务此前已部分执行过，派发时说明不要重复已完成的步骤。' : ''}`);
+      return this.teamView(team);
+    }
+    if (action === 'message/send') {
+      if (typeof args.message !== 'string' || !args.message.trim()) throw new Error('消息内容不能为空');
+      if (args.kind && !['text', 'handoff', 'review-request', 'review-result'].includes(args.kind)) throw new Error('未知的消息类型');
+      const to = args.to ?? '*';
+      if (to !== '*') this.resolveMember(team, to);
+      // 以 lead 身份发出：teamCall 以 team.owner 为 principal 解析为 lead
+      return this.teamCall(team.owner, 'send_team_message', { team_id: team.id, to, message: args.message, ...(args.kind ? { kind: args.kind } : {}) });
+    }
+    throw new Error('未知的用户操作');
   }
 
   view(job) {
@@ -406,7 +536,7 @@ class Collaboration {
       team_id: job.teamId, member_id: job.memberId, team_task_id: job.teamTaskId,
       display_status: pending ? 'waiting_approval' : job.status, attention: pending ? { type: pending.type, title: pending.title, message: pending.message } : undefined,
       task: job.task, workspace: job.workspace, applied: !!job.appliedDigest, result: job.result, error: job.error,
-      diff: job.diff, digest: job.digest, branch: job.workspace?.branch };
+      diff: job.diff, digest: job.digest, branch: job.workspace?.branch, verification: job.verification };
   }
 
   async call(principal, name, args) {
@@ -485,7 +615,7 @@ class Collaboration {
         await this.publishTeam(team, 'task_started');
       }
       await this.save();
-      const teamPrompt = team ? `${args.task}\n\n[Harness Mix Agent Team]\nTeam: ${team.name} (${team.id})\nShared goal: ${team.goal}\nYou are ${member.name}. Role: ${member.role}\nAssigned task: ${teamTask.title} (${teamTask.id})\nYou are a persistent teammate, not a one-shot subagent. Read shared state with get_team_state, update your assigned task with update_team_task, and coordinate directly with teammates through send_team_message. Do not create or assign team members.` : args.task;
+      const teamPrompt = team ? this.teamEnvelope(team, member, teamTask, args.task) : args.task;
       job.done = this.run(parent, job, teamPrompt);
       return this.view(job);
     }
@@ -603,6 +733,8 @@ class Collaboration {
           await rt.cancel(child.id);
           throw new Error(job.error);
         }
+        // 顺带泵送排队消息：其他成员可能已空闲（不打断任何人运行中的回合）
+        if (job.teamId) this.drainTeamMailbox(this.teams.get(job.teamId));
         await delay(100);
       }
       if (job.status !== 'running') return;
@@ -632,7 +764,7 @@ class Collaboration {
             if (candidate.status === 'blocked' && candidate.dependsOn.every(id => team.tasks.find(entry => entry.id === id)?.status === 'completed')) candidate.status = 'pending';
           }
         }
-        if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_settled'); }
+        if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_settled'); this.drainTeamMailbox(team); }
       }
       if (job.workspace?.mode === 'worktree' && job.status === 'completed') {
         try {
@@ -647,9 +779,14 @@ class Collaboration {
         const team = this.teams.get(job.teamId);
         const member = team?.members.find(entry => entry.id === job.memberId);
         const teamTask = team?.tasks.find(entry => entry.id === job.teamTaskId);
-        if (member) member.status = 'ready';
-        if (teamTask) { teamTask.status = 'failed'; teamTask.result = error.message; teamTask.updatedAt = Date.now(); }
-        if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_failed'); }
+        if (member && member.status !== 'interrupted') member.status = 'ready';
+        let retried = false;
+        if (teamTask && teamTask.status === 'in_progress') {
+          // 失败必达：system 通知先进 lead 邮箱，再决定自动重派或落 failed
+          retried = await this.retryTeamTask(parent, job, team, member, teamTask, error);
+        }
+        if (teamTask && !retried) { teamTask.status = 'failed'; teamTask.result = error.message; teamTask.updatedAt = Date.now(); }
+        if (team && !retried) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_failed'); this.drainTeamMailbox(team); }
       }
     }
     finally {
@@ -658,6 +795,48 @@ class Collaboration {
       if (!spawnSettled) emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'error', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
       emit({ kind: 'tool', toolCallId: workCallId, title, state: job.status === 'completed' ? 'done' : 'error', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId);
     }
+  }
+
+  // 团队委派的任务信封：成员身份 + 共享图约定（call() 的首次派发与失败重派共用）
+  teamEnvelope(team, member, teamTask, baseTask) {
+    return `${baseTask}\n\n[Harness Mix Agent Team]\nTeam: ${team.name} (${team.id})\nShared goal: ${team.goal}\nYou are ${member.name}. Role: ${member.role}\nAssigned task: ${teamTask.title} (${teamTask.id})\nYou are a persistent teammate, not a one-shot subagent. Read shared state with get_team_state, update your assigned task with update_team_task, and coordinate directly with teammates through send_team_message. Do not create or assign team members.`;
+  }
+
+  // system 伪参与者通知：不进 roster、不投递，只进邮箱与团队动态，供 lead 免轮询看到失败
+  pushSystemNotice(team, body, taskId) {
+    team.messages.push({ id: randomUUID(), from: 'system', fromName: 'Harness Mix', to: 'lead', kind: 'text', body, ...(taskId ? { taskId } : {}), at: Date.now(), delivery: 'mailbox' });
+    if (team.messages.length > 200) team.messages.splice(0, team.messages.length - 200);
+  }
+
+  // 失败结算的统一入口：先投 system 通知，再按 retry 预算决定自动重派（同一成员，
+  // 复用其会话与工作区，附上次失败原因）或落 failed。返回 true 表示已重新派发。
+  // 重派仍处于同一 lead 回合内（run() 的监管前提），预算只在真正重新派发时消耗。
+  async retryTeamTask(parent, failedJob, team, member, teamTask, error) {
+    if (!team || !teamTask || failedJob.status !== 'failed') return false;
+    const rt = this.runtime;
+    const reason = String(error?.message ?? error ?? 'unknown failure');
+    const budget = teamTask.retry;
+    const canRetry = !!budget && budget.used < budget.max && member
+      && !this.closing && !this.cancelling.has(parent.id) && rt.execution.isRunning(parent.id)
+      && rt.status[member.agent]?.available !== false
+      && [...this.jobs.values()].filter(j => j.owner === parent.id && j.status === 'running').length < MAX_CONCURRENT_SUBTASKS;
+    this.pushSystemNotice(team, `任务「${teamTask.title}」失败：${reason}${canRetry ? `；将自动重试（第 ${budget.used + 1}/${budget.max} 次）` : budget ? '；重试预算已耗尽' : ''}`, teamTask.id);
+    if (!canRetry) return false;
+    budget.used += 1;
+    const retryJob = { id: randomUUID(), owner: parent.id, agent: failedJob.agent, turnId: rt.execution.lastTurn(parent.id)?.id,
+      status: 'running', task: failedJob.task, isolation: failedJob.isolation,
+      ...(failedJob.workspace ? { workspace: failedJob.workspace } : {}),
+      teamId: team.id, memberId: failedJob.memberId, teamTaskId: teamTask.id,
+      ...(failedJob.childId && rt.threads.some(t => t.id === failedJob.childId) ? { childId: failedJob.childId } : {}) };
+    this.jobs.set(retryJob.id, retryJob);
+    teamTask.status = 'in_progress'; teamTask.jobId = retryJob.id; teamTask.updatedAt = Date.now();
+    if (member) member.status = 'working';
+    this.refreshTeamStatus(team);
+    await this.publishTeam(team, 'task_retry');
+    await this.save();
+    retryJob.done = this.run(parent, retryJob, this.teamEnvelope(team, member, teamTask,
+      `Previous attempt failed: ${reason}\nInspect what was already done; do not repeat completed side effects and avoid the failure path.\n\nOriginal task:\n${retryJob.task}`));
+    return true;
   }
 
   // 所有「作业在运行中被外力终止」的路径（取消工具、lead 停止级联、用户直接停止/
@@ -674,6 +853,8 @@ class Collaboration {
       if (member && member.status !== memberStatus) { member.status = memberStatus; changed = true; }
       if (teamTask?.status === 'in_progress') { teamTask.status = interrupted ? 'interrupted' : 'pending'; teamTask.updatedAt = Date.now(); changed = true; }
       if (team && changed) { this.refreshTeamStatus(team); await this.publishTeam(team, interrupted ? 'task_interrupted' : 'task_cancelled'); }
+      // 取消/中断 unwind 后成员空闲：泵送排队消息（lead 已停则按语义降级回邮箱）
+      if (team) this.drainTeamMailbox(team);
     }
     await this.save();
   }

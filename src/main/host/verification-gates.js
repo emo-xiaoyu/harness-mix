@@ -82,8 +82,19 @@ class VerificationGates {
     this.running.set(thread.id, task);
     return task;
   }
-  async #run(thread, turnId) {
-    const policy = this.policy(thread);
+  // Apply 路径的零配置安全网：线程策略为 off 时仍跑一遍内建本地检查（advisory）。
+  // 不跑用户命令、不写 latestReport、不发 verification.updated——显式策略
+  // （advisory/required）的语义完全不变；返回的报告只附在 apply 结果里。
+  advisory(thread) {
+    if (this.policy(thread).mode !== 'off') return null;
+    if (this.running.has(thread.id)) return this.running.get(thread.id);
+    const task = this.#run(thread, undefined, { schemaVersion: 1, mode: 'advisory', autoRun: false, checks: { ...DEFAULT_CHECKS }, commands: [] }, false)
+      .finally(() => this.running.delete(thread.id));
+    this.running.set(thread.id, task);
+    return task;
+  }
+  async #run(thread, turnId, policyOverride, persist = true) {
+    const policy = policyOverride ?? this.policy(thread);
     const startedAt = Date.now();
     const turn = turnId ? this.runtime.core.getTurn(turnId) : this.runtime.execution.lastTurn(thread.id);
     const items = turn ? this.runtime.core.getItemsForTurn(turn.id) : [];
@@ -106,6 +117,7 @@ class VerificationGates {
       startedAt, completedAt: Date.now(), checks, commands,
     };
     report.contentDigest = createHash('sha256').update(JSON.stringify(report)).digest('hex');
+    if (!persist) return report;
     thread.verificationGate = { policy, latestReport: report };
     if (turn) {
       this.runtime.core.dispatch({ threadId: thread.id, turnId: turn.id, type: 'verification.updated', payload: { report }, timestamp: report.completedAt });

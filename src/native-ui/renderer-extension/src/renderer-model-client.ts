@@ -128,6 +128,17 @@ export const THREAD_PERMISSION_MODE_SELECT_METHOD = "harnessmix/thread/permissio
 export const THREAD_OWNERSHIP_LIST_METHOD = "harnessmix/thread/ownership/list";
 export const THREAD_USAGE_INSPECT_METHOD = "harnessmix/thread/usage/inspect";
 export const THREAD_TEAM_INSPECT_METHOD = "harnessmix/thread/team/inspect";
+export const THREAD_TEAM_TASK_CANCEL_METHOD = "harnessmix/thread/team/task/cancel";
+export const THREAD_TEAM_TASK_REASSIGN_METHOD = "harnessmix/thread/team/task/reassign";
+export const THREAD_TEAM_MESSAGE_SEND_METHOD = "harnessmix/thread/team/message/send";
+export const THREAD_COLLABORATION_CONTINUE_METHOD = "harnessmix/thread/collaboration/continue";
+
+// 看板用户操作：principal 是用户；授权与语义统一在 Host 的 collaboration.userAction 裁决。
+export type CollaborationUserActionInput =
+  | { action: "task/cancel"; threadId: string; teamId: string; taskId: string }
+  | { action: "task/reassign"; threadId: string; teamId: string; taskId: string; memberId: string; note?: string }
+  | { action: "message/send"; threadId: string; teamId: string; to?: string; message: string; kind?: string }
+  | { action: "continue"; threadId: string; taskId?: string };
 export const THREAD_USAGE_UPDATED_METHOD = "harnessmix/thread/usage/updated";
 export const THREAD_TOKEN_USAGE_UPDATED_METHOD = "thread/tokenUsage/updated";
 export const UPDATE_CHECK_METHOD = "harnessmix/update/check";
@@ -201,6 +212,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   listThreadOwnership(input: ThreadOwnershipListParams): Promise<ThreadOwnershipListResult>;
   inspectThreadUsage(input: ThreadUsageInspectionParams): Promise<ThreadUsageInspection>;
   inspectThreadTeam?(input: { threadId: string; teamId?: string }): Promise<unknown>;
+  collaborationUserAction?(input: CollaborationUserActionInput): Promise<unknown>;
   subscribeThreadUsage?(listener: (update: ThreadUsageInspection) => void): () => void;
   selectThreadModel(input: ThreadModelSelectParams): Promise<HarnessModelSelectionState>;
   selectThreadThinking(input: ThreadThinkingSelectParams): Promise<HarnessModelSelectionState>;
@@ -474,6 +486,21 @@ export function createRendererModelClient(
     async inspectThreadTeam(input: { threadId: string; teamId?: string }): Promise<unknown> {
       const threadId = hostThreadIdSchema.parse(input.threadId);
       return manager.sendRequest(THREAD_TEAM_INSPECT_METHOD, { threadId, ...(input.teamId ? { teamId: input.teamId } : {}) });
+    },
+    async collaborationUserAction(input: CollaborationUserActionInput): Promise<unknown> {
+      const threadId = hostThreadIdSchema.parse(input.threadId);
+      const method = input.action === "task/cancel"
+        ? THREAD_TEAM_TASK_CANCEL_METHOD
+        : input.action === "task/reassign"
+          ? THREAD_TEAM_TASK_REASSIGN_METHOD
+          : input.action === "message/send"
+            ? THREAD_TEAM_MESSAGE_SEND_METHOD
+            : THREAD_COLLABORATION_CONTINUE_METHOD;
+      const params: Record<string, unknown> = { threadId };
+      for (const [key, value] of Object.entries(input)) {
+        if (key !== "action" && key !== "threadId" && value !== undefined) params[key] = value;
+      }
+      return manager.sendRequest(method, params);
     },
     subscribeThreadUsage(listener: (update: ThreadUsageInspection) => void): () => void {
       const notifications = notificationTarget(source);

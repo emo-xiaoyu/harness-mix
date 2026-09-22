@@ -50,6 +50,8 @@ Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`T
 - Claude 的 `canUseTool` 和 Codex MCP elicitation 继续走原生审批。需要确认时，用户在相应任务的审批界面处理；自动验证不会代答。
 - 主任务 Fork 会重新绑定自己的协作身份，不复用源任务的子任务访问权。
 - task_id、父子会话、任务文本、结果、worktree 起点以及 Team/Member/Task/Message 在独立串行存储中持久化；重启后在途 Job、Team Task 和 Member 一起变为 interrupted，不会继续显示为“工作中”，也不自动重复执行有副作用的操作。点击「继续协作」向原主任务发送续跑请求，主模型用 `list_delegations` / `resume_delegation` 恢复原子会话，并把同一 Team Task/Member 原子地切回进行中。原生会话丢失或无法恢复会明确报错。会话鉴权标识不持久化，重启重新签发。
+- 团队看板是可操作的（principal 是用户，授权在 Host 的 `collaboration.userAction` 统一裁决）：任务卡可「取消」进行中任务（走与 `cancel_delegation` 相同的结算路径）、「重试/改派」失败或中断任务（目标限既有成员，任务重置为待开始并保留 `reassignedFrom` 痕迹）；成员卡可「追问」以 lead 身份发团队消息；摘要卡与 Workbench 头部有「继续协作」，一次性委派的协作卡上有「恢复此任务」。改派与继续协作要求 lead 回合空闲：Host 向 lead 线程注入一条指令回合（指令自带目标成员的 `#` 提及，走与用户手打提及完全相同的授权路径），由 lead 在该回合内重新派发或恢复。协议面为 `harnessmix/thread/team/task/cancel`、`team/task/reassign`、`team/message/send`、`harnessmix/thread/collaboration/continue`。
+- 任务失败必达 lead 邮箱：失败结算时以 `system` 伪参与者（不进 roster、不投递）写入一条带原因的通知，lead 无需轮询也能从 `get_team_state` 看到失败。`assign_team_task` 可声明 `retry {max 1..3}`：失败时 Host 在同一 lead 回合内自动重派给原成员（复用其会话与工作区，提示词附上次失败原因与“不要重放已完成副作用”），预算耗尽才落 failed；未声明则失败即落定。用户主动取消不是失败：不通知、不重试。
 
 ## 支持与验证范围
 
@@ -79,7 +81,7 @@ npm run e2e:native
 npm run build:native
 ```
 
-`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、Agent Team 身份/任务依赖/成员邮箱、时间轴持久化和共享快照策略。UI smoke 检查摘要入口、内嵌工作台、Lead/成员职责、真实 Harness 图标、成员会话跳转、成员任务列、通信流和时间轴，截图位于 `output/collaboration-ui/team-inline-expanded.png`。这不是完整 Codex Desktop 的真实模型交互验收；构建过程不会重启当前桌面。
+`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、Agent Team 身份/任务依赖/成员邮箱、时间轴持久化和共享快照策略，并覆盖看板用户操作（取消/改派/重试/追问/继续协作，含 lead 回合空闲约束与协议透传）、任务失败的 lead 邮箱 system 通知与 `retry` 自动重派、忙碌收件人排队投递与未读计数清零。`test:collaboration` 与 `test:collaboration-recovery` 已并入 `test:core-all`。UI smoke 检查摘要入口、内嵌工作台、Lead/成员职责、真实 Harness 图标、成员会话跳转、成员任务列、通信流、时间轴、看板操作按钮（失败/中断任务的重试/改派/恢复、进行中任务的取消）、lead 忙碌时「继续协作」的禁用态与成员未读徽标，截图位于 `output/collaboration-ui/team-inline-expanded.png`。这不是完整 Codex Desktop 的真实模型交互验收；构建过程不会重启当前桌面。
 
 2026-09-12 验证：Pi→Claude 两个真实子任务分别在不同 worktree 运行，DSH→CodeBuddy 两个真实子任务也在独立 worktree 完成并由 DSH 主会话汇总 `COLLAB_VERIFIED`。恢复测试覆盖持久化身份、原子会话续跑、不重复建任务；Git 测试覆盖脏目录起点、暂存区保留、过期预览拒绝、冲突时不部分应用。Native Protocol 覆盖父子任务归属与原生 MCP 工具卡片，Electron 仅覆盖原生输入框中的协作引用增强。Runtime 保持 Adapter `open()` 返回对象的同一身份，避免原生回调更新到浅拷贝而被活动回合闸门丢弃。
 ## 统一历史

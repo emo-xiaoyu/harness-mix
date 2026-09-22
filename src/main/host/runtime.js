@@ -295,6 +295,9 @@ class HostRuntime {
     this.verificationGates.assertSatisfied(thread, '合并隔离分支');
     const review = await reviewWorkspace(thread.workspace);
     const result = await applyWorkspace(thread.workspace, digest || review.digest);
+    // off 策略下的零配置安全网：结果附一次 advisory 验证（不阻断、不改门禁语义）
+    const advisory = await this.verificationGates.advisory(thread).catch(() => null);
+    if (advisory) result.verification = { mode: 'advisory', status: advisory.status, checks: advisory.checks };
     this.#notify('status', '已成功将隔离分支改动应用到主项目', thread.id);
     await this.#save();
     this.#broadcast();

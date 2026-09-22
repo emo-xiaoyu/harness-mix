@@ -16,7 +16,7 @@ const to = arg("to", "pi");
   if (!rt.status[from]?.available) throw new Error(`父 Harness 不可用：${from}`);
   if (!rt.status[to]?.available) throw new Error(`子 Harness 不可用：${to}`);
 
-  const parent = await rt.createThread({ harnessId: from, cwd: "E:\\harness-mix", title: "E2E 协作" });
+  const parent = await rt.createThread({ harnessId: from, cwd: process.cwd(), title: "E2E 协作" });
   if (parent.status === "error") throw new Error("parent open failed: " + parent.error);
   console.log(`parent: ${parent.id.slice(0, 8)} (${from})`);
 

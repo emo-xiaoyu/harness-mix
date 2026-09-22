@@ -22,6 +22,7 @@ export interface CollabCardOptions {
   openThread?: (threadId: HostThreadId) => Promise<void>;
   reviewWorkspace?: (threadId: string) => Promise<{ patch: string; digest: string; hasConflict?: boolean; conflictingFiles?: string[] }>;
   applyWorkspace?: (threadId: string, digest?: string) => Promise<{ patch: string; digest: string }>;
+  continueCollab?: (threadId: string, taskId?: string) => Promise<unknown>;
 }
 
 export function parseCollabPayload(text: string): CollabCardPayload | null {
@@ -78,6 +79,30 @@ export function installCollabCards(options: CollabCardOptions = {}) {
     const agent = payload.agent_type || 'agent';
     const icon = collaborationIcon(agent, agent, 18);
     strip.append(icon);
+
+    // 中断的委派：一键恢复（Host 会以用户身份向 lead 线程注入恢复指令回合）
+    if (payload.status === 'interrupted' && payload.parent_thread_id && options.continueCollab) {
+      const resumeBtn = document.createElement('button');
+      resumeBtn.type = 'button';
+      resumeBtn.className = 'harness-mix-collab-resume';
+      resumeBtn.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;border:1px solid #c1702266;background:#c170221a;color:#c17022;font:inherit;cursor:pointer;font-size:12px;font-weight:500';
+      resumeBtn.textContent = '▶ 恢复此任务';
+      resumeBtn.title = '恢复中断的委派：主导者会收到恢复指令（不重放已完成副作用）';
+      resumeBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resumeBtn.disabled = true;
+        try {
+          await options.continueCollab!(payload.parent_thread_id!, payload.task_id);
+          resumeBtn.textContent = '✓ 已下发恢复指令';
+        } catch (err: any) {
+          resumeBtn.disabled = false;
+          resumeBtn.textContent = '▶ 恢复失败（重试）';
+          resumeBtn.title = `恢复失败：${err?.message || err}`;
+        }
+      });
+      strip.append(resumeBtn);
+    }
 
     if (payload.child_thread_id) {
       const childId = payload.child_thread_id;

@@ -28,6 +28,9 @@ import {
   THREAD_PERMISSION_MODE_SELECT_METHOD,
   THREAD_THINKING_SELECT_METHOD,
   THREAD_OWNERSHIP_LIST_METHOD,
+  THREAD_TEAM_TASK_CANCEL_METHOD,
+  THREAD_TEAM_TASK_REASSIGN_METHOD,
+  THREAD_COLLABORATION_CONTINUE_METHOD,
   THREAD_TOKEN_USAGE_UPDATED_METHOD,
   THREAD_USAGE_INSPECT_METHOD,
   THREAD_USAGE_UPDATED_METHOD,
@@ -278,7 +281,10 @@ describe("Renderer fixed Model request client", () => {
         },
       })
       .mockResolvedValueOnce({ status: null })
-      .mockResolvedValueOnce({ threadId: "thread-1", checkpointId: "handoff-1" });
+      .mockResolvedValueOnce({ threadId: "thread-1", checkpointId: "handoff-1" })
+      .mockResolvedValueOnce({ dispatched: true })
+      .mockResolvedValueOnce({ dispatched: true })
+      .mockResolvedValueOnce({ dispatched: true });
     const client = createRendererModelClient([{ addNotificationCallback, sendRequest }]);
     if (!client) throw new Error("Synthetic Model client was not created");
     expect(Object.keys(client).sort()).toEqual([
@@ -286,6 +292,7 @@ describe("Renderer fixed Model request client", () => {
       "cancelCodexAccountLogin",
       "changeSkill",
       "checkUpdate",
+      "collaborationUserAction",
       "consumeCodexAccountResetCredit",
       "createCodexAccount",
       "delegateThread",
@@ -462,6 +469,45 @@ describe("Renderer fixed Model request client", () => {
       threadId: "thread-1",
       harnessId: "claude-code",
       note: "继续补测试",
+    });
+    await expect(
+      client.collaborationUserAction?.({
+        action: "task/cancel",
+        threadId: hostThreadIdSchema.parse("thread-1"),
+        teamId: "team-1",
+        taskId: "task-1",
+      }),
+    ).resolves.toEqual({ dispatched: true });
+    await expect(
+      client.collaborationUserAction?.({
+        action: "task/reassign",
+        threadId: hostThreadIdSchema.parse("thread-1"),
+        teamId: "team-1",
+        taskId: "task-1",
+        memberId: "member-2",
+        note: "换人重做",
+      }),
+    ).resolves.toEqual({ dispatched: true });
+    await expect(
+      client.collaborationUserAction?.({
+        action: "continue",
+        threadId: hostThreadIdSchema.parse("thread-1"),
+      }),
+    ).resolves.toEqual({ dispatched: true });
+    expect(sendRequest).toHaveBeenNthCalledWith(14, THREAD_TEAM_TASK_CANCEL_METHOD, {
+      threadId: "thread-1",
+      teamId: "team-1",
+      taskId: "task-1",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(15, THREAD_TEAM_TASK_REASSIGN_METHOD, {
+      threadId: "thread-1",
+      teamId: "team-1",
+      taskId: "task-1",
+      memberId: "member-2",
+      note: "换人重做",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(16, THREAD_COLLABORATION_CONTINUE_METHOD, {
+      threadId: "thread-1",
     });
   });
 

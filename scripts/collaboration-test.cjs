@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { HostRuntime } = require('../src/main/host/runtime');
 const { mentionedAgents, teamTaskDepths, teamPhase, teamProgress } = require('../src/main/host/collaboration');
+const { createWorkspace, reviewWorkspace, git } = require('../src/main/host/collaboration-worktree');
 const { JsonlProcess } = require('../src/main/host/jsonl');
 const wait = async fn => { for (let i = 0; i < 300; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Timed out'); };
 
@@ -330,6 +331,243 @@ async function main() {
       const quietJob = await isoRt.collaboration.call(isoParent.id, 'delegate_to_agent', { agent_type: 'worker', task: 'shared again once quiet' });
       assert.equal(isoRt.collaboration.jobs.get(quietJob.task_id).isolation, 'shared', 'Default returns to shared once the directory is quiet');
     } finally { await isoRt.close(); }
+
+    // 看板用户操作面（Phase 1）：取消/改派/消息/继续协作。取消与消息任意时刻可执行；
+    // 改派与继续协作要求 lead 空闲，由 Host 向 lead 线程注入指令回合实现——指令自带
+    // 目标成员的 #提及，走与用户手打提及完全相同的授权路径。
+    const uaRoot = await fs.mkdtemp(path.resolve('output/collaboration-user-action-'));
+    const uaRt = new HostRuntime({ dataDirectory: path.join(uaRoot, 'data') });
+    try {
+      await uaRt.store.load();
+      let uaLeadPrompt = '';
+      const uaPending = new Map();
+      const uaLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send(s, text) { uaLeadPrompt = text; }, async cancel() {}, async close() {} };
+      const uaWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s, text) { uaPending.set(s.id, { s, text }); }, async cancel(s) { uaPending.delete(s.id); }, async close() {} };
+      const uaReviewer = { ...uaWorker, manifest: { id: 'reviewer', name: 'Reviewer', capabilities: { collaborationTools: true } } };
+      uaRt.adapters.set('lead', uaLead); uaRt.status.lead = { available: true };
+      uaRt.adapters.set('worker', uaWorker); uaRt.status.worker = { available: true };
+      uaRt.adapters.set('reviewer', uaReviewer); uaRt.status.reviewer = { available: true };
+      const uaParent = await uaRt.createThread({ harnessId: 'lead', cwd: uaRoot });
+      const uaCall = (name, args) => uaRt.collaboration.call(uaParent.id, name, args);
+      await uaRt.send(uaParent.id, '#worker #reviewer 修复发布阻塞');
+      const uaTeam = await uaCall('create_agent_team', { name: 'User-action team', goal: 'Exercise board actions', members: [{ name: 'Builder', role: 'Implement', agent_type: 'worker' }, { name: 'Checker', role: 'Verify', agent_type: 'reviewer' }] });
+      const uaTask = (await uaCall('assign_team_task', { team_id: uaTeam.team_id, title: 'Fix', description: 'Make it pass', assignee: uaTeam.members[0].id })).task;
+      const uaJob = await uaCall('delegate_to_agent', { agent_type: 'worker', task: 'fix it', team_id: uaTeam.team_id, member_id: uaTeam.members[0].id, team_task_id: uaTask.id, isolation: 'shared' });
+      await wait(() => { const child = uaRt.collaboration.jobs.get(uaJob.task_id).childId; return child && uaPending.has(child); });
+      const uaBuilderChild = uaRt.collaboration.jobs.get(uaJob.task_id).childId;
+
+      // 授权边界：成员线程不能执行团队操作；运行中任务必须先取消才能改派
+      await assert.rejects(uaRt.collaboration.userAction(uaBuilderChild, 'task/cancel', { teamId: uaTeam.team_id, taskId: uaTask.id }), /仅限主导者线程/);
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'task/reassign', { teamId: uaTeam.team_id, taskId: uaTask.id, memberId: uaTeam.members[1].id }), /不能改派/);
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'bogus', {}), /未知的用户操作/);
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'task/reassign', { teamId: uaTeam.team_id, taskId: 'nope', memberId: uaTeam.members[1].id }), /未知的团队任务/);
+
+      // 取消：lead 运行中也可执行——任务回 pending、成员回 ready
+      const uaCancelled = await uaRt.collaboration.userAction(uaParent.id, 'task/cancel', { teamId: uaTeam.team_id, taskId: uaTask.id });
+      assert.equal(uaCancelled.tasks.find(entry => entry.id === uaTask.id).status, 'pending');
+      assert.equal(uaCancelled.members.find(entry => entry.id === uaTeam.members[0].id).display_status, 'ready');
+
+      // 重派后让子回合以 error 结算 → 任务 failed，供改派使用
+      await uaCall('delegate_to_agent', { agent_type: 'worker', task: 'fix it again', team_id: uaTeam.team_id, member_id: uaTeam.members[0].id, team_task_id: uaTask.id, isolation: 'shared' });
+      await wait(() => { const child = uaRt.collaboration.jobs.get(uaJob.task_id).childId; return child && uaPending.has(child) && uaRt.execution.isRunning(child); });
+      uaPending.get(uaRt.collaboration.jobs.get(uaJob.task_id).childId).s.emit({ kind: 'error', message: 'build broke' });
+      await wait(() => uaRt.collaboration.teams.get(uaTeam.team_id).tasks.find(entry => entry.id === uaTask.id).status === 'failed');
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'task/reassign', { teamId: uaTeam.team_id, taskId: uaTask.id, memberId: uaTeam.members[1].id }), /回合进行中/, 'lead 回合运行中不能改派');
+
+      // 改派：lead 空闲时执行——任务重置 pending、assignee 切换、指令回合注入 lead
+      await uaRt.cancel(uaParent.id);
+      await wait(() => !uaRt.execution.isRunning(uaParent.id));
+      const uaReassigned = await uaRt.collaboration.userAction(uaParent.id, 'task/reassign', { teamId: uaTeam.team_id, taskId: uaTask.id, memberId: uaTeam.members[1].id, note: '换人重做' });
+      const uaReassignedTask = uaReassigned.tasks.find(entry => entry.id === uaTask.id);
+      assert.equal(uaReassignedTask.status, 'pending');
+      assert.equal(uaReassignedTask.assignee, uaTeam.members[1].id);
+      assert.equal(uaReassignedTask.reassignedFrom, uaTeam.members[0].id, '改派保留原负责人痕迹');
+      await wait(() => uaLeadPrompt.includes('用户改派'));
+      assert.match(uaLeadPrompt, /#reviewer/, '改派指令自带目标成员的 #提及，走同一授权路径');
+      assert.match(uaLeadPrompt, /换人重做/);
+      await wait(() => uaRt.execution.isRunning(uaParent.id));
+      assert.deepEqual(uaParent.activeMentions, ['reviewer'], '指令回合重算 activeMentions');
+      // lead 依指令重新派发：授权门放行，成员绑定成立
+      const uaRedone = await uaCall('delegate_to_agent', { agent_type: 'reviewer', task: 'redo as Checker', team_id: uaTeam.team_id, member_id: uaTeam.members[1].id, team_task_id: uaTask.id, isolation: 'shared' });
+      await wait(() => { const child = uaRt.collaboration.jobs.get(uaRedone.task_id).childId; return child && uaPending.has(child); });
+      uaPending.get(uaRt.collaboration.jobs.get(uaRedone.task_id).childId).s.emit({ kind: 'text-delta', text: 'redone' });
+      uaPending.get(uaRt.collaboration.jobs.get(uaRedone.task_id).childId).s.emit({ kind: 'completed', finalAnswer: true });
+      await wait(() => uaRt.collaboration.teams.get(uaTeam.team_id).tasks.find(entry => entry.id === uaTask.id).status === 'completed');
+
+      // 消息：以 lead 身份直发；空闲收件人经原生会话直达
+      const uaMessaged = await uaRt.collaboration.userAction(uaParent.id, 'message/send', { teamId: uaTeam.team_id, to: uaTeam.members[0].name, message: 'user note' });
+      assert.equal(uaMessaged.team.messages.at(-1).from, 'lead');
+      assert.equal(uaMessaged.team.messages.at(-1).body, 'user note');
+      await wait(() => uaRt.collaboration.teams.get(uaTeam.team_id).messages.at(-1).delivery === 'native_session');
+      // 直投为 Builder 开启了一个真实子回合：结算它，成员回到空闲，供下面的降级路径复用
+      await wait(() => uaPending.has(uaBuilderChild));
+      uaPending.get(uaBuilderChild).s.emit({ kind: 'text-delta', text: 'noted' });
+      uaPending.get(uaBuilderChild).s.emit({ kind: 'completed', finalAnswer: true });
+      await wait(() => !uaRt.execution.isRunning(uaBuilderChild));
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'message/send', { teamId: uaTeam.team_id, to: uaTeam.members[0].id, message: 'x', kind: 'bogus' }), /未知的消息类型/);
+
+      // 继续协作：generic 与指定 taskId 两种指令；非中断任务拒绝
+      uaRt.collaboration.jobs.set('ua-interrupted', { id: 'ua-interrupted', owner: uaParent.id, agent: 'worker', childId: 'gone', status: 'interrupted' });
+      await assert.rejects(uaRt.collaboration.userAction(uaParent.id, 'continue', { taskId: uaRedone.task_id }), /仅中断的委派/);
+      await uaRt.cancel(uaParent.id);
+      await wait(() => !uaRt.execution.isRunning(uaParent.id));
+      const uaContinued = await uaRt.collaboration.userAction(uaParent.id, 'continue', {});
+      assert.equal(uaContinued.dispatched, true);
+      assert.deepEqual(uaContinued.interrupted.map(job => job.task_id), ['ua-interrupted']);
+      await wait(() => uaLeadPrompt.includes('继续之前中断的协作'));
+      assert.match(uaLeadPrompt, /#worker/, '继续协作指令带中断作业的 #提及');
+      await uaRt.cancel(uaParent.id);
+      await wait(() => !uaRt.execution.isRunning(uaParent.id));
+      await uaRt.collaboration.userAction(uaParent.id, 'continue', { taskId: 'ua-interrupted' });
+      await wait(() => uaLeadPrompt.includes('恢复中断的委派 ua-interrupted'));
+
+      // Renderer 协议面：方法经 NativeProtocol → collaboration.userAction
+      await uaRt.cancel(uaParent.id);
+      await wait(() => !uaRt.execution.isRunning(uaParent.id));
+      const { NativeProtocol } = require('../src/main/native/protocol');
+      const protoTeam = await new NativeProtocol(uaRt, () => {}).request('harnessmix/thread/team/message/send', { threadId: uaParent.id, teamId: uaTeam.team_id, to: uaTeam.members[0].name, message: 'via protocol' });
+      assert.equal(protoTeam.team.messages.at(-1).body, 'via protocol', 'Protocol 方法触达 userAction');
+      await wait(() => { const message = uaRt.collaboration.teams.get(uaTeam.team_id).messages.at(-1); return message.delivery === 'mailbox' && message.deliveryError; }, 'lead 空闲时直投降级回邮箱并记录原因');
+      await assert.rejects(new NativeProtocol(uaRt, () => {}).request('harnessmix/thread/team/task/reassign', { threadId: uaParent.id, teamId: uaTeam.team_id, taskId: uaTask.id, memberId: uaTeam.members[0].id }), /已完成的任务不能改派/);
+    } finally { await uaRt.close(); }
+
+    // Phase 2 失败处理：retry 预算自动重派（同一成员，复用会话与工作区，附上次失败
+    // 原因）；任务失败必达 lead 邮箱的 system 通知；用户主动取消不算失败、不通知。
+    const r2Root = await fs.mkdtemp(path.resolve('output/collaboration-retry-'));
+    const r2Rt = new HostRuntime({ dataDirectory: path.join(r2Root, 'data') });
+    try {
+      await r2Rt.store.load();
+      const r2Pending = new Map();
+      const r2Sends = [];
+      const r2Lead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send() {}, async cancel() {}, async close() {} };
+      const r2Worker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s, text) { r2Pending.set(s.id, { s, text }); r2Sends.push({ id: s.id, text }); }, async cancel(s) { r2Pending.delete(s.id); }, async close() {} };
+      r2Rt.adapters.set('lead', r2Lead); r2Rt.status.lead = { available: true };
+      r2Rt.adapters.set('worker', r2Worker); r2Rt.status.worker = { available: true };
+      const r2Parent = await r2Rt.createThread({ harnessId: 'lead', cwd: r2Root });
+      const r2Call = (name, args) => r2Rt.collaboration.call(r2Parent.id, name, args);
+      await r2Rt.send(r2Parent.id, '#worker 重试回归');
+      const r2Team = await r2Call('create_agent_team', { name: 'Retry team', goal: 'Failure handling', members: [{ name: 'Builder', role: 'Build', agent_type: 'worker' }] });
+      const r2TeamObj = r2Rt.collaboration.teams.get(r2Team.team_id);
+      const r2TaskState = task => r2TeamObj.tasks.find(entry => entry.id === task.id);
+      const r2Notices = task => r2TeamObj.messages.filter(message => message.from === 'system' && message.taskId === task.id);
+      const r2Fail = id => r2Pending.get(id).s.emit({ kind: 'error', message: 'flaky build' });
+      const r2Ok = (id, text) => { const entry = r2Pending.get(id); entry.s.emit({ kind: 'text-delta', text }); entry.s.emit({ kind: 'completed', finalAnswer: true }); };
+      const r2Delegate = async (task, attempt) => r2Call('delegate_to_agent', { agent_type: 'worker', task: attempt, team_id: r2Team.team_id, member_id: r2Team.members[0].id, team_task_id: task.id, isolation: 'shared' });
+      // pending.has 只保证 adapter.send 已被调用；回合注册可能滞后，结算事件必须等回合真正处于运行态
+      const r2WaitChild = async job => wait(() => { const child = r2Rt.collaboration.jobs.get(job.task_id).childId; return child && r2Pending.has(child) && r2Rt.execution.isRunning(child); });
+      const r2WaitTurn = () => wait(() => r2Rt.execution.isRunning(childA));
+
+      // A) retry {max:1}：失败 → system 通知 + 自动重派（附失败原因、复用成员会话）→ 成功
+      const taskA = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'A', description: 'retry then pass', assignee: r2Team.members[0].id, retry: { max: 1 } })).task;
+      assert.deepEqual(taskA.retry, { max: 1, used: 0 }, '预算持久化在任务上');
+      const jobA = await r2Delegate(taskA, 'attempt one');
+      await r2WaitChild(jobA);
+      const childA = r2Rt.collaboration.jobs.get(jobA.task_id).childId;
+      r2Fail(childA);
+      await wait(() => r2Sends.filter(send => send.id === childA).length >= 2, '自动重派复用同一成员会话');
+      assert.match(r2Sends.find(send => send.id === childA && send.text.includes('Previous attempt failed')).text, /flaky build/, '重派提示词附上次失败原因');
+      assert.match(r2Sends.filter(send => send.id === childA).at(-1).text, /persistent teammate/, '重派仍携带团队信封');
+      assert.equal(r2Notices(taskA).length, 1);
+      assert.match(r2Notices(taskA)[0].body, /失败[\s\S]*第 1\/1 次/, '失败通知先于重派进入 lead 邮箱');
+      await r2WaitTurn();
+      r2Ok(childA, 'A-fixed');
+      await wait(() => r2TaskState(taskA).status === 'completed');
+      assert.equal(r2TaskState(taskA).retry.used, 1, '成功后预算停在 1');
+      assert.ok(r2TeamObj.history.some(entry => entry.action === 'task_retry'), 'task_retry 入史');
+
+      // B) retry {max:1} 预算耗尽：两次失败后落 failed，两条通知（重试中/已耗尽）
+      const taskB = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'B', description: 'always fails', assignee: r2Team.members[0].id, retry: { max: 1 } })).task;
+      const baselineB = r2Sends.length;
+      const jobB = await r2Delegate(taskB, 'attempt one');
+      await r2WaitChild(jobB);
+      r2Fail(childA);
+      await wait(() => r2Sends.length >= baselineB + 2, '预算内自动重试');
+      await r2WaitTurn();
+      r2Fail(childA);
+      await wait(() => r2TaskState(taskB).status === 'failed');
+      assert.equal(r2TaskState(taskB).retry.used, 1, '预算只消耗一次');
+      assert.match(r2TaskState(taskB).result, /flaky build/);
+      const noticesB = r2Notices(taskB);
+      assert.equal(noticesB.length, 2);
+      assert.match(noticesB[0].body, /第 1\/1 次/);
+      assert.match(noticesB[1].body, /重试预算已耗尽/);
+      await wait(() => r2TeamObj.history.some(entry => entry.action === 'task_failed'), '最终失败入史');
+
+      // C) 无预算：单条纯失败通知，不重派
+      const taskC = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'C', description: 'no budget', assignee: r2Team.members[0].id })).task;
+      assert.equal(taskC.retry, undefined, '未声明 retry 时行为与现状一致');
+      const baselineC = r2Sends.length;
+      const jobC = await r2Delegate(taskC, 'attempt one');
+      await r2WaitChild(jobC);
+      r2Fail(childA);
+      await wait(() => r2TaskState(taskC).status === 'failed');
+      assert.equal(r2Sends.length, baselineC + 1, '无预算不重派');
+      assert.equal(r2Notices(taskC).length, 1);
+      assert.match(r2Notices(taskC)[0].body, /失败/);
+      assert.ok(!/重试/.test(r2Notices(taskC)[0].body), '纯失败通知不带重试字样');
+
+      // schema 边界：retry.max 超界被 zod 拒绝
+      await assert.rejects(r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'X', description: 'bad budget', assignee: r2Team.members[0].id, retry: { max: 5 } }));
+
+      // Phase 3：忙碌收件人 queued → 回合边界投递；成员未读计数
+      const taskD = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'D', description: 'busy recipient', assignee: r2Team.members[0].id })).task;
+      const jobD = await r2Delegate(taskD, 'busy work');
+      await r2WaitChild(jobD);
+      const msgQ = await r2Call('send_team_message', { team_id: r2Team.team_id, to: r2Team.members[0].name, message: 'while busy' });
+      assert.equal(msgQ.message.delivery, 'queued', '忙碌收件人聚合状态为 queued');
+      assert.equal(msgQ.message.deliveryBy[r2Team.members[0].id], 'queued');
+      assert.equal(msgQ.team.members[0].unread, 1, '未读计数进入 teamView');
+      // 结束成员回合：结算路径的投递泵把 queued 消息送进其原生会话
+      r2Ok(childA, 'D-done');
+      await wait(() => r2TaskState(taskD).status === 'completed');
+      await wait(() => r2TeamObj.messages.find(message => message.id === msgQ.message.id).deliveryBy[r2Team.members[0].id] === 'native_session');
+      assert.equal((await r2Call('get_team_state', { team_id: r2Team.team_id })).members[0].unread, 0, '送达后未读清零');
+      assert.ok(r2Sends.some(send => send.id === childA && send.text.includes('while busy')), '排队消息按 teammate 信封投进原生会话');
+
+      // Phase 3 降级：排队消息在 lead 回合结束时回落邮箱并记录原因
+      const taskE = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'E', description: 'race the end', assignee: r2Team.members[0].id })).task;
+      const jobE = await r2Delegate(taskE, 'busy again');
+      await r2WaitChild(jobE);
+      const msgE = await r2Call('send_team_message', { team_id: r2Team.team_id, to: r2Team.members[0].name, message: 'race the end' });
+      assert.equal(msgE.message.delivery, 'queued');
+      await r2Rt.cancel(r2Parent.id);
+      await wait(() => {
+        const message = r2TeamObj.messages.find(entry => entry.id === msgE.message.id);
+        return message.deliveryBy[r2Team.members[0].id] === 'mailbox' && message.deliveryError;
+      }, 'lead 结束后排队消息降级回邮箱');
+
+      // Phase 4：apply 附加 advisory 验证（off 策略零配置安全网，不阻断、不改门禁）
+      const r4Repo = path.join(r2Root, 'apply-repo');
+      await fs.mkdir(r4Repo, { recursive: true });
+      await git(r4Repo, ['init', '-q']);
+      await git(r4Repo, ['config', 'core.autocrlf', 'false']);
+      await fs.writeFile(path.join(r4Repo, 'file.txt'), 'base\n');
+      await git(r4Repo, ['add', '.']);
+      await git(r4Repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'base']);
+      const r4Ws = await createWorkspace(r4Repo, 'apply-advisory-job', 'worktree');
+      await fs.writeFile(path.join(r4Ws.cwd, 'file.txt'), 'applied\n');
+      const r4Rev = await reviewWorkspace(r4Ws);
+      const r4Child = await r2Rt.createThread({ harnessId: 'worker', cwd: r4Ws.cwd, title: 'apply advisory child' });
+      await r2Rt.send(r4Child.id, 'produce the change');
+      await wait(() => r2Pending.has(r4Child.id) && r2Rt.execution.isRunning(r4Child.id));
+      r2Ok(r4Child.id, 'done');
+      await wait(() => !r2Rt.execution.isRunning(r4Child.id));
+      r2Rt.collaboration.jobs.set('apply-advisory-job', { id: 'apply-advisory-job', owner: r2Parent.id, agent: 'worker', childId: r4Child.id, status: 'completed', task: 'apply advisory', workspace: r4Ws });
+      const r4Result = await r2Rt.collaboration.apply('apply-advisory-job', r4Rev.digest);
+      assert.equal(r4Result.verification.mode, 'advisory', 'apply 结果附带 advisory 验证');
+      assert.ok(r4Result.verification.checks.some(check => check.id === 'turnCompleted' && check.status === 'passed'));
+      assert.equal(r2Rt.collaboration.jobs.get('apply-advisory-job').verification.status, r4Result.verification.status, 'advisory 结果持久化在作业上');
+      assert.equal(r2Rt.verificationGates.inspect(r2Rt.threads.find(t => t.id === r4Child.id)).policy.mode, 'off', 'advisory 不改线程门禁策略');
+    } finally { await r2Rt.close(); }
+
     console.log('PASS: real MCP stdio → authenticated Host → parallel native-session adapters → results/follow-up/cancellation, ownership and shared review');
   } finally { transport.stop(); await rt.close(); }
 }

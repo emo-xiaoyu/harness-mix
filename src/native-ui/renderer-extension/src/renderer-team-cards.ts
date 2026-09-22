@@ -1,6 +1,7 @@
 import { collaborationIcon } from './collaboration-icon.js';
+import type { CollaborationUserActionInput } from './renderer-model-client.js';
 
-export interface TeamMemberPayload { id: string; name: string; role: string; agent: string; childId?: string; child_thread_id?: string; display_status?: string }
+export interface TeamMemberPayload { id: string; name: string; role: string; agent: string; childId?: string; child_thread_id?: string; display_status?: string; unread?: number }
 export interface TeamTaskPayload { id: string; title: string; assignee: string; dependsOn?: string[]; status: string }
 export interface TeamMessagePayload { id: string; fromName?: string; from: string; to: string; body: string; at: number }
 export interface TeamCardPayload {
@@ -10,10 +11,12 @@ export interface TeamCardPayload {
 interface TeamSnapshot { id: string; action: string; at: number; team: TeamCardPayload }
 interface TeamInspection { team: TeamCardPayload; snapshots: TeamSnapshot[] }
 interface ActiveTeamContext { threadId: string; anchor: Element }
+export type TeamUserAction = (input: CollaborationUserActionInput) => Promise<unknown>;
 interface TeamCardOptions {
   inspectTeam?: (threadId: string, teamId?: string) => Promise<unknown>;
   openThread?: (threadId: string) => Promise<unknown> | unknown;
   activeThread?: () => ActiveTeamContext | null;
+  userAction?: TeamUserAction;
 }
 
 function jsonObjectAt(value: string, start: number): string | null {
@@ -46,7 +49,7 @@ function parseInspection(value: unknown): TeamInspection | null {
 }
 const stateColor = (status?: string) => ({ ready: '#8b8b8b', pending: '#8b8b8b', working: '#2878e3', in_progress: '#2878e3', active: '#2878e3', completed: '#1f9d68', blocked: '#c17022', failed: '#d14343', interrupted: '#c17022' }[status ?? ''] ?? '#8b8b8b');
 const stateLabel = (status?: string) => ({ ready: '就绪', pending: '待开始', working: '工作中', in_progress: '进行中', completed: '已完成', blocked: '等待依赖', failed: '失败', interrupted: '已中断', active: '协作中' }[status ?? ''] ?? status ?? '未知');
-const actionLabel = (action?: string) => ({ team_created: '团队建立', task_assigned: '任务分配', task_updated: '任务更新', message_sent: '团队通信', task_started: '开始执行', member_session_ready: '会话就绪', task_settled: '任务结算', task_failed: '任务失败', task_cancelled: '任务取消', task_interrupted: '任务中断', task_resumed: '恢复执行', task_followup: '继续执行' }[action ?? ''] ?? action ?? '实时状态');
+const actionLabel = (action?: string) => ({ team_created: '团队建立', task_assigned: '任务分配', task_updated: '任务更新', message_sent: '团队通信', task_started: '开始执行', member_session_ready: '会话就绪', task_settled: '任务结算', task_failed: '任务失败', task_cancelled: '任务取消', task_interrupted: '任务中断', task_resumed: '恢复执行', task_followup: '继续执行', task_reassigned: '任务改派', task_retry: '自动重试' }[action ?? ''] ?? action ?? '实时状态');
 const memberPalette = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#f97316', '#ec4899', '#14b8a6', '#6366f1'];
 const memberColor = (index: number) => memberPalette[index % memberPalette.length];
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, css?: string): HTMLElementTagNameMap[K] { const node = document.createElement(tag); if (className) node.className = className; if (css) node.style.cssText = css; return node; }
@@ -101,6 +104,31 @@ function wireOpen(node: HTMLElement, childId: string | undefined, name: string, 
   });
 }
 
+// 看板操作按钮：失败时红框闪烁并保留错误 title（与 wireOpen 同一失败可视语义）。
+function actionButton(label: string, title: string, onClick: () => void, tone?: string) {
+  const node = el('button', 'harness-mix-team-action', `border:1px solid color-mix(in srgb,${tone ?? 'currentColor'} 26%,transparent);border-radius:6px;background:color-mix(in srgb,${tone ?? 'currentColor'} 7%,transparent);color:${tone ?? 'inherit'};font:650 9px system-ui;padding:3px 8px;cursor:pointer;white-space:nowrap${tone ? '' : ';opacity:.85'}`);
+  node.type = 'button'; node.textContent = label; node.title = title;
+  node.addEventListener('click', event => { event.stopPropagation(); event.preventDefault(); onClick(); });
+  return node;
+}
+async function runUserAction(userAction: TeamUserAction, node: HTMLElement, input: CollaborationUserActionInput) {
+  node.classList.remove('harness-mix-team-open-failed');
+  try { await userAction(input); } catch (error) {
+    console.warn('[TeamCards] 看板操作失败:', error);
+    node.classList.add('harness-mix-team-open-failed');
+    node.title = `操作失败：${(error as Error)?.message ?? String(error)}`;
+    setTimeout(() => node.classList.remove('harness-mix-team-open-failed'), 1800);
+  }
+}
+function continueButton(payload: TeamCardPayload, userAction?: TeamUserAction) {
+  const busy = payload.lead?.display_status === 'working';
+  const node = actionButton('继续协作', busy ? '主导者回合进行中，结束后再继续' : '把中断的委派恢复为新的主导者回合', () => {
+    if (payload.lead_thread_id) void runUserAction(userAction!, node, { action: 'continue', threadId: payload.lead_thread_id! });
+  });
+  if (busy) { node.disabled = true; node.style.opacity = '.45'; node.style.cursor = 'not-allowed'; }
+  return node;
+}
+
 function metrics(payload: TeamCardPayload) {
   const node = el('div', 'harness-mix-team-metrics', 'display:flex;gap:18px;align-items:center');
   const values: Array<[string, string, string]> = [[`${payload.tasks.filter(task => task.status === 'completed').length}/${payload.tasks.length}`, '完成', '#1f9d68'], [`${payload.tasks.filter(task => task.status === 'in_progress').length}`, '进行中', '#2878e3'], [`${payload.tasks.filter(task => task.status === 'blocked').length}`, '等待', '#c17022']];
@@ -127,9 +155,9 @@ function headerStats(payload: TeamCardPayload) {
 const pillCss = (status?: string) => { const color = stateColor(status); return `font-size:8px;font-weight:750;padding:2px 7px;border-radius:99px;white-space:nowrap;color:${color};background:color-mix(in srgb,${color} 15%,transparent)`; };
 function statusPill(status?: string) { return text('span', stateLabel(status), pillCss(status)); }
 function statusDot(status: string | undefined, size = 7) { const dot = el('span', 'harness-mix-team-status-dot', `width:${size}px;height:${size}px;border-radius:50%;flex:none;background:${stateColor(status)}`); dot.dataset.status = status ?? ''; return dot; }
-const actionIcon = (action?: string) => ({ team_created: '🎬', task_assigned: '📋', task_updated: '🔄', task_started: '🚀', member_session_ready: '🔌', task_settled: '✅', task_failed: '❌', task_cancelled: '⛔', task_interrupted: '⏸', task_resumed: '▶️', task_followup: '💬' }[action ?? ''] ?? '•');
+const actionIcon = (action?: string) => ({ team_created: '🎬', task_assigned: '📋', task_updated: '🔄', task_started: '🚀', member_session_ready: '🔌', task_settled: '✅', task_failed: '❌', task_cancelled: '⛔', task_interrupted: '⏸', task_resumed: '▶️', task_followup: '💬', task_reassigned: '🔁', task_retry: '♻️' }[action ?? ''] ?? '•');
 
-function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['openThread'], snapshots: TeamSnapshot[] = []) {
+function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['openThread'], snapshots: TeamSnapshot[] = [], userAction?: TeamUserAction) {
   const board = el('main', 'harness-mix-team-board harness-mix-team-body', 'height:100%;min-height:0;color:inherit');
   const lead = payload.lead ?? { id: 'lead', name: 'Team Lead', role: '协调与验收', agent: 'codex', display_status: 'working' };
   const tasksOf = (memberId: string) => payload.tasks.filter(task => task.assignee === memberId);
@@ -147,11 +175,12 @@ function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['ope
     status.append(statusDot(lead.display_status), text('span', stateLabel(lead.display_status), `font-size:9px;color:${stateColor(lead.display_status)}`));
     copy.append(status); button.append(avatar, copy); return button;
   };
+  // div 而非 button：成员卡内嵌「追问」操作按钮，交互元素不可嵌套
   const memberCard = (member: TeamMemberPayload, index: number) => {
     const color = memberColor(index), assigned = tasksOf(member.id), done = assigned.filter(task => task.status === 'completed').length;
-    const button = el('button', 'harness-mix-team-member', 'appearance:none;width:100%;box-sizing:border-box;border:1px solid color-mix(in srgb,currentColor 10%,transparent);background:color-mix(in srgb,Canvas 92%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#000 6%,transparent);color:inherit;font:inherit;display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:9px;padding:9px 10px;border-radius:12px;text-align:left;cursor:default'); button.type = 'button'; button.dataset.agent = member.agent;
-    button.dataset.status = member.display_status ?? ''; button.style.setProperty('--lane-color', color ?? '');
-    wireOpen(button, member.childId ?? member.child_thread_id, member.name, openThread);
+    const card = el('div', 'harness-mix-team-member', 'position:relative;width:100%;box-sizing:border-box;border:1px solid color-mix(in srgb,currentColor 10%,transparent);background:color-mix(in srgb,Canvas 92%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#000 6%,transparent);color:inherit;font:inherit;display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:9px;padding:9px 10px;border-radius:12px;text-align:left;cursor:default'); card.dataset.agent = member.agent;
+    card.dataset.status = member.display_status ?? ''; card.style.setProperty('--lane-color', color ?? '');
+    wireOpen(card, member.childId ?? member.child_thread_id, member.name, openThread);
     const avatar = el('span', 'harness-mix-team-avatar', `position:relative;display:grid;place-items:center;width:40px;height:40px;flex:none;border-radius:11px;border:2px solid ${color};background:Canvas`);
     avatar.dataset.status = member.display_status ?? '';
     const dot = el('span', 'harness-mix-team-status-dot', `position:absolute;right:-4px;bottom:-4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:${stateColor(member.display_status)};border:2.5px solid Canvas`); dot.dataset.status = member.display_status ?? '';
@@ -160,9 +189,26 @@ function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['ope
     copy.append(text('strong', member.name, 'font-size:12px;font-weight:680;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'));
     const status = el('span', undefined, 'display:flex;align-items:center;gap:5px;min-width:0');
     status.append(text('span', stateLabel(member.display_status), `font-size:9px;color:${stateColor(member.display_status)};white-space:nowrap`), text('span', `${done}/${assigned.length}`, 'font-size:9px;font-weight:650;opacity:.5;margin-left:auto'));
+    if (member.unread) status.append(text('span', `💬${member.unread}`, 'font-size:8.5px;font-weight:700;color:#2878e3;background:color-mix(in srgb,#2878e3 12%,transparent);border-radius:99px;padding:1px 6px;flex:none'));
     copy.append(status);
     const progress = el('progress'); progress.max = Math.max(1, assigned.length); progress.value = done; progress.style.cssText = `width:100%;height:4px;margin:0;accent-color:${color}`; progress.title = `${done}/${assigned.length} 个任务完成`;
-    copy.append(progress); button.append(avatar, copy); return button;
+    copy.append(progress); card.append(avatar, copy);
+    if (userAction && payload.lead_thread_id) {
+      const askRow = el('span', undefined, 'position:absolute;top:5px;right:6px;display:flex;align-items:center;gap:4px;max-width:72%');
+      const askButton = actionButton('追问', `以主导者身份向 ${member.name} 发送团队消息`, () => {
+        const input = el('input', undefined, 'font:600 10px system-ui;padding:3px 6px;border-radius:6px;border:1px solid color-mix(in srgb,currentColor 22%,transparent);color:inherit;background:Canvas;min-width:96px;flex:1');
+        input.placeholder = `向 ${member.name} 说…`;
+        const send = actionButton('发送', '发送团队消息', () => {
+          const message = input.value.trim();
+          if (message) void runUserAction(userAction, send, { action: 'message/send', threadId: payload.lead_thread_id!, teamId: payload.team_id, to: member.id, message });
+        });
+        input.addEventListener('keydown', event => { if (event.key === 'Enter') send.click(); });
+        askRow.replaceChildren(input, send, actionButton('×', '取消', () => askRow.replaceChildren(askButton)));
+        input.focus();
+      });
+      askRow.append(askButton); card.append(askRow);
+    }
+    return card;
   };
   const laneOf = (member: TeamMemberPayload, index: number) => {
     const color = memberColor(index), assigned = tasksOf(member.id), done = assigned.filter(task => task.status === 'completed').length;
@@ -183,6 +229,34 @@ function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['ope
       const title = text('div', task.title, 'font-size:10.5px;font-weight:620;line-height:1.35'); title.className = 'harness-mix-team-clamp2'; title.title = task.title;
       card.append(topRow, title);
       if ((task.dependsOn?.length ?? 0) > 0) card.append(text('div', `依赖 ${task.dependsOn!.length} 项任务`, 'font-size:8px;opacity:.45'));
+      if (userAction && payload.lead_thread_id) {
+        const assignee = payload.members.find(member => member.id === task.assignee);
+        const row = el('div', undefined, 'display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0');
+        const renderDefault = () => {
+          row.replaceChildren();
+          if (task.status === 'in_progress') {
+            row.append(actionButton('取消', '取消该任务并停止成员会话', () => {
+              if (window.confirm(`取消任务「${task.title}」？运行中的成员会话将被停止。`)) void runUserAction(userAction, row, { action: 'task/cancel', threadId: payload.lead_thread_id!, teamId: payload.team_id, taskId: task.id });
+            }, '#d14343'));
+          } else if (task.status === 'failed' || task.status === 'interrupted') {
+            row.append(
+              actionButton(task.status === 'failed' ? '重试' : '恢复', `把任务重新派给 ${assignee?.name ?? '原成员'}`, () => {
+                void runUserAction(userAction, row, { action: 'task/reassign', threadId: payload.lead_thread_id!, teamId: payload.team_id, taskId: task.id, memberId: task.assignee });
+              }, '#c17022'),
+              actionButton('改派', '改派给其他成员', () => {
+                const select = el('select', undefined, 'font:600 9px system-ui;padding:3px 4px;border-radius:6px;border:1px solid color-mix(in srgb,currentColor 22%,transparent);color:inherit;background:Canvas;max-width:120px;min-width:0');
+                select.append(new Option('改派给…', ''));
+                for (const candidate of payload.members) if (candidate.id !== task.assignee) select.append(new Option(candidate.name, candidate.id));
+                const go = actionButton('确定', '执行改派', () => {
+                  if (select.value) void runUserAction(userAction, row, { action: 'task/reassign', threadId: payload.lead_thread_id!, teamId: payload.team_id, taskId: task.id, memberId: select.value });
+                });
+                row.replaceChildren(select, go, actionButton('×', '取消改派', renderDefault));
+              }));
+          }
+        };
+        renderDefault();
+        if (row.childElementCount) card.append(row);
+      }
       list.append(card);
     }
     if (!assigned.length) list.append(text('div', '等待主导者分配任务', 'font-size:9px;opacity:.42;padding:10px 2px;text-align:center'));
@@ -231,7 +305,7 @@ function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['ope
   board.append(left, feed); return board;
 }
 
-function renderSummary(payload: TeamCardPayload, open: () => void, openThread?: TeamCardOptions['openThread']) {
+function renderSummary(payload: TeamCardPayload, open: () => void, openThread?: TeamCardOptions['openThread'], userAction?: TeamUserAction) {
   const panel = el('section', 'harness-mix-team-panel', 'box-sizing:border-box;border:1px solid color-mix(in srgb,currentColor 12%,transparent);border-radius:14px;background:color-mix(in srgb,Canvas 90%,transparent);box-shadow:0 8px 28px color-mix(in srgb,#000 7%,transparent);backdrop-filter:blur(18px);color:inherit;font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 14px;display:grid;gap:10px;min-width:0'); panel.dataset.teamId = payload.team_id; panel.dataset.teamStatus = payload.status;
   const top = el('div', undefined, 'display:flex;align-items:center;gap:12px;min-width:0');
   const identity = el('div', undefined, 'display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:10px;min-width:0;flex:1');
@@ -242,6 +316,7 @@ function renderSummary(payload: TeamCardPayload, open: () => void, openThread?: 
   const goal = text('span', payload.goal, 'font-size:10px;opacity:.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'); goal.title = payload.goal;
   copy.append(eyebrow, title, goal); identity.append(leadIcon, copy);
   const button = el('button', 'harness-mix-team-open', 'border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:8px;background:color-mix(in srgb,currentColor 5%,transparent);color:inherit;font:650 11px system-ui;padding:7px 10px;cursor:pointer;white-space:nowrap'); button.type = 'button'; button.textContent = '展开详情'; button.addEventListener('click', open); top.append(identity, metrics(payload), button);
+  if (userAction && payload.lead_thread_id && payload.tasks.some(task => task.status === 'interrupted')) top.append(continueButton(payload, userAction));
   const members = el('div', 'harness-mix-team-summary-members harness-mix-team-scroll', 'display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;padding-bottom:1px');
   payload.members.forEach((member, index) => {
     const color = memberColor(index);
@@ -255,6 +330,7 @@ function renderSummary(payload: TeamCardPayload, open: () => void, openThread?: 
     icon.append(collaborationIcon(member.agent, member.name, 18), dot);
     const label = el('span', undefined, 'display:grid;min-width:0;line-height:1.2');
     label.append(text('strong', member.name, 'font-size:10px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), text('span', member.role, 'font-size:8.5px;opacity:.52;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'), text('span', stateLabel(member.display_status), `font-size:8.5px;color:${stateColor(member.display_status)}`));
+    if (member.unread) label.append(text('span', `💬 ${member.unread} 条未读`, 'font-size:8.5px;font-weight:700;color:#2878e3'));
     chip.append(icon, label); members.append(chip);
   });
   const completed = payload.tasks.filter(task => task.status === 'completed').length, progress = el('progress'); progress.max = Math.max(1, payload.tasks.length); progress.value = completed; progress.style.cssText = 'width:72px;height:5px;accent-color:#1f9d68;margin-left:auto;flex:none'; progress.title = `${completed}/${payload.tasks.length} 个任务完成`; members.append(progress, text('span', `${completed}/${payload.tasks.length}`, 'font-size:9px;font-weight:700;opacity:.52;white-space:nowrap'));
@@ -293,7 +369,10 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     const timeline = el('div', 'harness-mix-team-timeline', 'display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0'), event = text('span', '实时状态', 'font-size:9px;opacity:.55;min-width:60px;text-align:right'), range = el('input'); range.type = 'range'; range.min = '0'; range.max = '0'; range.value = '0'; range.style.cssText = 'width:min(120px,16vw);accent-color:#2878e3';
     const live = el('button', undefined, 'border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;background:transparent;color:inherit;font:600 10px system-ui;padding:5px 7px;cursor:pointer'); live.type = 'button'; live.textContent = '实时';
     const play = el('button', undefined, 'border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;background:color-mix(in srgb,currentColor 6%,transparent);color:inherit;font:600 10px system-ui;padding:5px 8px;cursor:pointer'); play.type = 'button'; play.textContent = '回放';
-    const collapse = el('button', 'harness-mix-team-back', 'border:0;background:transparent;color:inherit;font:650 10px system-ui;cursor:pointer;padding:6px 7px;opacity:.68'); collapse.type = 'button'; collapse.textContent = '收起详情'; collapse.addEventListener('click', close); timeline.append(event, range, live, play, collapse); header.append(title, statsWrap, progressWrap, timeline);
+    const collapse = el('button', 'harness-mix-team-back', 'border:0;background:transparent;color:inherit;font:650 10px system-ui;cursor:pointer;padding:6px 7px;opacity:.68'); collapse.type = 'button'; collapse.textContent = '收起详情'; collapse.addEventListener('click', close); timeline.append(event, range, live, play, collapse);
+    // 用户操作位（继续协作等）：随 render() 按 visible 状态重建，避免静态按钮过期
+    const headerActions = el('div', undefined, 'display:flex;align-items:center;gap:6px;flex:none');
+    header.append(title, statsWrap, progressWrap, timeline, headerActions);
     const content = el('div', undefined, 'min-height:0'); workbench.append(header, content); source.after(workbench);
     let renderedSignature = '';
     const render = () => {
@@ -304,10 +383,11 @@ export function installTeamCards(options: TeamCardOptions = {}) {
       const signature = JSON.stringify([visible.updated_at, visible.status, visible.lead?.display_status, visible.members.map(member => member.display_status), visible.tasks.map(task => `${task.id}:${task.status}`), visible.messages.length, snapshots.length, index]);
       if (signature === renderedSignature) return;
       renderedSignature = signature;
-      content.replaceChildren(renderBoard(visible, async threadId => { close(); await options.openThread?.(threadId); }, feedSnapshots));
+      content.replaceChildren(renderBoard(visible, async threadId => { close(); await options.openThread?.(threadId); }, feedSnapshots, options.userAction));
       teamName.textContent = visible.name; subtitle.textContent = visible.goal; subtitle.title = visible.goal;
       teamPill.textContent = stateLabel(visible.status); teamPill.style.cssText = pillCss(visible.status);
       statsWrap.replaceChildren(...headerStats(visible));
+      headerActions.replaceChildren(...(options.userAction && visible.tasks.some(task => task.status === 'interrupted') ? [continueButton(visible, options.userAction)] : []));
       const completion = completionOf(visible); progressBar.max = Math.max(1, completion.total); progressBar.value = completion.done; progressPct.textContent = `${completion.pct}%`;
       range.max = String(Math.max(0, snapshots.length - 1));
       range.value = String(index >= 0 ? index : Math.max(0, snapshots.length - 1));
@@ -322,7 +402,7 @@ export function installTeamCards(options: TeamCardOptions = {}) {
   const scan = () => {
     if (disposed) return;
     const selector = '[data-testid*="tool"], [data-turn-key], [data-local-conversation-item-target-ids], pre[data-testid*="tool"]';
-    for (const candidate of document.querySelectorAll<HTMLElement>(selector)) { if (candidate.closest('.harness-mix-team-panel,.harness-mix-team-workbench')) continue; const payload = parseTeamPayload(candidate.textContent ?? ''); if (!payload) continue; if ([...candidate.querySelectorAll<HTMLElement>(selector)].some(child => parseTeamPayload(child.textContent ?? ''))) continue; const signature = `${payload.updated_at ?? 0}:${payload.tasks.length}:${payload.messages.length}:${payload.members.map(member => member.display_status).join(',')}`; if (signatures.get(candidate) === signature) continue; const panel = renderSummary(payload, () => open(payload), options.openThread); if (candidate.tagName === 'PRE') { if (!candidate.dataset.harnessMixTeamDisplay) candidate.dataset.harnessMixTeamDisplay = candidate.style.display || '__empty__'; candidate.style.display = 'none'; if (candidate.nextElementSibling?.classList.contains('harness-mix-team-panel')) candidate.nextElementSibling.remove(); candidate.after(panel); } else { candidate.querySelector(':scope > .harness-mix-team-panel')?.remove(); candidate.append(panel); } signatures.set(candidate, signature); }
+    for (const candidate of document.querySelectorAll<HTMLElement>(selector)) { if (candidate.closest('.harness-mix-team-panel,.harness-mix-team-workbench')) continue; const payload = parseTeamPayload(candidate.textContent ?? ''); if (!payload) continue; if ([...candidate.querySelectorAll<HTMLElement>(selector)].some(child => parseTeamPayload(child.textContent ?? ''))) continue; const signature = `${payload.updated_at ?? 0}:${payload.tasks.length}:${payload.messages.length}:${payload.members.map(member => member.display_status).join(',')}`; if (signatures.get(candidate) === signature) continue; const panel = renderSummary(payload, () => open(payload), options.openThread, options.userAction); if (candidate.tagName === 'PRE') { if (!candidate.dataset.harnessMixTeamDisplay) candidate.dataset.harnessMixTeamDisplay = candidate.style.display || '__empty__'; candidate.style.display = 'none'; if (candidate.nextElementSibling?.classList.contains('harness-mix-team-panel')) candidate.nextElementSibling.remove(); candidate.after(panel); } else { candidate.querySelector(':scope > .harness-mix-team-panel')?.remove(); candidate.append(panel); } signatures.set(candidate, signature); }
   };
   const removeActivePanel = () => { if (workbench?.dataset.teamSource === 'active-thread') close(); activePanel?.remove(); activePanel = null; activeSignature = ''; activeThreadId = ''; };
   const refreshActiveTeam = async () => {
@@ -344,7 +424,7 @@ export function installTeamCards(options: TeamCardOptions = {}) {
       if (activePanel?.isConnected && activeSignature === signature && activeThreadId === context.threadId) return;
       const reopen = workbench?.dataset.teamId === payload.team_id && workbench.dataset.teamSource === 'active-thread';
       removeActivePanel();
-      activePanel = renderSummary(payload, () => open(payload), options.openThread);
+      activePanel = renderSummary(payload, () => open(payload), options.openThread, options.userAction);
       activePanel.classList.add('harness-mix-team-launcher');
       activePanel.dataset.teamSource = 'active-thread';
       activePanel.style.cssText += ';margin:8px 16px 0;flex:none;position:relative;z-index:11';

@@ -772,11 +772,19 @@ export function installRendererBindingProbe(
       const client = modelClientForHost('local');
       return (client as any)?.applyThreadWorkspace?.({ threadId, digest }) ?? { patch: '', digest: '' };
     },
+    continueCollab: async (threadId, taskId) => {
+      const client = modelClientForHost('local');
+      return (client as any)?.collaborationUserAction?.({ action: 'continue', threadId, ...(taskId ? { taskId } : {}) });
+    },
   });
   const teamCards = installTeamCards({
     inspectTeam: async (threadId, teamId) => {
       const client = modelClientForHost('local');
       return client?.inspectThreadTeam?.({ threadId, ...(teamId ? { teamId } : {}) }) ?? null;
+    },
+    userAction: async input => {
+      const client = modelClientForHost('local');
+      return client?.collaborationUserAction?.(input) ?? null;
     },
     openThread: (threadId) => openRendererThread(hostThreadIdSchema.parse(threadId), { hostId: 'local' }),
     activeThread: () => {

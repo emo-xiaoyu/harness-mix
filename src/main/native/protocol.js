@@ -772,6 +772,12 @@ class NativeProtocol {
     }
     if (method === 'harnessmix/thread/ownership/list') return { threads: params.threadIds.map(id => ({ threadId: id, owner: this.owns(id) ? 'external' : 'codex', ...(this.owns(id) ? { harnessId: externalId(this.thread(id).harnessId) } : {}) })) };
     if (method === 'harnessmix/thread/team/inspect') return this.runtime.collaboration.inspectTeam(params.threadId, params.teamId);
+    // 看板操作面：principal 是用户（授权在 collaboration.userAction 内统一裁决）。
+    // cancel/message 任意时刻可执行；reassign/continue 由 Host 向 lead 线程注入指令回合。
+    if (method === 'harnessmix/thread/team/task/cancel') return this.runtime.collaboration.userAction(params.threadId, 'task/cancel', { teamId: params.teamId, taskId: params.taskId });
+    if (method === 'harnessmix/thread/team/task/reassign') return this.runtime.collaboration.userAction(params.threadId, 'task/reassign', { teamId: params.teamId, taskId: params.taskId, memberId: params.memberId, ...(params.note ? { note: params.note } : {}) });
+    if (method === 'harnessmix/thread/team/message/send') return this.runtime.collaboration.userAction(params.threadId, 'message/send', { teamId: params.teamId, to: params.to ?? '*', message: params.message, ...(params.kind ? { kind: params.kind } : {}) });
+    if (method === 'harnessmix/thread/collaboration/continue') return this.runtime.collaboration.userAction(params.threadId, 'continue', params.taskId ? { taskId: params.taskId } : {});
     if (method === 'harnessmix/thread/inspect') {
       if (!thread) return { owner: 'codex', locked: true };
       const catalog = await this.runtime.describe(thread.harnessId);
