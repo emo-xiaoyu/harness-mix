@@ -2,6 +2,14 @@ const { JsonlProcess, cliSpawn } = require('../host/jsonl');
 
 const shared = new Map();
 
+// codex 拒绝在缺失的 CODEX_HOME 下启动、或握手被外部因素（杀软扫描/磁盘/版本握手）挂住时，
+// initialize 永不返回。没有这个上限，thread/start 会永久 pending，Desktop 端表现为
+// 新对话"一直在执行"却没有会话产生。测试可用 env 覆盖。
+function handshakeTimeoutMs() {
+  const raw = Number(process.env.HARNESS_MIX_CODEX_HANDSHAKE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 100 ? raw : 20_000;
+}
+
 /**
  * A single native Codex app-server connection shared by every Codex thread.
  * app-server owns thread/session persistence; this class only routes JSON-RPC
@@ -25,17 +33,27 @@ class CodexAppServer {
       onDiagnostic: (line) => this.#diagnostic(line),
       onExit: (error) => this.#exit(error),
     });
-    this.ready = this.process.request('initialize', {
-      clientInfo: { name: 'harness-mix', title: 'Harness Mix', version: '0.1.0' },
-      capabilities: {
-        experimentalApi: true,
-        requestAttestation: false,
-        mcpServerOpenaiFormElicitation: false,
-      },
-    }).then((result) => {
-      this.process.notify('initialized', {});
-      return result;
-    });
+    let rejectHandshake;
+    const handshakeGuard = new Promise((_unused, reject) => { rejectHandshake = reject; });
+    const handshakeTimer = setTimeout(() => {
+      this.stop();
+      rejectHandshake(new Error(`Codex app-server 未在 ${Math.round(handshakeTimeoutMs() / 1000)} 秒内完成初始化握手，已终止进程`));
+    }, handshakeTimeoutMs());
+    handshakeTimer.unref?.();
+    this.ready = Promise.race([
+      this.process.request('initialize', {
+        clientInfo: { name: 'harness-mix', title: 'Harness Mix', version: '0.1.0' },
+        capabilities: {
+          experimentalApi: true,
+          requestAttestation: false,
+          mcpServerOpenaiFormElicitation: false,
+        },
+      }).then((result) => {
+        this.process.notify('initialized', {});
+        return result;
+      }),
+      handshakeGuard,
+    ]).finally(() => clearTimeout(handshakeTimer));
   }
 
   static async acquire(diagnostic, codexHome) {

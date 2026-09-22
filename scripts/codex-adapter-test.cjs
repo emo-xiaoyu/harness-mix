@@ -198,5 +198,41 @@ function fakeSession() {
   assert.deepEqual(interrupts, ['turn/interrupt']);
   assert.equal(interruptSession.state.turn, null);
 
-  console.log('codex adapter: native notifications, usage, multi-question, approvals and cancel shapes passed');
+  // startTurnAfterNativeSettlement：busy 瞬时占用按指数退避重试；其他错误必须立刻可见
+  {
+    const { startTurnAfterNativeSettlement } = require('../src/main/adapters/codex');
+    let busyCalls = 0;
+    const busyHost = { request: async () => { if (++busyCalls <= 2) throw new Error('Agent is already processing.'); return { turn: { id: 'turn-ok' } }; } };
+    assert.deepEqual(await startTurnAfterNativeSettlement(busyHost, { threadId: 't' }), { turn: { id: 'turn-ok' } });
+    assert.equal(busyCalls, 3);
+    let strictCalls = 0;
+    const strictHost = { request: async () => { strictCalls++; throw new Error('model not found'); } };
+    await assert.rejects(() => startTurnAfterNativeSettlement(strictHost, { threadId: 't' }), /model not found/);
+    assert.equal(strictCalls, 1, '非 busy 错误不得重试');
+  }
+
+  // 握手超时：app-server 拉起后永不应答 initialize 时，acquire 必须限时终止并报错，
+  // 而不是让 thread/start 永久 pending（Desktop 端表现为新对话一直"在执行"、无会话产生）。
+  // Windows 夹具：cmd.exe 无 /c 时进入交互态等待 stdin，永不输出 JSON-RPC。
+  if (process.platform === 'win32') {
+    const { CodexAppServer } = require('../src/main/adapters/codex-app-server');
+    const previousExecutable = process.env.HARNESS_MIX_CODEX_EXECUTABLE;
+    const previousStock = process.env.HARNESSMIX_STOCK_CODEX_PATH;
+    const previousTimeout = process.env.HARNESS_MIX_CODEX_HANDSHAKE_TIMEOUT_MS;
+    process.env.HARNESS_MIX_CODEX_EXECUTABLE = process.env.ComSpec || 'cmd.exe';
+    process.env.HARNESS_MIX_CODEX_HANDSHAKE_TIMEOUT_MS = '600';
+    delete process.env.HARNESSMIX_STOCK_CODEX_PATH;
+    try {
+      const startedAt = Date.now();
+      await assert.rejects(() => CodexAppServer.acquire(), /完成初始化握手/);
+      const elapsed = Date.now() - startedAt;
+      assert.ok(elapsed >= 500 && elapsed < 5_000, `握手超时应接近配置窗口（实际 ${elapsed}ms）`);
+    } finally {
+      if (previousExecutable) process.env.HARNESS_MIX_CODEX_EXECUTABLE = previousExecutable; else delete process.env.HARNESS_MIX_CODEX_EXECUTABLE;
+      if (previousStock) process.env.HARNESSMIX_STOCK_CODEX_PATH = previousStock; else delete process.env.HARNESSMIX_STOCK_CODEX_PATH;
+      if (previousTimeout) process.env.HARNESS_MIX_CODEX_HANDSHAKE_TIMEOUT_MS = previousTimeout; else delete process.env.HARNESS_MIX_CODEX_HANDSHAKE_TIMEOUT_MS;
+    }
+  }
+
+  console.log('codex adapter: native notifications, usage, multi-question, approvals, cancel shapes, busy retry and handshake timeout passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

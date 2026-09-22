@@ -71,6 +71,40 @@ async function main() {
     assert.equal(registry.includes('work@example.com'), false, 'Registry must not persist isolated identity or credentials');
     await manager.delete(created.account.accountId);
     assert.equal(fs.existsSync(context.codexHome), false);
+
+    // ── 旧结构账号兼容：显式 codexHome 必须被尊重（曾因改写到不存在的 profiles/<id>
+    //    导致 codex app-server 拒绝启动，新会话静默消失）
+    const legacyHome = path.join(root, 'real-codex-home');
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.writeFileSync(path.join(root, 'codex-accounts', 'accounts.json'), JSON.stringify({
+      version: 1,
+      activeAccountId: 'default',
+      accounts: [
+        { accountId: 'default', label: 'Default Codex Account', codexHome: legacyHome },
+        { accountId: 'account-broken', label: 'Broken', codexHome: 'relative/not/absolute' },
+        { accountId: 'account-managed', label: 'Managed' },
+      ],
+    }));
+    const legacyManager = new CodexAccountManager({ dataDirectory: root, requestOfficial: official, emit: () => {}, acquireServer });
+    const legacyContext = legacyManager.executionContext('default');
+    assert.equal(legacyContext.codexHome, legacyHome, 'Legacy explicit codexHome must be honored, not rewritten to profiles/<id>');
+    assert.equal(fs.existsSync(path.join(root, 'codex-accounts', 'profiles', 'default')), false, 'No phantom profiles/default dir may be created for a legacy account');
+
+    // 相对路径残留 → 回落托管 profile 并自愈建目录
+    const brokenContext = legacyManager.executionContext('account-broken');
+    assert.ok(brokenContext.codexHome.startsWith(path.join(root, 'codex-accounts', 'profiles') + path.sep));
+    assert.equal(fs.existsSync(brokenContext.codexHome), true, 'Missing managed profile dir must be self-healed (codex refuses a missing CODEX_HOME)');
+
+    // 无 codexHome 的托管条目同样自愈
+    const managedContext = legacyManager.executionContext('account-managed');
+    assert.equal(fs.existsSync(managedContext.codexHome), true);
+
+    // 删除指向外部目录的旧账号：只移除账号槽位，不动外部目录
+    await legacyManager.delete('default');
+    assert.equal(fs.existsSync(legacyHome), true, 'External codexHome must never be deleted with the account');
+    const afterDelete = await legacyManager.list();
+    assert.equal(afterDelete.accounts.some(account => account.accountId === 'default'), false, 'Legacy account slot must be removed from the registry');
+    legacyManager.close();
   } finally {
     manager.close();
     fs.rmSync(root, { recursive: true, force: true });

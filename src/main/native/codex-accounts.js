@@ -80,6 +80,8 @@ class CodexAccountManager {
         if (!entry || !ACCOUNT_ID.test(entry.accountId) || typeof entry.label !== 'string' || !entry.label.trim() || entry.accountId === OFFICIAL_ACCOUNT_ID || seen.has(entry.accountId)) return false;
         seen.add(entry.accountId);
         entry.label = entry.label.trim().slice(0, 256);
+        // 旧结构条目才带 codexHome；非字符串的残留一律丢弃，回落到托管 profile 路径
+        if (typeof entry.codexHome !== 'string' || !entry.codexHome.trim()) delete entry.codexHome;
         return true;
       }).slice(0, 127);
       const activeAccountId = value.activeAccountId === OFFICIAL_ACCOUNT_ID || accounts.some(entry => entry.accountId === value.activeAccountId)
@@ -102,8 +104,17 @@ class CodexAccountManager {
     if (accountId === OFFICIAL_ACCOUNT_ID) return { accountId, label: 'Codex 官方账号', codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), native: true };
     const entry = this.registry.accounts.find(candidate => candidate.accountId === accountId);
     if (!entry) throw new Error('Unknown Codex account');
+    // 旧结构条目带显式绝对 codexHome（如 default → ~/.codex）：尊重原路径。
+    // codex 拒绝在不存在的 CODEX_HOME 下启动（进程退出码 1），改写路径会让这类账号
+    // 的每次会话都死在拉起阶段，且用户无从看到原因。
+    if (typeof entry.codexHome === 'string' && path.isAbsolute(entry.codexHome)) {
+      return { ...entry, codexHome: path.resolve(entry.codexHome), native: false };
+    }
     const codexHome = path.resolve(this.profilesRoot, entry.accountId);
     if (!codexHome.startsWith(`${path.resolve(this.profilesRoot)}${path.sep}`)) throw new Error('Invalid Codex account directory');
+    // 托管 profile 目录缺失时自愈：目录被删/迁移未带上时补建空目录（未登录态），
+    // 而不是让 codex app-server 直接拒绝启动
+    if (!fs.existsSync(codexHome)) fs.mkdirSync(codexHome, { recursive: true });
     return { ...entry, codexHome, native: false };
   }
 
@@ -161,10 +172,10 @@ class CodexAccountManager {
     const entry = this.#entry(accountId);
     if (entry.native) throw new Error('The official Codex account cannot be deleted');
     if ([...this.logins.values()].some(login => login.accountId === accountId)) throw new Error('Cancel account sign-in before deleting it');
-    const resolved = path.resolve(entry.codexHome);
-    const root = path.resolve(this.profilesRoot);
-    if (!resolved.startsWith(`${root}${path.sep}`)) throw new Error('Refusing to delete an account outside the managed profile directory');
-    fs.rmSync(resolved, { recursive: true, force: true });
+    // 只删除托管 profile 目录（profiles/<accountId>）；旧条目指向的外部目录
+    // （如 ~/.codex）绝不能随账号删除，但账号槽位本身要能移除
+    const managed = path.join(path.resolve(this.profilesRoot), entry.accountId);
+    if (path.resolve(entry.codexHome) === managed) fs.rmSync(managed, { recursive: true, force: true });
     this.registry.accounts = this.registry.accounts.filter(candidate => candidate.accountId !== accountId);
     if (this.registry.activeAccountId === accountId) this.registry.activeAccountId = OFFICIAL_ACCOUNT_ID;
     this.#save();

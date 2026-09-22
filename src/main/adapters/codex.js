@@ -368,16 +368,20 @@ function reviewerToWire(reviewer) {
 }
 
 const APP_SERVER_BUSY = /^Agent is already processing(?:\.|$)/i;
+// busy 重试总预算：覆盖同线程 queue-start 的瞬时清槽，也覆盖共享 app-server 上
+// 另一线程的短 turn（部分版本按进程串行 turn）；长 turn 仍会超预算失败并如实报错
+const BUSY_RETRY_BUDGET_MS = 20_000;
 
 async function startTurnAfterNativeSettlement(host, params) {
   // A queue-start can arrive immediately after turn/completed, while app-server is still
   // clearing its active-turn slot. Keep the same logical Core turn and retry only this
   // narrow transient; other errors must remain visible and must never be duplicated.
-  for (let attempt = 0, delay = 25; ; attempt++, delay *= 2) {
+  const deadline = Date.now() + BUSY_RETRY_BUDGET_MS;
+  for (let delay = 25; ; delay = Math.min(delay * 2, 2_000)) {
     try {
       return await host.request('turn/start', params);
     } catch (error) {
-      if (!APP_SERVER_BUSY.test(String(error?.message ?? error)) || attempt >= 5) throw error;
+      if (!APP_SERVER_BUSY.test(String(error?.message ?? error)) || Date.now() + delay > deadline) throw error;
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -683,4 +687,4 @@ manifest.integrations = { mcp: true, skills: {
   project: ['.agents/skills'],
   overrides: { '.codex/skills': { env: 'CODEX_HOME', suffix: 'skills' } },
 } };
-module.exports = { manifest, create, projectNotification, queueRequest, usageView, modelView };
+module.exports = { manifest, create, projectNotification, queueRequest, usageView, modelView, startTurnAfterNativeSettlement };
