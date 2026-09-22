@@ -706,8 +706,23 @@ class Collaboration {
         return;
       }
       // Child native file events remain visible; only the lead snapshots the shared workspace.
-      const sending = rt.send(child.id, task, { collaborationOf: parent.id, isolated: job.workspace.mode === 'worktree' });
-      let sendDone = false, sendError;
+      // 成员会话可能被并发占用（邮箱投递泵、用户追问、上一回合结算尾部，或 isRunning
+      // 已清而 sending 锁未释放的结算窗口）：busy 拒绝等空闲后重试（≤10s），而不是把
+      // 「任务正在执行」误判为任务失败（改派/重派紧跟失败结算时尤其容易触发）
+      let sendDone = false, sendError, sendRetrying = false;
+      const dispatchInput = async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await rt.send(child.id, task, { collaborationOf: parent.id, isolated: job.workspace.mode === 'worktree' });
+          } catch (error) {
+            if (!/任务正在执行/.test(String(error?.message ?? error)) || attempt >= 100) throw error;
+            sendRetrying = true;
+            await delay(100);
+            sendRetrying = false;
+          }
+        }
+      };
+      const sending = dispatchInput();
       void sending.then(() => { sendDone = true; }, error => { sendDone = true; sendError = error; });
       const timeoutMs = rt.delegationTimeoutMs ?? 30 * 60 * 1000;
       const until = Date.now() + timeoutMs;
@@ -719,7 +734,8 @@ class Collaboration {
         const childRunning = rt.threads.some(t => t.id === child.id) && (rt.execution.isRunning(child.id) || child.reviewPending);
         if (!childRunning) {
           if (!turnInactiveSince) turnInactiveSince = Date.now();
-          if (sendDone || Date.now() - turnInactiveSince > 2000) break;
+          // sendRetrying 期间不按「子回合静默」提前结算：投递还在等成员空闲
+          if (sendDone || (!sendRetrying && Date.now() - turnInactiveSince > 2000)) break;
         } else {
           turnInactiveSince = null;
         }

@@ -6,7 +6,7 @@ const { HostRuntime } = require('../src/main/host/runtime');
 const { mentionedAgents, teamTaskDepths, teamPhase, teamProgress } = require('../src/main/host/collaboration');
 const { createWorkspace, reviewWorkspace, git } = require('../src/main/host/collaboration-worktree');
 const { JsonlProcess } = require('../src/main/host/jsonl');
-const wait = async fn => { for (let i = 0; i < 300; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Timed out'); };
+const wait = async fn => { for (let i = 0; i < 600; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Timed out'); };
 
 async function main() {
   const root = await fs.mkdtemp(path.resolve('output/collaboration-'));
@@ -461,15 +461,17 @@ async function main() {
       const r2Fail = id => r2Pending.get(id).s.emit({ kind: 'error', message: 'flaky build' });
       const r2Ok = (id, text) => { const entry = r2Pending.get(id); entry.s.emit({ kind: 'text-delta', text }); entry.s.emit({ kind: 'completed', finalAnswer: true }); };
       const r2Delegate = async (task, attempt) => r2Call('delegate_to_agent', { agent_type: 'worker', task: attempt, team_id: r2Team.team_id, member_id: r2Team.members[0].id, team_task_id: task.id, isolation: 'shared' });
-      // pending.has 只保证 adapter.send 已被调用；回合注册可能滞后，结算事件必须等回合真正处于运行态
-      const r2WaitChild = async job => wait(() => { const child = r2Rt.collaboration.jobs.get(job.task_id).childId; return child && r2Pending.has(child) && r2Rt.execution.isRunning(child); });
+      // 等发送记录本身（每场景唯一文本），而不是 r2Pending.has + isRunning：回合注册先于
+      // adapter.send 投递（中间有 review 快照/save 等 await），按运行态同步会在「已注册
+      // 未投递」窗口提前放行，r2Fail 会结算一个从未投递的回合，计数随即少一
+      const r2WaitSent = text => wait(() => r2Sends.some(send => send.text.startsWith(text)));
       const r2WaitTurn = () => wait(() => r2Rt.execution.isRunning(childA));
 
       // A) retry {max:1}：失败 → system 通知 + 自动重派（附失败原因、复用成员会话）→ 成功
       const taskA = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'A', description: 'retry then pass', assignee: r2Team.members[0].id, retry: { max: 1 } })).task;
       assert.deepEqual(taskA.retry, { max: 1, used: 0 }, '预算持久化在任务上');
-      const jobA = await r2Delegate(taskA, 'attempt one');
-      await r2WaitChild(jobA);
+      const jobA = await r2Delegate(taskA, 'attempt one A');
+      await r2WaitSent('attempt one A');
       const childA = r2Rt.collaboration.jobs.get(jobA.task_id).childId;
       r2Fail(childA);
       await wait(() => r2Sends.filter(send => send.id === childA).length >= 2, '自动重派复用同一成员会话');
@@ -486,8 +488,8 @@ async function main() {
       // B) retry {max:1} 预算耗尽：两次失败后落 failed，两条通知（重试中/已耗尽）
       const taskB = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'B', description: 'always fails', assignee: r2Team.members[0].id, retry: { max: 1 } })).task;
       const baselineB = r2Sends.length;
-      const jobB = await r2Delegate(taskB, 'attempt one');
-      await r2WaitChild(jobB);
+      const jobB = await r2Delegate(taskB, 'attempt one B');
+      await r2WaitSent('attempt one B');
       r2Fail(childA);
       await wait(() => r2Sends.length >= baselineB + 2, '预算内自动重试');
       await r2WaitTurn();
@@ -505,8 +507,8 @@ async function main() {
       const taskC = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'C', description: 'no budget', assignee: r2Team.members[0].id })).task;
       assert.equal(taskC.retry, undefined, '未声明 retry 时行为与现状一致');
       const baselineC = r2Sends.length;
-      const jobC = await r2Delegate(taskC, 'attempt one');
-      await r2WaitChild(jobC);
+      const jobC = await r2Delegate(taskC, 'attempt one C');
+      await r2WaitSent('attempt one C');
       r2Fail(childA);
       await wait(() => r2TaskState(taskC).status === 'failed');
       assert.equal(r2Sends.length, baselineC + 1, '无预算不重派');
@@ -520,7 +522,7 @@ async function main() {
       // Phase 3：忙碌收件人 queued → 回合边界投递；成员未读计数
       const taskD = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'D', description: 'busy recipient', assignee: r2Team.members[0].id })).task;
       const jobD = await r2Delegate(taskD, 'busy work');
-      await r2WaitChild(jobD);
+      await r2WaitSent('busy work');
       const msgQ = await r2Call('send_team_message', { team_id: r2Team.team_id, to: r2Team.members[0].name, message: 'while busy' });
       assert.equal(msgQ.message.delivery, 'queued', '忙碌收件人聚合状态为 queued');
       assert.equal(msgQ.message.deliveryBy[r2Team.members[0].id], 'queued');
@@ -532,10 +534,11 @@ async function main() {
       assert.equal((await r2Call('get_team_state', { team_id: r2Team.team_id })).members[0].unread, 0, '送达后未读清零');
       assert.ok(r2Sends.some(send => send.id === childA && send.text.includes('while busy')), '排队消息按 teammate 信封投进原生会话');
 
-      // Phase 3 降级：排队消息在 lead 回合结束时回落邮箱并记录原因
+      // Phase 3 降级：排队消息在 lead 回合结束时回落邮箱并记录原因。
+      // E 的语义就是成员忙（'while busy' 投递回合仍在运行）：任务派发不要求送达
+      //（busy 会按重试窗口等待），直接验证消息排队与 lead 结束后的邮箱回落。
       const taskE = (await r2Call('assign_team_task', { team_id: r2Team.team_id, title: 'E', description: 'race the end', assignee: r2Team.members[0].id })).task;
       const jobE = await r2Delegate(taskE, 'busy again');
-      await r2WaitChild(jobE);
       const msgE = await r2Call('send_team_message', { team_id: r2Team.team_id, to: r2Team.members[0].name, message: 'race the end' });
       assert.equal(msgE.message.delivery, 'queued');
       await r2Rt.cancel(r2Parent.id);
