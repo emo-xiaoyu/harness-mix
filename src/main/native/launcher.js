@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const { nativePaths, nativeEnvironment, saveNativeSettings } = require('./config');
 const { runUpdateFlow, reexecLauncher } = require('./updater');
-const { markBootOk, pidAlive } = require('./update-state');
+const { markBootOk, pidAlive, compareVersions } = require('./update-state');
 const { inspectPosix, assertDesktopStopped } = require('./platform');
 const {
   evaluateDesktopCompatibility,
@@ -14,6 +14,22 @@ const {
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const LIVE_HOST_HEARTBEAT_MS = 15000;
+// Codex Desktop ≥26.917 vets CODEX_CLI_PATH: the app-server CLI resolver keeps the
+// value only when it is a bare command name (path separators or a drive letter make
+// it fall through to the desktop-managed core). For those builds the shim is handed
+// over by name and its directory is prepended to PATH inside the activation block.
+const BARE_CLI_NAME_DESKTOP_FLOOR = '26.917';
+
+function codexCliOverride(desktopVersion, shimPath, env = process.env, platform = process.platform) {
+  const forced = env.HARNESS_MIX_CODEX_CLI_PATH_MODE;
+  const bare = forced ? forced === 'bare'
+    : platform === 'win32' && compareVersions(desktopVersion, BARE_CLI_NAME_DESKTOP_FLOOR) >= 0;
+  if (!bare) return { CODEX_CLI_PATH: shimPath };
+  return {
+    CODEX_CLI_PATH: path.basename(shimPath).replace(/\.exe$/i, ''),
+    PATH: `${path.dirname(shimPath)}${path.delimiter}${env.PATH || ''}`,
+  };
+}
 
 function isCodexTaskEnvironment(env = process.env) {
   return Boolean(
@@ -208,9 +224,12 @@ async function launch(args = []) {
   const port = await freePort();
   const attachmentPort = await freePort();
   const nonce = crypto.randomBytes(16).toString('hex');
-  const overrides = { CODEX_CLI_PATH: paths.shim, HARNESSMIX_STOCK_CODEX_PATH: installation.stock,
+  const overrides = { ...codexCliOverride(installation.version, paths.shim), HARNESSMIX_STOCK_CODEX_PATH: installation.stock,
     HARNESSMIX_DATA_DIR: env.HARNESSMIX_DATA_DIR, HARNESS_MIX_NODE_PATH: process.execPath,
     HARNESSMIX_DEFAULT_AGENT: 'codex' };
+  if (overrides.CODEX_CLI_PATH !== paths.shim) {
+    console.log(`[Harness Mix] Codex Desktop ${installation.version} 仅接受裸命令名：CODEX_CLI_PATH=${overrides.CODEX_CLI_PATH}（经激活环境 PATH 解析 shim）。`);
+  }
   const block = Buffer.from(Object.entries(overrides).map(([k, v]) => `${k}=${v}`).join('\0') + '\0\0', 'utf16le').toString('base64');
   let desktop;
   let pid;
@@ -246,6 +265,7 @@ module.exports = {
   inspect,
   launch,
   cacheCodexRuntime,
+  codexCliOverride,
   isCodexTaskEnvironment,
   readLiveHostInstance,
   stopDesktopProcesses,
