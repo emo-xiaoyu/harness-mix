@@ -278,7 +278,7 @@ async function main() {
       ],
     }, 'Official and Harness-managed threads keep separate ownership');
     const runtimeInspection = await bridge.request('harness-mix/runtime/inspect');
-    assert.deepEqual(runtimeInspection.codex, { mode: 'official-passthrough', managedRoute: 'codex-harness' });
+    assert.deepEqual(runtimeInspection.codex, { mode: 'official-direct', managedRoute: 'codex-harness' });
     adapter.listCommands = async () => [{ id: 'compact', action: 'execute', label: 'Compact' }];
     let compactCalls = 0;
     adapter.executeCommand = async (_session, id, hooks) => {

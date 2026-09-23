@@ -173,9 +173,11 @@ async function launch(args = []) {
     ? { state: 'unverified', desktopVersion: 'unknown', evidence: null }
     : evaluateDesktopCompatibility(installation.version);
   const paths = nativePaths();
-  for (const file of Object.values(paths)) if (!fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);
+  for (const [name, file] of Object.entries(paths)) {
+    if (name !== 'shim' && !fs.existsSync(file)) throw new Error(`Missing ${file}; run npm run build:native`);
+  }
   if (flags.has('--check')) {
-    console.log(`platform=${process.platform}\narchitecture=${process.arch}\ndesktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\ncodex_mode=official-passthrough\ncodex_managed_route=codex-harness\nlauncher=${paths.cli}\nshim=${paths.shim}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
+    console.log(`platform=${process.platform}\narchitecture=${process.arch}\ndesktop_version=${installation.version}\ndesktop_compatibility=${compatibility.state}\ndesktop_evidence=${compatibility.evidence?.level || 'none'}\nexecutable_codex_cli=${installation.stock}\ncodex_mode=official-direct\ncodex_managed_route=codex-harness\nlauncher=${paths.cli}\nsidecar=${paths.wrapper}\nruntime=${paths.runtime}\nrenderer=${paths.renderer}\ncore=src/main/protocol-core`);
     return;
   }
   const skipUpdate = flags.has('--no-update') || process.env.HARNESS_MIX_AUTO_UPDATE === '0';
@@ -198,19 +200,15 @@ async function launch(args = []) {
   const env = nativeEnvironment();
   // Retire the previous runtime first: it still holds the data directory open
   // and would otherwise write over live sessions and accounts.
-  console.log('[Harness Mix] Restarting Codex Desktop: official Codex passthrough + Harness Mix routes.');
+  console.log('[Harness Mix] Restarting Codex Desktop: official Codex direct + Harness Mix sidecar routes.');
   stopDesktopProcesses(installation);
   await new Promise(resolve => setTimeout(resolve, 1000));
   sweepLeftovers(root, dataDir);
   saveNativeSettings(env);
-  fs.writeFileSync(path.join(path.dirname(paths.shim), 'node-path.txt'), process.execPath);
-  fs.writeFileSync(path.join(path.dirname(paths.shim), 'stock-path.txt'), installation.stock);
   const port = await freePort();
   const attachmentPort = await freePort();
   const nonce = crypto.randomBytes(16).toString('hex');
-  const overrides = { CODEX_CLI_PATH: paths.shim, HARNESSMIX_STOCK_CODEX_PATH: installation.stock,
-    HARNESSMIX_DATA_DIR: env.HARNESSMIX_DATA_DIR, HARNESS_MIX_NODE_PATH: process.execPath,
-    HARNESSMIX_DEFAULT_AGENT: 'codex' };
+  const overrides = { CODEX_CLI_PATH: installation.stock };
   const block = Buffer.from(Object.entries(overrides).map(([k, v]) => `${k}=${v}`).join('\0') + '\0\0', 'utf16le').toString('base64');
   let desktop;
   let pid;
@@ -225,7 +223,8 @@ async function launch(args = []) {
   console.log(`[Harness Mix] Desktop PID ${pid}, CDP ${port}`);
   const controller = spawn(process.execPath, [paths.controller, '--renderer-cdp-endpoint', `http://127.0.0.1:${port}`,
     '--renderer', paths.renderer, '--default-agent', 'codex', '--attachment-port', String(attachmentPort), '--attachment-nonce', nonce],
-  { env, stdio: 'inherit', windowsHide: true });
+  { env: { ...env, HARNESSMIX_STOCK_CODEX_PATH: installation.stock, HARNESSMIX_SIDECAR_SCRIPT: paths.wrapper },
+    stdio: 'inherit', windowsHide: true });
   controller.on('error', error => { console.error(error.message); process.exitCode = 1; });
   controller.on('exit', code => { process.exitCode = code || 0; });
   if (desktop) {

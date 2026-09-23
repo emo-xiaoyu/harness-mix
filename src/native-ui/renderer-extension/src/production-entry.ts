@@ -16,8 +16,16 @@ const install = (): void => {
   installRendererBinding(DEFAULT_RENDERER_AGENTS, configuration?.defaultAgent ?? "codex");
 };
 
-if (document.documentElement && document.body) {
+const installWhenTransportReady = (): void => {
+  if (window.__harnessmixSidecarModeV1 === true && !window.__harnessmixDraftPrewarmPolicyV1) {
+    window.addEventListener("harnessmix:draft-prewarm-policy-changed", install, { once: true });
+    return;
+  }
   install();
+};
+
+if (document.documentElement && document.body) {
+  installWhenTransportReady();
 } else {
-  window.addEventListener("DOMContentLoaded", install, { once: true });
+  window.addEventListener("DOMContentLoaded", installWhenTransportReady, { once: true });
 }

@@ -140,7 +140,7 @@ describe("production Desktop Controller", () => {
     expect(install).toHaveBeenCalledWith({
       rendererCdpEndpoint: "http://127.0.0.1:43123",
       rendererSource:
-        'globalThis.__zod_globalConfig ??= {}; globalThis.__zod_globalConfig.jitless = true;\nObject.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: "pi" } });\nproduction renderer',
+        'globalThis.__zod_globalConfig ??= {}; globalThis.__zod_globalConfig.jitless = true;\nObject.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: "pi" } });\nwindow.__harnessmixSidecarModeV1 = false;\nproduction renderer',
       enabledAgents: [
         "codex",
         "pi",

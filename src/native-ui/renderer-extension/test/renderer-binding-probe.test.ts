@@ -650,6 +650,8 @@ describe("Renderer Composer DOM behavior", () => {
     expect(isComposerSubmitButton(button("Attach files"))).toBe(false);
     expect(isComposerSubmitButton(button("Send"))).toBe(true);
     expect(isComposerSubmitButton(button("", "submit"))).toBe(true);
+    expect(isComposerSubmitButton(button("停止", "submit"))).toBe(false);
+    expect(isComposerSubmitButton(button("Stop", "submit"))).toBe(false);
   });
 
   it("recognizes a dictation control without treating attach or send as voice", () => {

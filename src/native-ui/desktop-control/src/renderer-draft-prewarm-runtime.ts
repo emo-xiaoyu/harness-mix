@@ -76,8 +76,10 @@ export function installDraftPrewarmPolicyBridge(
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && !Array.isArray(value);
   const isRemoteControlHost = hostId.startsWith("remote-control:");
-  if (isRemoteControlHost && typeof originalDispatchAppServerResponse !== "function") {
-    throw new Error("Renderer Remote Control approval response bridge is unavailable");
+  const isLocalSidecarHost = !isRemoteControlHost && target.__harnessmixSidecarModeV1 === true;
+  const usesExternalBridge = isRemoteControlHost || isLocalSidecarHost;
+  if (usesExternalBridge && typeof originalDispatchAppServerResponse !== "function") {
+    throw new Error("Renderer Host approval response bridge is unavailable");
   }
   const knownExternalThreadIds = new Set<string>();
   const knownOfficialThreadIds = new Set<string>();
@@ -178,7 +180,7 @@ export function installDraftPrewarmPolicyBridge(
     result: unknown,
   ): void => {
     if (!request || !isRecord(result)) return;
-    if (request.method === "thread/list" && Array.isArray(result.data)) {
+    if ((request.method === "thread/list" || request.method === "harnessmix/thread/list") && Array.isArray(result.data)) {
       for (const thread of result.data) rememberExternalThread(thread);
       return;
     }
@@ -216,6 +218,10 @@ export function installDraftPrewarmPolicyBridge(
   const handleBridgeFrame = (value: unknown): void => {
     if (!isRecord(value)) {
       failBridge("received a non-object app-server frame");
+      return;
+    }
+    if (typeof value.harnessmixSidecarFailure === "string") {
+      failBridge(value.harnessmixSidecarFailure, false);
       return;
     }
     if (value.method === bridgeReadyMethod && value.id === undefined) {
@@ -313,6 +319,15 @@ export function installDraftPrewarmPolicyBridge(
     return true;
   };
   const startBridge = (): Promise<void> => {
+    if (isLocalSidecarHost) {
+      if (bridgeReadyPromise) return bridgeReadyPromise;
+      if (typeof target.__harnessmixSidecarSendV1 !== "function") {
+        return Promise.reject(transportError("local Host binding is unavailable"));
+      }
+      bridgeState = "ready";
+      bridgeReadyPromise = Promise.resolve();
+      return bridgeReadyPromise;
+    }
     if (!isRemoteControlHost) return Promise.resolve();
     if (bridgeReadyPromise) return bridgeReadyPromise;
     bridgeState = "starting";
@@ -373,6 +388,10 @@ export function installDraftPrewarmPolicyBridge(
     const operation = async (): Promise<void> => {
       await startBridge();
       if (bridgeState !== "ready") throw transportError("is not ready");
+      if (isLocalSidecarHost) {
+        (target.__harnessmixSidecarSendV1 as (frame: string) => void)(JSON.stringify(value));
+        return;
+      }
       await originalSend.call(bridge, "process/writeStdin", {
         processHandle: bridgeProcessHandle,
         deltaBase64: utf8Base64(`${JSON.stringify(value)}\n`),
@@ -420,6 +439,10 @@ export function installDraftPrewarmPolicyBridge(
   const initializeBridge = (): Promise<void> => {
     resetFailedBridge();
     if (bridgeInitialization) return bridgeInitialization;
+    if (isLocalSidecarHost) {
+      bridgeInitialization = startBridge();
+      return bridgeInitialization;
+    }
     bridgeInitialization = startBridge()
       .then(() => initializeBridgeProtocol())
       .then(() => writeBridgeFrame({ method: "initialized", params: {} }));
@@ -464,6 +487,12 @@ export function installDraftPrewarmPolicyBridge(
         knownOfficialThreadIds.add(threadId);
         knownExternalThreadIds.delete(threadId);
         return "codex" as const;
+      })
+      .catch((error) => {
+        // A failed Harness Mix sidecar must not block an unknown official
+        // thread. The stock app-server remains the authority for its ID.
+        if (isLocalSidecarHost) return "codex" as const;
+        throw error;
       });
     threadOwnershipResolutions.set(threadId, resolution);
     const clearResolution = (): void => {
@@ -475,7 +504,7 @@ export function installDraftPrewarmPolicyBridge(
     return resolution;
   };
   const shouldResolveThreadOwnership = (method: string, parameters: unknown): string | null => {
-    if (!isRemoteControlHost || method.startsWith("harnessmix/") || !isThreadScopedMethod(method)) {
+    if (!usesExternalBridge || method.startsWith("harnessmix/") || !isThreadScopedMethod(method)) {
       return null;
     }
     const threadId = threadIdFromParameters(parameters);
@@ -485,9 +514,9 @@ export function installDraftPrewarmPolicyBridge(
     return threadId;
   };
   const shouldUseBridge = (method: string, parameters: unknown): boolean => {
-    if (!isRemoteControlHost) return false;
+    if (!usesExternalBridge) return false;
     if (method.startsWith("harnessmix/")) return true;
-    if (method === "thread/list") return true;
+    if (method === "thread/list") return !isLocalSidecarHost;
     if (method === "thread/start") {
       return (
         isRecord(parameters) &&
@@ -530,10 +559,57 @@ export function installDraftPrewarmPolicyBridge(
       initializeBridge().then(
         () => enqueueBridgeRequest(method, routedParameters, options) as Promise<unknown>,
       );
-    const sendDirect = (): unknown =>
-      options === undefined
+    const sendDirect = (): unknown => {
+      const result = options === undefined
         ? originalSend.call(bridge, method, routedParameters)
         : originalSend.call(bridge, method, routedParameters, options);
+      if (!isLocalSidecarHost) return result;
+      return Promise.resolve(result).then((value) => {
+        if (method === "thread/list" && isRecord(value) && Array.isArray(value.data)) {
+          for (const thread of value.data) {
+            if (isRecord(thread) && typeof thread.id === "string") {
+              knownOfficialThreadIds.add(thread.id);
+            }
+          }
+        } else if (isRecord(value) && isRecord(value.thread) && typeof value.thread.id === "string") {
+          knownOfficialThreadIds.add(value.thread.id);
+        }
+        return value;
+      });
+    };
+    if (isLocalSidecarHost && method === "thread/list") {
+      const officialPage = sendDirect();
+      if (isRecord(routedParameters) && routedParameters.cursor) return officialPage;
+      return Promise.resolve(officialPage).then(async (official) => {
+        if (!isRecord(official) || !Array.isArray(official.data)) return official;
+        try {
+          await initializeBridge();
+          const external = await enqueueBridgeRequest("harnessmix/thread/list", routedParameters);
+          if (!isRecord(external) || !Array.isArray(external.data)) return official;
+          const byId = new Map<string, unknown>();
+          for (const thread of official.data) {
+            if (isRecord(thread) && typeof thread.id === "string") byId.set(thread.id, thread);
+          }
+          for (const thread of external.data) {
+            if (isRecord(thread) && typeof thread.id === "string") byId.set(thread.id, thread);
+          }
+          const data = [...byId.values()];
+          const query = isRecord(routedParameters) ? routedParameters : {};
+          if (query.sortKey !== "section_position") {
+            const key = query.sortKey === "updated_at" ? "updatedAt" :
+              query.sortKey === "recency_at" ? "recencyAt" : "createdAt";
+            data.sort((a, b) => {
+              const left = isRecord(a) && typeof a[key] === "number" ? a[key] as number : 0;
+              const right = isRecord(b) && typeof b[key] === "number" ? b[key] as number : 0;
+              return (query.sortDirection === "asc" ? 1 : -1) * (left - right);
+            });
+          }
+          return { ...official, data };
+        } catch {
+          return official;
+        }
+      });
+    }
     const unresolvedThreadId = shouldResolveThreadOwnership(method, routedParameters);
     if (unresolvedThreadId) {
       return resolveThreadOwnership(unresolvedThreadId).then((owner) =>
@@ -597,7 +673,7 @@ export function installDraftPrewarmPolicyBridge(
     method: string,
     response: Record<string, unknown>,
   ): unknown => {
-    if (isRemoteControlHost && typeof response.id === "string") {
+    if (usesExternalBridge && typeof response.id === "string") {
       const innerRequestId = bridgeServerRequests.get(response.id);
       if (innerRequestId !== undefined || bridgeServerRequests.has(response.id)) {
         bridgeServerRequests.delete(response.id);
@@ -612,6 +688,12 @@ export function installDraftPrewarmPolicyBridge(
   };
   if (!observesWindowNotifications) manager.onNotification = routedOnNotification;
   if (originalDispatchAppServerResponse) manager.dispatchAppServerResponse = routedDispatchAppServerResponse;
+  if (isLocalSidecarHost) {
+    target.__harnessmixSidecarReceiveV1 = (frame: string): void => {
+      try { handleBridgeFrame(JSON.parse(frame)); }
+      catch (error) { failBridge(error, false); }
+    };
+  }
 
   const policy = Object.freeze({
     state: "ready" as const,
@@ -665,6 +747,7 @@ export function installDraftPrewarmPolicyBridge(
       if (originalDispatchAppServerResponse && manager.dispatchAppServerResponse === routedDispatchAppServerResponse) {
         manager.dispatchAppServerResponse = originalDispatchAppServerResponse;
       }
+      if (isLocalSidecarHost) delete target.__harnessmixSidecarReceiveV1;
       if (bridgeReadyTimeout !== null) globalThis.clearTimeout(bridgeReadyTimeout);
       bridgeReadyTimeout = null;
       if (isRemoteControlHost && (bridgeState === "starting" || bridgeState === "ready")) {

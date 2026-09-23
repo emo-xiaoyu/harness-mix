@@ -41,7 +41,7 @@ async function main() {
     const ownership = await request('harness-mix/runtime/inspect', {});
     assert.equal(ownership.owner, 'harness-mix');
     assert.equal(ownership.core, 'src/main/protocol-core/protocol-core.js');
-    assert.deepEqual(ownership.codex, { mode: 'official-passthrough', managedRoute: 'codex-harness' });
+    assert.deepEqual(ownership.codex, { mode: 'official-direct', managedRoute: 'codex-harness' });
     report.checks.push('Harness Mix HostRuntime and ProtocolCore own external execution');
     report.checks.push('official Codex route is separate from the managed Codex worker');
     const plugins = await request('harnessmix/harness/plugins/list', {});

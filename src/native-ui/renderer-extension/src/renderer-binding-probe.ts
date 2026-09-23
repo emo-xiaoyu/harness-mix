@@ -39,6 +39,7 @@ import {
   mountComposerAgentControl,
   reconcileComposerNativeControls,
   renderComposerAgentControl,
+  isComposerStopButton,
   sendButtonWithin,
   type ComposerAgentControl,
   type ExternalModelControlView,
@@ -329,6 +330,7 @@ export interface RendererBindingProbeApi {
 declare global {
   interface Window {
     __harnessmixRendererBindingProbeV1?: RendererBindingProbeApi;
+    __harnessmixSidecarModeV1?: boolean;
   }
 }
 
@@ -2936,7 +2938,13 @@ export function installRendererBindingProbe(
       const policy = window.__harnessmixDraftPrewarmPolicyV1;
       const hostAvailability =
         mounted.hostId === null ? null : hostHarnessAvailabilityState(mounted.hostId);
+      const selectedAccount = accounts?.accounts.find((account) =>
+        account.accountId === accounts.selection.selectedAccountId);
+      const needsIsolatedAccountRoute = accounts?.loaded === true
+        ? selectedAccount?.management === "isolated"
+        : current.codexAccountId !== null && current.codexAccountId !== "official-codex";
       if (
+        (window.__harnessmixSidecarModeV1 !== true || needsIsolatedAccountRoute) &&
         shouldBlockCodexDraftSubmission({
           accountsResolved: accounts !== null,
           accountsLoaded: accounts?.loaded === true,
@@ -3040,7 +3048,7 @@ export function installRendererBindingProbe(
     const candidate = composerForElement(button);
     const composer = candidate && isMountedComposer(candidate) ? candidate : null;
     const mounted = composer ? mountedByComposer.get(composer) : undefined;
-    if (!composer || mounted?.control.sendButton !== button) return;
+    if (!composer || mounted?.control.sendButton !== button || isComposerStopButton(button)) return;
     if (!prepareComposer(composer)) {
       blockEvent(event);
       return;

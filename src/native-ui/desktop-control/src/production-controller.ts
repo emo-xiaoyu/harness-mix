@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { startLocalSidecar, type LocalSidecar } from "./local-sidecar.js";
 
 import {
   startControllerAttachmentServer,
@@ -30,6 +31,7 @@ export interface DesktopControllerDependencies {
   install(options: {
     rendererCdpEndpoint: string;
     rendererSource: string;
+    sidecar?: LocalSidecar;
     enabledAgents: readonly string[];
     timeoutMs: number;
   }): Promise<RendererCdpControlSession>;
@@ -220,7 +222,11 @@ export async function runDesktopController(
   signal: AbortSignal,
   dependencies: DesktopControllerDependencies = defaultDependencies,
 ): Promise<void> {
-  const configuration = `Object.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: ${JSON.stringify(options.defaultAgent)} } });`;
+  const sidecarScript = process.env.HARNESSMIX_SIDECAR_SCRIPT;
+  const stockCodexPath = process.env.HARNESSMIX_STOCK_CODEX_PATH;
+  const sidecar = sidecarScript && stockCodexPath
+    ? startLocalSidecar(process.execPath, sidecarScript, stockCodexPath) : undefined;
+  const configuration = `Object.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: ${JSON.stringify(options.defaultAgent)} } });\nwindow.__harnessmixSidecarModeV1 = ${sidecar ? "true" : "false"};`;
   const now = dependencies.now ?? Date.now;
   let session: RendererCdpControlSession | undefined;
   let nextRecoveryAt = 0;
@@ -242,6 +248,7 @@ export async function runDesktopController(
       {
         rendererCdpEndpoint: options.rendererCdpEndpoint,
         rendererSource: `${RENDERER_CSP_BOOTSTRAP}\n${configuration}\n${rendererSource}`,
+        ...(sidecar ? { sidecar } : {}),
         enabledAgents: [
           "codex",
           "pi",
@@ -344,5 +351,6 @@ export async function runDesktopController(
     await attachmentServer?.close();
     await operation;
     resetSession();
+    await sidecar?.close();
   }
 }

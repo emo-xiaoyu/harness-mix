@@ -134,8 +134,13 @@ function isOwnedRendererControl(element: Element): boolean {
 }
 
 export function isComposerSubmitButton(button: HTMLButtonElement): boolean {
+  if (isComposerStopButton(button)) return false;
   if (button.type === "submit") return true;
   return /(^|\s)(send|submit|发送|提交)(\s|$)/u.test(buttonText(button));
+}
+
+export function isComposerStopButton(button: HTMLButtonElement): boolean {
+  return /^(停止|stop)$/iu.test((button.getAttribute("aria-label") ?? button.getAttribute("title") ?? button.textContent ?? "").trim());
 }
 
 const VOICE_CONTROL_PATTERN =
@@ -721,7 +726,11 @@ export function renderComposerAgentControl(
       (permissionModeView.status !== "unsupported" &&
         !control.nativePermissionModeControlVerified));
   const submissionBlocked = switching || ownershipError || modelBlocked || permissionModeBlocked;
-  if (submissionBlocked && control.sendDisabledBeforeSwitch === null) {
+  if (isComposerStopButton(control.sendButton)) {
+    // The native composer reuses its send button for Stop while a turn runs.
+    // Renderer submission checks must never disable the native interrupt action.
+    control.sendButton.disabled = false;
+  } else if (submissionBlocked && control.sendDisabledBeforeSwitch === null) {
     control.sendDisabledBeforeSwitch = control.sendButton.disabled;
     control.sendButton.disabled = true;
   } else if (!submissionBlocked && control.sendDisabledBeforeSwitch !== null) {

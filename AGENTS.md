@@ -2,10 +2,16 @@
 
 Contributor guide for **Harness Mix** — a local kernel that drives native coding harnesses (Codex, Pi, Claude Code, DeepSeek Harness, Antigravity) inside the official Codex Desktop UI, while sessions, model calls, tools, and permissions stay owned by each native program.
 
+## Official Codex is a protected native route
+
+- The default official Codex account and every thread created with it must use Codex Desktop's stock app-server directly, even after another Harness has been used in the same Desktop session. Do not put official Codex thread execution requests, responses, notifications, sessions, models, tools, permissions, or credentials through the Harness Mix Shim, Host, Protocol Core, or Codex adapter. Explicit account-management actions may call the native Codex API, but must not take ownership of official threads.
+- Keep the stock Codex CLI as the Desktop app-server executable. Run Harness Mix as a separate, explicitly selected transport for other Harnesses and `Codex（协作）`; never switch the Desktop's global Codex CLI or app-server connection when the selected Harness changes.
+- Any UI integration must preserve the official Codex request path and behavior. A failure or restart of Harness Mix must not prevent a new default Codex thread or an existing official Codex thread from working. Do not claim native parity from unit tests alone: verify a restarted Desktop and a sequence that uses another Harness, then creates and resumes an official Codex thread.
+
 ## Project Structure & Module Organization
 
 - `src/main/native/` — native mode: `launcher.js` (desktop activation, leftover sweep, update flow), `updater.js` + `update-state.js` (dual-channel update: git fast-forward / npm registry, lock, rollback), `host.js` (protocol entry, heartbeat, crash reports), `protocol.js` (app-server projection), `process-utils.js` (process-tree termination), `redact.js` (log redaction), `secure-store.js` (DPAPI vault wrapper), `rs/` (Rust workspace: `harness-mix-shim` protocol bridge + kill-on-close job object, `harness-mix-appx` AppX activation, `harness-mix-secret` DPAPI vault), `icons.js` (icon catalog).
-- `src/main/host/` — Host Runtime: `runtime.js` (orchestration/resume/projection), `store.js`, `jsonl.js` (persistence).
+- `src/main/host/` — Host Runtime: `runtime.js` (orchestration/resume/projection), `store.js`, `jsonl.js` (persistence), `usage-history.js` (usage-center aggregation), `health.js` (health-center snapshot).
 - `src/main/adapters/` — one plugin per harness (`pi.js`, `omp.js`, `dsh.js`, `claude.js`, `antigravity.js`, `codex.js`, `opencode.js`, `grok.js`; Pi/OMP share `pi-family.js`, OpenCode uses native HTTP/SSE via `opencode-server.js`, Grok independently maps native stdio and `_x.ai/*` extensions), registered in `index.js`. New harnesses follow the manifest/factory/session shape documented in `README.md`.
 - `src/native-ui/` — TypeScript sources of the Codex Desktop integration: `renderer-extension/` (injected UI), `desktop-control/` (CDP controller), `shared-contracts/` (shared protocol contracts).
 - `src/assets/icons/` — harness and model icons, embedded at build time.
@@ -15,7 +21,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 ## Build, Test, and Development Commands
 
 - `npm install` — install devDependencies (Electron for native smoke, esbuild).
-- `npm start` — launch native mode; restarts Codex Desktop with the local Shim.
+- `npm start` — launch native mode; restarts Codex Desktop with its stock CLI and a separate Harness Mix Host sidecar.
 - `npm run build:native` — rebuild the Renderer extension, Desktop controller and Rust binaries (requires a Rust toolchain) into `output/native-build/`.
 - `npm run check` — syntax-check every `.js`/`.cjs` under `src/` and `scripts/`; must pass before submitting.
 - `npm run test:core-all` — kernel test suite (contracts, projector, turn manager, adapters, replay, runtime, services).

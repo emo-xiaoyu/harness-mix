@@ -23,6 +23,7 @@ const {
 } = require('./update-state');
 const { nativeEnvironment } = require('./config');
 const { CodexAccountManager } = require('./codex-accounts');
+const { mergeThreadPage } = require('./thread-list');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
@@ -491,7 +492,7 @@ class NativeProtocol {
       core: 'src/main/protocol-core/protocol-core.js',
       threads: this.runtime.threads.length,
       codex: {
-        mode: 'official-passthrough',
+        mode: 'official-direct',
         // `codex` remains owned by the stock app-server. Only the explicit
         // `codex-harness` route creates a HostRuntime-managed Codex worker.
         managedRoute: 'codex-harness',
@@ -769,6 +770,9 @@ class NativeProtocol {
     if (method === 'harnessmix/harness/commands/inspect' || method === 'harnessmix/thread/commands/inspect') {
       const commands = await this.runtime.listCommands({ threadId: params.threadId, harnessId: ALIASES[params.harnessId] || params.harnessId });
       return { commands: commands.map(c => ({ id: c.id, invocation: '/' + c.id, label: c.label || c.id, ...(c.description ? { description: c.description.slice(0, 512) } : {}), argumentMode: c.action === 'insert' ? 'text' : 'none' })) };
+    }
+    if (method === 'harnessmix/thread/list') {
+      return mergeThreadPage({ data: [], nextCursor: null }, this.runtime.threads, params || {}, thread => this.projectThread(thread, false));
     }
     if (method === 'harnessmix/thread/ownership/list') return { threads: params.threadIds.map(id => ({ threadId: id, owner: this.owns(id) ? 'external' : 'codex', ...(this.owns(id) ? { harnessId: externalId(this.thread(id).harnessId) } : {}) })) };
     if (method === 'harnessmix/thread/team/inspect') return this.runtime.collaboration.inspectTeam(params.threadId, params.teamId);

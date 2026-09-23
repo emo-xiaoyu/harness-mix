@@ -103,6 +103,7 @@
     "test:native-config": "node scripts/native-config-test.cjs",
     "test:native-compatibility": "node scripts/native-compatibility-test.cjs",
     "e2e:native": "node scripts/e2e-native-host.cjs",
+    "e2e:native:sidecar": "node scripts/e2e-native-sidecar.cjs",
     "e2e:native:codex": "node scripts/e2e-native-host.cjs --live-codex",
     "e2e:native:pi": "node scripts/e2e-native-host.cjs --live --harness=pi",
     "e2e:native:dsh": "node scripts/e2e-native-host.cjs --live --harness=deepseek-harness",

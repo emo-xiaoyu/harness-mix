@@ -3,6 +3,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { spawn } = require('node:child_process');
 const { HostRuntime } = require('../host/runtime');
+const { CodexAppServer } = require('../adapters/codex-app-server');
 const { NativeProtocol } = require('./protocol');
 const { mergeThreadPage } = require('./thread-list');
 const { terminateTree } = require('./process-utils');
@@ -10,6 +11,7 @@ const { redact } = require('./redact');
 const { dataDirectory } = require('./platform');
 
 async function runNativeHost() {
+  const sidecar = process.env.HARNESSMIX_SIDECAR === '1';
   const stock = process.env.HARNESSMIX_STOCK_CODEX_PATH;
   if (!stock || !fs.existsSync(stock)) throw new Error('Official Codex CLI path is missing');
   const directory = path.join(dataDirectory(), 'mix-core');
@@ -68,12 +70,67 @@ async function runNativeHost() {
   const write = message => { traffic('out', message); process.stdout.write(`${JSON.stringify(message)}\n`); };
   const internal = new Map();
   let internalId = 0;
-  const requestOfficial = (method, params) => new Promise((resolve, reject) => {
-    const id = `harness-mix:internal:${++internalId}`;
-    const timer = setTimeout(() => { internal.delete(id); reject(new Error(`${method} timed out`)); }, 15000);
-    internal.set(id, { resolve, reject, timer });
-    official.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
-  });
+  let queryServer = null;
+  let queryServerPromise = null;
+  let unwatchQueryServer = null;
+  let queryIdleTimer = null;
+  let queryRequests = 0;
+  let loginUntil = 0;
+  const releaseQueryServer = (force = false) => {
+    if (queryRequests > 0 && !force) return;
+    clearTimeout(queryIdleTimer);
+    queryIdleTimer = null;
+    unwatchQueryServer?.();
+    unwatchQueryServer = null;
+    queryServer?.release();
+    queryServer = null;
+    queryServerPromise = null;
+  };
+  const scheduleQueryRelease = () => {
+    if (!queryServer || queryRequests > 0) return;
+    clearTimeout(queryIdleTimer);
+    const delay = loginUntil > Date.now() ? loginUntil - Date.now() : 15_000;
+    queryIdleTimer = setTimeout(releaseQueryServer, delay);
+    queryIdleTimer.unref?.();
+  };
+  const acquireQueryServer = () => {
+    if (!queryServerPromise || queryServer?.closed) {
+      queryServerPromise = CodexAppServer.acquire().then(server => {
+        queryServer = server;
+        unwatchQueryServer = server.onNotification(message => {
+          if (message?.method !== 'account/login/completed') return;
+          loginUntil = 0;
+          write(message);
+          scheduleQueryRelease();
+        });
+        return server;
+      }).catch(error => { queryServerPromise = null; throw error; });
+    }
+    return queryServerPromise;
+  };
+  const requestOfficial = (method, params) => {
+    if (sidecar) return (async () => {
+      clearTimeout(queryIdleTimer);
+      queryIdleTimer = null;
+      queryRequests++;
+      try {
+        const server = await acquireQueryServer();
+        const result = await server.request(method, params);
+        if (method === 'account/login/start' && result?.loginId) loginUntil = Date.now() + 5 * 60_000;
+        if (method === 'account/login/cancel' || method === 'account/logout') loginUntil = 0;
+        return result;
+      } finally {
+        queryRequests--;
+        scheduleQueryRelease();
+      }
+    })();
+    return new Promise((resolve, reject) => {
+      const id = `harness-mix:internal:${++internalId}`;
+      const timer = setTimeout(() => { internal.delete(id); reject(new Error(`${method} timed out`)); }, 15000);
+      internal.set(id, { resolve, reject, timer });
+      official.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+    });
+  };
   const protocol = new NativeProtocol(runtime, write, requestOfficial);
   const env = { ...process.env };
   delete env.CODEX_CLI_PATH;
@@ -82,12 +139,12 @@ async function runNativeHost() {
   // app-server, otherwise per-thread configs referencing them fail config loading.
   const passthrough = process.argv.slice(2);
   const officialArgs = passthrough.includes('--listen') ? passthrough : [...passthrough, '--listen', 'stdio://'];
-  const official = spawn(stock, officialArgs, { env, windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
+  const official = sidecar ? null : spawn(stock, officialArgs, { env, windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
   // official 异常退出后迟到的 stdin.write 会异步抛 EPIPE，无监听即 crash 宿主；退出由 close() 路径处理
-  official.stdin.on('error', () => {});
+  official?.stdin.on('error', () => {});
   const forwarded = new Map();
-  const lines = readline.createInterface({ input: official.stdout });
-  lines.on('line', line => {
+  const lines = official ? readline.createInterface({ input: official.stdout }) : null;
+  lines?.on('line', line => {
     try {
       const value = JSON.parse(line);
       const pending = internal.get(value.id);
@@ -118,10 +175,15 @@ async function runNativeHost() {
     input.close(); protocol.close();
     for (const pending of internal.values()) { clearTimeout(pending.timer); pending.reject(new Error('Native host closed')); }
     internal.clear();
+    clearTimeout(queryIdleTimer);
+    if (queryServerPromise) await queryServerPromise.catch(() => null);
+    releaseQueryServer(true);
     await ready.catch(() => {});
     await runtime.close();
-    official.stdin.end();
-    const timer = setTimeout(() => { void terminateTree(official.pid); }, 2000); timer.unref();
+    if (official) {
+      official.stdin.end();
+      const timer = setTimeout(() => { void terminateTree(official.pid); }, 2000); timer.unref();
+    }
   }
   input.on('line', line => {
     void (async () => {
@@ -136,6 +198,12 @@ async function runNativeHost() {
           const result = await protocol.request(message.method, message.params);
           if (result !== undefined) { write({ id: message.id, result }); return; }
         }
+        if (sidecar) {
+          if (message.id !== undefined && message.method) {
+            write({ id: message.id, error: { code: -32601, message: `${message.method} belongs to the stock Desktop app-server` } });
+          }
+          return;
+        }
         if (message.id !== undefined && message.method) { forwarded.set(message.id, message); traffic('forward', message); }
         official.stdin.write(`${JSON.stringify(message)}\n`);
       } catch (error) {
@@ -147,9 +215,11 @@ async function runNativeHost() {
   input.on('close', () => void close());
   process.once('SIGTERM', () => void close());
   process.once('SIGINT', () => void close());
-  official.on('error', error => { console.error(error); void close(); });
-  official.on('exit', () => { void close(); });
+  official?.on('error', error => { console.error(error); void close(); });
+  official?.on('exit', () => { void close(); });
   await ready;
-  console.error('[Harness Mix] official Codex passthrough + external Harness routes via HostRuntime/ProtocolCore');
+  console.error(sidecar
+    ? '[Harness Mix] external Harness sidecar ready; official account queries start on demand'
+    : '[Harness Mix] official Codex passthrough + external Harness routes via HostRuntime/ProtocolCore');
 }
 module.exports = { runNativeHost };

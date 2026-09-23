@@ -9,6 +9,7 @@ import {
   installRendererDraftPrewarmPolicyDirect,
   type RendererDraftPrewarmPolicyStatus,
 } from "./renderer-draft-prewarm-policy.js";
+import type { LocalSidecar } from "./local-sidecar.js";
 
 export interface ProductionRendererStatus {
   version: 2;
@@ -28,6 +29,7 @@ export interface RendererCdpControlSnapshot {
 interface RendererCdpClient {
   command(method: string, params?: Record<string, unknown>): Promise<unknown>;
   evaluate<T>(expression: string): Promise<T>;
+  on?(method: string, listener: (params: unknown) => void): () => void;
   close(): void;
 }
 
@@ -48,6 +50,7 @@ export interface RendererCdpControlSession {
 export interface InstallRendererCdpControlOptions {
   rendererCdpEndpoint: string;
   rendererSource: string;
+  sidecar?: LocalSidecar;
   enabledAgents?: readonly string[];
   pollIntervalMs?: number;
   timeoutMs?: number;
@@ -200,21 +203,46 @@ async function waitForBinding(
 async function installTarget(
   target: CdpTarget,
   rendererSource: string,
+  sidecar: LocalSidecar | undefined,
   enabledAgents: readonly string[],
   timeoutMs: number,
   pollIntervalMs: number,
   operations: RendererCdpControlOperations,
-): Promise<{ renderer: RendererCdpClient; snapshot: RendererCdpControlSnapshot }> {
+): Promise<{ renderer: RendererCdpClient; snapshot: RendererCdpControlSnapshot; unsubscribeSidecar?: () => void }> {
   const renderer = await operations.connect(target.webSocketDebuggerUrl);
+  let unsubscribeSidecar: (() => void) | undefined;
   try {
     await renderer.command("Runtime.enable");
     await renderer.command("Page.enable");
+    if (sidecar) {
+      if (!renderer.on) throw new Error("Renderer CDP binding events are unavailable");
+      await renderer.command("Runtime.removeBinding", { name: "__harnessmixSidecarSendV1" }).catch(() => undefined);
+      await renderer.command("Runtime.addBinding", { name: "__harnessmixSidecarSendV1" });
+      renderer.on("Runtime.bindingCalled", (params) => {
+        if (!isRecord(params) || params.name !== "__harnessmixSidecarSendV1" ||
+          typeof params.payload !== "string") return;
+        try { sidecar.send(params.payload); }
+        catch (error) {
+          const failure = JSON.stringify({ harnessmixSidecarFailure: String(error) });
+          void renderer.command("Runtime.evaluate", {
+            expression: `window.__harnessmixSidecarReceiveV1?.(${JSON.stringify(failure)})`,
+          }).catch(() => undefined);
+        }
+      });
+      unsubscribeSidecar = sidecar.onFrame((frame) => {
+        void renderer.command("Runtime.evaluate", {
+          expression: `window.__harnessmixSidecarReceiveV1?.(${JSON.stringify(frame)})`,
+        }).catch(() => undefined);
+      });
+    }
     await renderer.command("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
     await evaluateSource(renderer, rendererSource);
     const draftPrewarmPolicy = await operations.installDraftPrewarmPolicy(renderer);
     const binding = await waitForBinding(renderer, enabledAgents, timeoutMs, pollIntervalMs);
-    return { renderer, snapshot: { target, draftPrewarmPolicy, binding } };
+    return { renderer, snapshot: { target, draftPrewarmPolicy, binding },
+      ...(unsubscribeSidecar ? { unsubscribeSidecar } : {}) };
   } catch (error) {
+    unsubscribeSidecar?.();
     renderer.close();
     throw error;
   }
@@ -227,12 +255,15 @@ class InstalledRendererCdpControlSession implements RendererCdpControlSession {
     private renderer: RendererCdpClient,
     private readonly rendererCdpEndpoint: string,
     private readonly rendererSource: string,
+    private readonly sidecar: LocalSidecar | undefined,
     private readonly enabledAgents: readonly string[],
     private readonly timeoutMs: number,
     private readonly pollIntervalMs: number,
     private readonly operations: RendererCdpControlOperations,
     private currentSnapshot: RendererCdpControlSnapshot,
+    private unsubscribeSidecar: (() => void) | undefined,
   ) {}
+
 
   get snapshot(): RendererCdpControlSnapshot {
     return this.currentSnapshot;
@@ -251,13 +282,16 @@ class InstalledRendererCdpControlSession implements RendererCdpControlSession {
       const replacement = await installTarget(
         target,
         this.rendererSource,
+        this.sidecar,
         this.enabledAgents,
         this.timeoutMs,
         this.pollIntervalMs,
         this.operations,
       );
+      this.unsubscribeSidecar?.();
       this.renderer.close();
       this.renderer = replacement.renderer;
+      this.unsubscribeSidecar = replacement.unsubscribeSidecar;
       this.currentSnapshot = replacement.snapshot;
       return this.currentSnapshot;
     }
@@ -279,13 +313,16 @@ class InstalledRendererCdpControlSession implements RendererCdpControlSession {
       const replacement = await installTarget(
         target,
         this.rendererSource,
+        this.sidecar,
         this.enabledAgents,
         this.timeoutMs,
         this.pollIntervalMs,
         this.operations,
       );
+      this.unsubscribeSidecar?.();
       this.renderer.close();
       this.renderer = replacement.renderer;
+      this.unsubscribeSidecar = replacement.unsubscribeSidecar;
       this.currentSnapshot = replacement.snapshot;
       return this.currentSnapshot;
     }
@@ -305,6 +342,7 @@ class InstalledRendererCdpControlSession implements RendererCdpControlSession {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.unsubscribeSidecar?.();
     this.renderer.close();
   }
 }
@@ -331,6 +369,7 @@ export async function createRendererCdpControlSession(
   const installed = await installTarget(
     target,
     options.rendererSource,
+    options.sidecar,
     enabledAgents,
     timeoutMs,
     pollIntervalMs,
@@ -340,11 +379,13 @@ export async function createRendererCdpControlSession(
     installed.renderer,
     options.rendererCdpEndpoint,
     options.rendererSource,
+    options.sidecar,
     enabledAgents,
     timeoutMs,
     pollIntervalMs,
     operations,
     installed.snapshot,
+    installed.unsubscribeSidecar,
   );
 }
 

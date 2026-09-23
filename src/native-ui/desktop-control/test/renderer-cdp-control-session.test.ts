@@ -95,6 +95,54 @@ describe("Renderer CDP Control Session", () => {
     session.close();
   });
 
+  it("carries explicitly routed Host frames over a separate CDP binding", async () => {
+    const client = rendererClient();
+    let bindingCalled: ((params: unknown) => void) | undefined;
+    Object.assign(client, {
+      on: vi.fn((method: string, listener: (params: unknown) => void) => {
+        if (method === "Runtime.bindingCalled") bindingCalled = listener;
+        return () => undefined;
+      }),
+    });
+    let output: ((frame: string) => void) | undefined;
+    const sidecar = {
+      send: vi.fn(),
+      onFrame: vi.fn((listener: (frame: string) => void) => {
+        output = listener;
+        return () => undefined;
+      }),
+      close: vi.fn(),
+    };
+    const session = await createRendererCdpControlSession({
+      rendererCdpEndpoint: "http://127.0.0.1:43123",
+      rendererSource: "production renderer",
+      sidecar,
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+      operations: {
+        listTargets: vi.fn(async () => [target("page-1")]),
+        connect: vi.fn(async () => client),
+        installDraftPrewarmPolicy: vi.fn(async () => ({
+          state: "ready" as const,
+          reason: "owned-request-bridge" as const,
+        })),
+      },
+    });
+    expect(client.commands[2]).toEqual({
+      method: "Runtime.removeBinding", params: { name: "__harnessmixSidecarSendV1" },
+    });
+    expect(client.commands[3]).toEqual({
+      method: "Runtime.addBinding", params: { name: "__harnessmixSidecarSendV1" },
+    });
+    bindingCalled?.({ name: "__harnessmixSidecarSendV1", payload: '{"id":1,"method":"harnessmix/thread/list"}' });
+    expect(sidecar.send).toHaveBeenCalledWith('{"id":1,"method":"harnessmix/thread/list"}');
+    output?.('{"id":1,"result":{"data":[]}}');
+    expect(client.command).toHaveBeenCalledWith("Runtime.evaluate", {
+      expression: 'window.__harnessmixSidecarReceiveV1?.("{\\"id\\":1,\\"result\\":{\\"data\\":[]}}")',
+    });
+    session.close();
+  });
+
   it("activates the owned page target", async () => {
     const client = rendererClient();
     const session = await createRendererCdpControlSession({

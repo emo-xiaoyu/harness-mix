@@ -64,7 +64,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
 
 <p align="center"><sub>图标与 Harness 能力均来自项目自身的注册表；只有本机已安装且握手成功的 Harness 才会进入真实运行。</sub></p>
 
-Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。它通过本地编译的 CLI Shim 对接桌面的 app-server 协议，把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae 和 Cline 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理任务映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认官方 Codex 会话由 Desktop 直接连接官方 app-server；明确选择其他 Harness 或 `Codex（协作）` 时，独立的 Harness Mix Host 才处理对应任务。它把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae 和 Cline 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理托管任务的映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
 
 ## 界面预览
 
@@ -188,10 +188,12 @@ npm update --global @harness-mix/cli
 
 ### 运行方式
 
-原生模式（默认）：本地编译的 Shim 与 Renderer 扩展接入官方 Codex Desktop，模型选择会路由到对应 Harness。首次启动会重启已打开的 Codex Desktop：
+原生模式（默认）：Desktop 使用官方 Codex CLI；Renderer 扩展把明确选择的其他 Harness 路由到独立 Host。首次启动会重启已打开的 Codex Desktop：
 ```powershell
 npm start
 ```
+
+运行期间 Desktop controller 和 Harness Mix sidecar Host 保持常驻。默认 Codex 使用 Desktop 自己的官方 app-server；只有查询官方账号或会话分组等 Host 内部信息时，sidecar 才临时启动另一官方 app-server，普通查询空闲约 15 秒后关闭。启动命令本身也会等待 controller 退出；进程总数还包括 Codex Desktop 自己的进程。
 
 常用原生依赖：
 
@@ -299,7 +301,7 @@ macOS/Linux source builds and launch adaptation are in place; full desktop accep
 
 <p align="center"><sub>Icons and Harness capabilities come from the project's own registry; only Harnesses installed locally with a successful handshake enter real runs.</sub></p>
 
-Harness Mix is a local kernel that plugs into the official Codex Desktop native UI. Through a locally compiled CLI Shim it speaks the desktop's app-server protocol and connects native coding Harnesses — including Antigravity, Codex, Pi, Oh My Pi, Claude Code, DeepSeek Harness, OpenCode, Grok, OpenClaw, Hermes, Qoder, CodeBuddy, Kiro CLI, Cursor CLI, ZCode, Trae and Cline — into one UI. The Host Runtime and Protocol Core manage task mapping, collaboration and event projection; model calls, tool execution, native sessions and credentials stay owned by each Harness itself.
+Harness Mix is a local kernel that plugs into the official Codex Desktop native UI. Default official Codex threads connect directly to the stock app-server. An independent Harness Mix Host handles only explicitly selected Harnesses and `Codex (collaboration)` threads. The Host Runtime and Protocol Core manage task mapping, collaboration and event projection for those managed threads; model calls, tool execution, native sessions and credentials stay owned by each Harness itself.
 
 ## UI Preview
 
@@ -423,10 +425,12 @@ The first run restarts an already-open Codex Desktop. The npm package distribute
 
 ### How to Run
 
-Native mode (default): the locally compiled Shim and Renderer extension plug into the official Codex Desktop, and model selection routes to the corresponding Harness. The first launch restarts an already-open Codex Desktop:
+Native mode (default): Desktop uses the stock Codex CLI, while the Renderer extension routes explicitly selected Harnesses to a separate Host. The first launch restarts an already-open Codex Desktop:
 ```powershell
 npm start
 ```
+
+The Desktop controller and Harness Mix sidecar Host remain running. Default Codex uses Desktop's own stock app-server. The sidecar starts another stock app-server only for internal queries such as official account or thread section data, then closes it about 15 seconds after an ordinary query becomes idle. The launch command also waits for the controller to exit; the total process count includes Codex Desktop's own processes.
 
 Common native dependencies:
 

@@ -533,6 +533,63 @@ describe("Renderer draft prewarm policy", () => {
     });
   });
 
+  it("keeps a new official Codex thread on the stock connection after using another Harness", async () => {
+    const manager = requestManagerFixture();
+    const { bridge, directSend } = remoteRequestBridgeFixture();
+    const sent: Array<{ id?: number; method: string; params?: unknown }> = [];
+    const target: DraftPrewarmPolicyTarget = { __harnessmixSidecarModeV1: true };
+    target.__harnessmixSidecarSendV1 = (frame: string) => {
+      const request = JSON.parse(frame) as { id?: number; method: string; params?: unknown };
+      sent.push(request);
+      if (request.id === undefined) return;
+      queueMicrotask(() => {
+        const result = request.method === "thread/start"
+          ? { thread: { id: "external-thread", modelProvider: "harnessmix" } }
+          : request.method === "harnessmix/thread/ownership/list"
+            ? { threads: [{ threadId: "official-thread", owner: "codex" }] }
+            : {};
+        (target.__harnessmixSidecarReceiveV1 as (frame: string) => void)(
+          JSON.stringify({ id: request.id, result }),
+        );
+      });
+    };
+    installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
+      discardAllPrewarmedThreads: vi.fn(),
+    });
+    const policy = target.__harnessmixDraftPrewarmPolicyV1 as { select(model: string | null): boolean };
+    policy.select("harnessmix/pi-native");
+    await bridge.sendRequest("thread/start", { cwd: "/project", model: "gpt-5" });
+    policy.select(null);
+    await bridge.sendRequest("thread/start", { cwd: "/project", model: "gpt-5" });
+    await bridge.sendRequest("turn/start", { threadId: "official-thread", input: [] });
+
+    expect(sent.some((frame) => frame.method === "thread/start" &&
+      (frame.params as { model?: string }).model === "harnessmix/pi-native")).toBe(true);
+    expect(sent.some((frame) => frame.method === "thread/start" &&
+      (frame.params as { model?: string }).model === "gpt-5")).toBe(false);
+    expect(sent.some((frame) => frame.method === "turn/start")).toBe(false);
+    expect(directSend).toHaveBeenCalledWith("thread/start", { cwd: "/project", model: "gpt-5" });
+    expect(directSend).toHaveBeenCalledWith("turn/start", { threadId: "official-thread", input: [] });
+  });
+
+  it("keeps official Codex usable when the separate Host fails", async () => {
+    const manager = requestManagerFixture();
+    const { bridge, directSend } = remoteRequestBridgeFixture();
+    const target: DraftPrewarmPolicyTarget = {
+      __harnessmixSidecarModeV1: true,
+      __harnessmixSidecarSendV1: vi.fn(() => { throw new Error("Host exited"); }),
+    };
+    installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
+      discardAllPrewarmedThreads: vi.fn(),
+    });
+    await bridge.sendRequest("thread/start", { cwd: "/project", model: "gpt-5" });
+    await bridge.sendRequest("turn/start", { threadId: "previous-official-thread", input: [] });
+    expect(directSend).toHaveBeenCalledWith("thread/start", { cwd: "/project", model: "gpt-5" });
+    expect(directSend).toHaveBeenCalledWith("turn/start", {
+      threadId: "previous-official-thread", input: [],
+    });
+  });
+
   it("keeps a draft Codex Account route sticky for user threads only", async () => {
     const sendRequest = vi.fn(async () => undefined);
     const manager = requestManagerFixture();
