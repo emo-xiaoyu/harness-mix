@@ -31,6 +31,81 @@ function codexCliOverride(desktopVersion, shimPath, env = process.env, platform 
   };
 }
 
+function pathIncludesDir(pathValue, dir) {
+  const normalize = value => String(value).trim().replace(/[\\/]+$/, '').toLowerCase();
+  const target = normalize(dir);
+  return String(pathValue || '').split(';').some(entry => normalize(entry) === target);
+}
+
+// Codex Desktop ≥26.917 自重启（broker → 主进程）时丢弃激活环境块，只有注册表
+// 用户环境能进入真正的主进程。因此把 shim 以裸命令名持久写入 HKCU\Environment，
+// 并把其目录前置到用户 PATH。全部幂等；PATH 保留原值类型（REG_EXPAND_SZ）。
+// HARNESS_MIX_REGISTRY_ENV=0 可关闭该通道。
+
+/** 纯函数：计算 shim 需要写入的用户级环境（PATH 为 null 表示无需改动） */
+function registryEnvPlan(shimPath, userPath) {
+  const dir = path.dirname(shimPath);
+  return {
+    CODEX_CLI_PATH: path.basename(shimPath).replace(/\.exe$/i, ''),
+    PATH: pathIncludesDir(userPath, dir) ? null : `${dir};${userPath || ''}`,
+  };
+}
+
+/** 纯函数：从用户 PATH 中移除 shim 目录（供 --clean-env） */
+function registryEnvCleanup(shimPath, userPath) {
+  const target = path.dirname(shimPath).replace(/[\\/]+$/, '').toLowerCase();
+  return String(userPath || '').split(';')
+    .filter(entry => entry.trim().replace(/[\\/]+$/, '').toLowerCase() !== target)
+    .join(';');
+}
+
+const psq = value => String(value).replace(/'/g, "''");
+
+function readUserEnvironment() {
+  const script = [
+    "$item = Get-Item 'HKCU:\\Environment'",
+    '$opt = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames',
+    "$kind = try { $item.GetValueKind('PATH').ToString() } catch { '' }",
+    "@{ PATH = $item.GetValue('PATH', '', $opt); CODEX_CLI_PATH = $item.GetValue('CODEX_CLI_PATH', '', $opt); PATH_KIND = $kind } | ConvertTo-Json -Compress",
+  ].join('; ');
+  return JSON.parse(powershell(script) || '{}');
+}
+
+function applyRegistryEnv(shimPath, env = process.env) {
+  if (env.HARNESS_MIX_REGISTRY_ENV === '0') return { applied: false, reason: 'disabled' };
+  const current = readUserEnvironment();
+  const plan = registryEnvPlan(shimPath, current.PATH);
+  const lines = ["$key = 'HKCU:\\Environment'"];
+  const changed = [];
+  if (current.CODEX_CLI_PATH !== plan.CODEX_CLI_PATH) {
+    lines.push(`Set-ItemProperty -Path $key -Name CODEX_CLI_PATH -Value '${psq(plan.CODEX_CLI_PATH)}' -Type String`);
+    changed.push('CODEX_CLI_PATH');
+  }
+  if (plan.PATH !== null) {
+    lines.push(`Set-ItemProperty -Path $key -Name PATH -Value '${psq(plan.PATH)}' -Type ${current.PATH_KIND === 'ExpandString' ? 'ExpandString' : 'String'}`);
+    changed.push('PATH');
+  }
+  if (!changed.length) return { applied: false, reason: 'already-present' };
+  powershell(lines.join('; '));
+  return { applied: true, changed };
+}
+
+function cleanRegistryEnv(shimPath) {
+  const current = readUserEnvironment();
+  const bare = path.basename(shimPath).replace(/\.exe$/i, '');
+  const lines = [];
+  // 只移除属于本安装的注入；用户自己设置的其它 CODEX_CLI_PATH 不动。
+  if (current.CODEX_CLI_PATH === bare || current.CODEX_CLI_PATH === shimPath) {
+    lines.push("Remove-ItemProperty -Path 'HKCU:\\Environment' -Name CODEX_CLI_PATH -ErrorAction SilentlyContinue");
+  }
+  const cleaned = registryEnvCleanup(shimPath, current.PATH);
+  if (cleaned !== String(current.PATH || '')) {
+    lines.push(`Set-ItemProperty -Path 'HKCU:\\Environment' -Name PATH -Value '${psq(cleaned)}' -Type ${current.PATH_KIND === 'ExpandString' ? 'ExpandString' : 'String'}`);
+  }
+  if (lines.length) powershell(lines.join('; '));
+  return { removed: lines.length > 0 };
+}
+
 function isCodexTaskEnvironment(env = process.env) {
   return Boolean(
     env.CODEX_THREAD_ID ||
@@ -161,7 +236,7 @@ async function freePort() {
 async function launch(args = []) {
   const root = REPO_ROOT;
   const flags = new Set(args);
-  const unknown = args.filter(arg => !['--check', '--update', '--no-update', '--restart'].includes(arg));
+  const unknown = args.filter(arg => !['--check', '--update', '--no-update', '--restart', '--clean-env'].includes(arg));
   if (unknown.length) throw new Error('Unsupported Launcher arguments');
   const dataDir = nativeEnvironment().HARNESSMIX_DATA_DIR;
   if (!flags.has('--check') && isCodexTaskEnvironment()) {
@@ -175,6 +250,13 @@ async function launch(args = []) {
     if (outcome.updated || outcome.repaired || outcome.rolledBack) {
       console.log('[Harness Mix] 更新流程完成，重新运行 npm start 生效。');
     }
+    return;
+  }
+  if (flags.has('--clean-env')) {
+    const result = cleanRegistryEnv(nativePaths().shim);
+    console.log(result.removed
+      ? '[Harness Mix] 已移除用户级 CODEX_CLI_PATH 与 shim PATH 前缀（HKCU\\Environment）。'
+      : '[Harness Mix] 用户环境中没有 harness-mix 注入，无需清理。');
     return;
   }
   if (!flags.has('--check') && !flags.has('--restart')) {
@@ -221,6 +303,11 @@ async function launch(args = []) {
   saveNativeSettings(env);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'node-path.txt'), process.execPath);
   fs.writeFileSync(path.join(path.dirname(paths.shim), 'stock-path.txt'), installation.stock);
+  // ≥26.917 的 Desktop 自重启会丢弃激活环境块；把 shim 的裸名/路径写进注册表用户环境兜底。
+  if (process.platform === 'win32' && compareVersions(installation.version, BARE_CLI_NAME_DESKTOP_FLOOR) >= 0) {
+    const registry = applyRegistryEnv(paths.shim);
+    if (registry.applied) console.log(`[Harness Mix] 已写入用户注册表环境（${registry.changed.join(' + ')}），Desktop 自重启后仍能找到 shim；npm start -- --clean-env 可移除。`);
+  }
   const port = await freePort();
   const attachmentPort = await freePort();
   const nonce = crypto.randomBytes(16).toString('hex');
@@ -266,6 +353,9 @@ module.exports = {
   launch,
   cacheCodexRuntime,
   codexCliOverride,
+  registryEnvPlan,
+  registryEnvCleanup,
+  pathIncludesDir,
   isCodexTaskEnvironment,
   readLiveHostInstance,
   stopDesktopProcesses,
