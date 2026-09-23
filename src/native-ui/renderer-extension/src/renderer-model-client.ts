@@ -213,6 +213,10 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   inspectThreadUsage(input: ThreadUsageInspectionParams): Promise<ThreadUsageInspection>;
   inspectThreadTeam?(input: { threadId: string; teamId?: string }): Promise<unknown>;
   collaborationUserAction?(input: CollaborationUserActionInput): Promise<unknown>;
+  usageHistory?(input: { days?: number }): Promise<unknown>;
+  usageSummary?(): Promise<unknown>;
+  healthSnapshot?(): Promise<unknown>;
+  healthRefresh?(): Promise<unknown>;
   subscribeThreadUsage?(listener: (update: ThreadUsageInspection) => void): () => void;
   selectThreadModel(input: ThreadModelSelectParams): Promise<HarnessModelSelectionState>;
   selectThreadThinking(input: ThreadThinkingSelectParams): Promise<HarnessModelSelectionState>;
@@ -501,6 +505,18 @@ export function createRendererModelClient(
         if (key !== "action" && key !== "threadId" && value !== undefined) params[key] = value;
       }
       return manager.sendRequest(method, params);
+    },
+    async usageHistory(input: { days?: number }): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/usage/history', input ?? {});
+    },
+    async usageSummary(): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/usage/summary', {});
+    },
+    async healthSnapshot(): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/health/snapshot', {});
+    },
+    async healthRefresh(): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/health/refresh', {});
     },
     subscribeThreadUsage(listener: (update: ThreadUsageInspection) => void): () => void {
       const notifications = notificationTarget(source);

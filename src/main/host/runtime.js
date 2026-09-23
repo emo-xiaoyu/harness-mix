@@ -16,6 +16,8 @@ const { buildHandoffContext, composeHandoffEnvelope } = require('./handoff');
 const { HandoffCheckpoints } = require('./handoff-checkpoints');
 const { HandoffAccess } = require('./handoff-access');
 const { VerificationGates } = require('./verification-gates');
+const { UsageHistory } = require('./usage-history');
+const { HealthCenter } = require('./health');
 const { storageProjection } = require('./thread-storage');
 const { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace } = require('./collaboration-worktree');
 
@@ -69,6 +71,9 @@ class HostRuntime {
     this.handoffs = new HandoffCheckpoints(this);
     this.handoffAccess = new HandoffAccess(this);
     this.verificationGates = new VerificationGates(this);
+    // 用量中心历史层与健康中心（只读快照），随 Host 生命周期初始化
+    this.usageHistory = new UsageHistory(this);
+    this.health = new HealthCenter(this);
     this.reviewController = new ReviewController(this, { save: () => this.#save(), broadcast: () => this.#broadcast() });
     this.execution = new CoreSession();
     this.core = this.execution.core;
@@ -78,6 +83,7 @@ class HostRuntime {
   async initialize() {
     this.threads = await this.store.loadIndex();
     await this.collaboration.initialize();
+    await this.usageHistory.initialize();
     await this.handoffs.initialize();
     const emit = (event) => this.#applyEvent(event);
     for (const adapter of buildAdapters(emit)) this.adapters.set(adapter.manifest.id, adapter);
@@ -1267,6 +1273,8 @@ class HostRuntime {
     const { settled, ignored } = applied;
     if (ignored) return;
     this.turnActivity.set(thread.id, event.timestamp);
+    // 用量中心：累计各 Harness 上报的 token/费用增量（基线去重，见 usage-history.js）
+    if (event.kind === 'usage') this.usageHistory.record(thread, event.usage);
     // 文件编辑落盘后即时刷新审查快照（含协作 Lead 的聚合卡片），不等 3s 轮询
     if ((event.kind === 'tool' && event.state !== 'running' && typeof event.path === 'string' && event.path) || event.kind === 'file-change') {
       this.reviewController.nudge(thread.id);

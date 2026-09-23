@@ -83,6 +83,8 @@ describe("Renderer settings localization", () => {
       "Skills",
       "会话导入",
       "存储与验证",
+      "用量中心",
+      "健康中心",
       "皮肤",
       "桌宠",
       "更新",

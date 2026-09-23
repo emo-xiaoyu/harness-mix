@@ -837,6 +837,18 @@ export function installRendererBindingProbe(
       const client = modelClientForHost('local');
       return client?.inspectStorage && client.optimizeStorage ? { inspectStorage: () => client.inspectStorage!(), optimizeStorage: () => client.optimizeStorage!() } : null;
     },
+    getUsageClient: () => {
+      const client = modelClientForHost('local');
+      return client?.usageHistory && client.usageSummary
+        ? { usageHistory: input => client.usageHistory!(input), usageSummary: () => client.usageSummary!() }
+        : null;
+    },
+    getHealthClient: () => {
+      const client = modelClientForHost('local');
+      return client?.healthSnapshot && client.healthRefresh
+        ? { healthSnapshot: () => client.healthSnapshot!(), healthRefresh: () => client.healthRefresh!() }
+        : null;
+    },
     getIntegrationsClient: () => {
       const client = modelClientForHost('local');
       if (!client?.integrationCatalog || !client.listIntegrations || !client.saveMcp || !client.removeMcp || !client.changeSkill) return null;

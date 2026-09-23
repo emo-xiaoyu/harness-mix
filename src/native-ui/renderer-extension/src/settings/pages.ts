@@ -31,6 +31,8 @@ import { createMcpSettingsPage, createSkillsSettingsPage } from './integrations-
 import type { RendererIntegrationsClient } from '../renderer-integrations-client.js';
 import { createAccountsSettingsPage, type RendererCodexAccountClient } from "./accounts-page.js";
 import { createStorageSettingsPage, type RendererStorageClient } from './storage-page.js';
+import { createUsageSettingsPage, type RendererUsageClient } from './usage-page.js';
+import { createHealthSettingsPage, type RendererHealthClient } from './health-page.js';
 import { createSkinSettingsPage } from "./skin-market.js";
 import { createPetSettingsPage } from "./pet-market.js";
 import type { RendererPetsClient } from "./pets-client.js";
@@ -87,6 +89,8 @@ export const DEFAULT_RENDERER_SETTINGS_PAGE_IDS = [
   "skills",
   "session-import",
   "storage",
+  "usage",
+  "health",
   "skins",
   "pets",
   "updates",
@@ -639,6 +643,8 @@ export function createDefaultRendererSettingsPages(
     Promise.reject(new Error("Imported Thread navigation is unavailable")),
   getIntegrationsClient: () => RendererIntegrationsClient | null = () => null,
   getStorageClient: () => RendererStorageClient | null = () => null,
+  getUsageClient: () => RendererUsageClient | null = () => null,
+  getHealthClient: () => RendererHealthClient | null = () => null,
   getPetClient: () => RendererPetsClient | null = () => null,
   getCollaborationClient: () => RendererCollaborationClient | null = () => null,
 ): readonly RendererSettingsPageDefinition[] {
@@ -650,6 +656,8 @@ export function createDefaultRendererSettingsPages(
     createSkillsSettingsPage(messages, getIntegrationsClient),
     createSessionImportSettingsPage(messages, getSessionImportClient, openImportedThread),
     createStorageSettingsPage(messages, getStorageClient),
+    createUsageSettingsPage(messages, getUsageClient),
+    createHealthSettingsPage(messages, getHealthClient),
     createSkinSettingsPage(messages),
     createPetSettingsPage(messages, getPetClient),
     updatesPage(messages, getUpdateClient),
@@ -666,6 +674,8 @@ export function createDefaultRendererSettingsRegistry(
   openImportedThread?: RendererImportedThreadOpener,
   getIntegrationsClient?: () => RendererIntegrationsClient | null,
   getStorageClient?: () => RendererStorageClient | null,
+  getUsageClient?: () => RendererUsageClient | null,
+  getHealthClient?: () => RendererHealthClient | null,
   getPetClient?: () => RendererPetsClient | null,
   getCollaborationClient?: () => RendererCollaborationClient | null,
 ): RendererSettingsPageRegistry {
@@ -679,6 +689,8 @@ export function createDefaultRendererSettingsRegistry(
       openImportedThread,
       getIntegrationsClient,
       getStorageClient,
+      getUsageClient,
+      getHealthClient,
       getPetClient,
       getCollaborationClient,
     ),
@@ -687,6 +699,8 @@ export function createDefaultRendererSettingsRegistry(
 
 export type { RendererCodexAccountClient } from "./accounts-page.js";
 export type { RendererStorageClient, RendererStorageInspection } from './storage-page.js';
+export type { RendererUsageClient, RendererUsageHistoryResult, RendererUsageSummaryResult } from './usage-page.js';
+export type { RendererHealthClient, RendererHealthSnapshot } from './health-page.js';
 export type { RendererPetsClient } from "./pets-client.js";
 export type {
   RendererCollaborationClient,

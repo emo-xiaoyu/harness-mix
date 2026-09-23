@@ -464,6 +464,10 @@ class NativeProtocol {
     if (method === 'harnessmix/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     if (method === 'harnessmix/collaboration/preferences') return this.runtime.collaboration.getPreferences();
     if (method === 'harnessmix/collaboration/preferences/save') return this.runtime.collaboration.setPreferences(params);
+    if (method === 'harnessmix/usage/history') return this.runtime.usageHistory.history(params);
+    if (method === 'harnessmix/usage/summary') return this.runtime.usageHistory.summary();
+    if (method === 'harnessmix/health/snapshot') return this.runtime.health.snapshot();
+    if (method === 'harnessmix/health/refresh') return this.runtime.health.refreshHarnesses();
     // 桌宠市场：官方预载（Codex 安装包 asar 提取）与 ~/.codex/pets 安装管理
     if (method === 'harnessmix/pets/catalog') return this.pets.catalog();
     if (method === 'harnessmix/pets/community') return this.pets.community(params);

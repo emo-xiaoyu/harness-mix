@@ -300,6 +300,8 @@ describe("Renderer fixed Model request client", () => {
       "executeThreadCommand",
       "forkThread",
       "getCollaborationPreferences",
+      "healthRefresh",
+      "healthSnapshot",
       "importHarnessSession",
       "inspectCodexAccountUsage",
       "inspectHarness",
@@ -339,6 +341,8 @@ describe("Renderer fixed Model request client", () => {
       "subscribeCodexAccountLogin",
       "subscribeThreadUsage",
       "switchHarness",
+      "usageHistory",
+      "usageSummary",
     ]);
 
     await expect(client.inspectHarness({ harnessId: piHarnessId, refresh: true })).resolves.toEqual(

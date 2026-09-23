@@ -85,6 +85,8 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 | **📋 原生消息队列** | 完整接入 Codex 会话排队机制（增删改查、排序、插队抢占与自动排空） | 原生 Composer 队列；当前回合完成后自动顺序调度执行排队消息 |
 | **✅ 可配置验证门禁** | 任务级 off / advisory / required 策略，内置一致性检查与自定义验证命令 | 命令面板 `/gate`、`/verify`；强制模式保护隔离分支合并与推送 |
 | **💾 会话存储治理** | schema v3 分片惰性加载、无损紧凑存储、迁移备份与体积诊断 | 冷启动只读任务索引；打开任务时才恢复对应 Core checkpoint |
+| **📊 用量中心** | 近 90 天跨 Harness 用量历史：按日/Harness/模型聚合 token、花费与上报次数 | 设置 → 用量；纯增量累计（基线去重），凭据与额度仍归各 Harness |
+| **🩺 健康中心** | 宿主运行时状态、全部 Harness 握手结果与一键重探、崩溃报告列表 | 设置 → 健康；只读快照 + 手动刷新，不触碰任何凭据 |
 | **🩹 失败分类与恢复** | 失败回合归类为连接 / 登录 / 额度 / 被拒 / 服务异常五类，分类来自原生结构化错误（Codex `codexErrorInfo` 透传）、状态码或消息特征，无法归类时诚实标注 unknown | 错误状态随任务投影；Renderer 可查 `harnessmix/harness/turn-error` 获取分类与动作（重试 / 去登录 / 新建会话），login 按钮按 Harness 真实登录能力出现 |
 | **🌐 ChatGPT 侧边栏桥接** | 安全脱敏提取当前会话上下文并一键生成结构化草稿 | Web 快捷聊天面板；直通注入 ChatGPT，实现跨工具无缝协作 |
 | **👤 账户与用量隔离** | Codex 多账户隔离与即时切换；实时追踪 Token / Credits 用量 | 原生侧边栏与设置面板；各 Harness 凭据、模型与审批原生自理 |
@@ -322,6 +324,8 @@ The preview comes from the current Codex Desktop native window: Harness Mix appe
 | **📋 Native Message Queue** | Full integration of the Codex session queue (add / remove / edit, reorder, preempt and auto-drain) | Native Composer queue; queued messages are scheduled sequentially once the current turn completes |
 | **✅ Configurable Verification Gates** | Per-task off / advisory / required policies, built-in consistency checks and custom verification commands | Command palette `/gate`, `/verify`; required mode protects isolated branch merges and pushes |
 | **💾 Session Storage Governance** | schema v3 sharded lazy loading, lossless compact storage, migration backups and size diagnostics | Cold start reads only the task index; a task's Core checkpoint is restored only when it is opened |
+| **📊 Usage Center** | Last-90-day cross-Harness usage history: tokens, spend and report counts aggregated per day/Harness/model | Settings → Usage; positive-delta accounting only, credentials and quotas stay with each Harness |
+| **🩺 Health Center** | Host runtime status, every Harness handshake result with one-click re-probe, and the latest crash reports | Settings → Health; read-only snapshot plus manual refresh, never touching credentials |
 | **🩹 Failure Classification & Recovery** | Failed turns are classified as connection / login / quota / rejected / service fault, derived from native structured errors (Codex `codexErrorInfo` passthrough), status codes or message patterns, and honestly marked unknown when nothing matches | Error state follows the task projection; the Renderer can query `harnessmix/harness/turn-error` for the classification and actions (retry / go sign in / new session), and the login button only appears when the Harness truly supports it |
 | **🌐 ChatGPT Sidebar Bridge** | Safely redacts and extracts the current session context and generates a structured draft in one click | Web quick-chat panel; injected straight into ChatGPT for seamless cross-tool collaboration |
 | **👤 Account & Usage Isolation** | Codex multi-account isolation with instant switching; real-time Token / Credits tracking | Native sidebar and settings panel; each Harness manages its own credentials, models and approvals |

@@ -33,6 +33,8 @@ export interface RendererSettingsLifecycleOptions {
   getAccountClient?(): RendererCodexAccountClient | null;
   getSessionImportClient?(): RendererSessionImportClient | null;
   getStorageClient?(): RendererStorageClient | null;
+  getUsageClient?(): import('./settings/pages.js').RendererUsageClient | null;
+  getHealthClient?(): import('./settings/pages.js').RendererHealthClient | null;
   getPetClient?(): RendererPetsClient | null;
   getCollaborationClient?(): import('./settings/pages.js').RendererCollaborationClient | null;
   openImportedThread?: RendererImportedThreadOpener;
@@ -84,6 +86,8 @@ export function installRendererSettingsLifecycle(
       },
       options.getIntegrationsClient,
       options.getStorageClient,
+      options.getUsageClient,
+      options.getHealthClient,
       options.getPetClient,
       options.getCollaborationClient,
     );
