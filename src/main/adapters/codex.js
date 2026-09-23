@@ -22,19 +22,38 @@ const manifest = {
 const MAX_TOOL_TEXT = 24_000;
 
 // Codex 26.917 起 permissionProfile/list 返回带 ':' 前缀的档案 id（如 ':read-only'），
-// 而渲染层契约要求 permission mode id 只能是 [A-Za-z0-9._~-]。非安全 id 经 base64url 往返编码，
-// UI 侧只见安全 id，发往原生 app-server 前解码还原。
+// 而渲染层契约要求 permission mode id 只能是 [A-Za-z0-9._~-] 且不超过 128 字符。
+// 非安全 id 经 base64url 往返编码，UI 侧只见安全 id，发往原生 app-server 前解码还原；
+// 编码后仍超长的病态 id 退化为 sha256 摘要 id（进程内索引保留回查）。
+// 内置 'default' 档案 id 是保留名：与其同名的原生档案必须编码，避免目录冲突。
 const PERMISSION_MODE_SAFE_ID = /^[A-Za-z0-9._~-]+$/;
 const PERMISSION_MODE_ENCODED_PREFIX = 'b64u-';
+const PERMISSION_MODE_DIGEST_PREFIX = 'sha256-';
+const PERMISSION_MODE_MAX_ID = 128;
+const PERMISSION_MODE_RESERVED_ID = 'default';
+const permissionModeDigestIndex = new Map();
 
 function permissionModeTransportId(nativeId) {
   if (typeof nativeId !== 'string' || !nativeId) return undefined;
-  if (PERMISSION_MODE_SAFE_ID.test(nativeId) && !nativeId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)) return nativeId;
-  return PERMISSION_MODE_ENCODED_PREFIX + Buffer.from(nativeId, 'utf8').toString('base64url');
+  if (
+    nativeId !== PERMISSION_MODE_RESERVED_ID &&
+    nativeId.length <= PERMISSION_MODE_MAX_ID &&
+    PERMISSION_MODE_SAFE_ID.test(nativeId) &&
+    !nativeId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)
+  ) {
+    return nativeId;
+  }
+  const encoded = PERMISSION_MODE_ENCODED_PREFIX + Buffer.from(nativeId, 'utf8').toString('base64url');
+  if (encoded.length <= PERMISSION_MODE_MAX_ID) return encoded;
+  const digest = PERMISSION_MODE_DIGEST_PREFIX + require('node:crypto').createHash('sha256').update(nativeId, 'utf8').digest('base64url');
+  permissionModeDigestIndex.set(digest, nativeId);
+  return digest;
 }
 
 function permissionModeNativeId(transportId) {
-  if (typeof transportId !== 'string' || !transportId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)) return transportId;
+  if (typeof transportId !== 'string') return transportId;
+  if (transportId.startsWith(PERMISSION_MODE_DIGEST_PREFIX)) return permissionModeDigestIndex.get(transportId) ?? transportId;
+  if (!transportId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)) return transportId;
   return Buffer.from(transportId.slice(PERMISSION_MODE_ENCODED_PREFIX.length), 'base64url').toString('utf8');
 }
 
