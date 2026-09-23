@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict');
-const { projectNotification, queueRequest, usageView, modelView } = require('../src/main/adapters/codex');
+const {
+  projectNotification, queueRequest, usageView, modelView,
+  permissionModeCatalog, nativePermissionMode,
+} = require('../src/main/adapters/codex');
 
 function fakeSession() {
   return {
@@ -13,6 +16,37 @@ function fakeSession() {
 }
 
 (async () => {
+  // Codex 可从本地配置读取任意 profile id（例如含空格、斜杠或冒号），但 Desktop
+  // 外部 Harness 协议只接收 transport-safe id。目录必须投影为稳定安全 id，且在
+  // 选择时无损还原原始 native id；否则连接诊断会在 schema 校验前直接失败。
+  const nativeProfiles = [
+    { id: 'read-only', allowed: true, description: '只读权限' },
+    { id: 'workspace/write', allowed: true, description: '可写工作区' },
+    { id: 'danger:full access', allowed: true, description: '完全访问' },
+    { id: 'default', allowed: true, description: '与保留默认值同名的原生配置' },
+    { id: 'x'.repeat(129), allowed: true, description: '超出 transport 长度上限' },
+    { id: 'hidden-profile', allowed: false, description: '不可选择' },
+  ];
+  const projectedModes = permissionModeCatalog(nativeProfiles);
+  assert.deepEqual(projectedModes.modes.map(mode => mode.id).slice(0, 2), ['default', 'read-only'], '默认和既有安全 id 保持兼容');
+  assert.equal(projectedModes.modes.length, 6, '不可用原生配置不会泄露到选择目录');
+  assert.ok(projectedModes.modes.every(mode => /^[A-Za-z0-9._~-]+$/.test(mode.id) && mode.id.length <= 128), '所有对外权限模式 id 均满足 Desktop 传输契约');
+  const workspaceMode = projectedModes.modes.find(mode => mode.label === 'workspace/write');
+  const dangerMode = projectedModes.modes.find(mode => mode.label === 'danger:full access');
+  const nativeDefaultProfile = projectedModes.modes.find(mode => mode.label === 'default');
+  assert.ok(workspaceMode && dangerMode && nativeDefaultProfile, '不安全和保留名字的原生配置均有独立安全投影');
+  assert.notEqual(workspaceMode.id, 'workspace/write');
+  assert.notEqual(dangerMode.id, 'danger:full access');
+  assert.notEqual(nativeDefaultProfile.id, 'default');
+  const longMode = projectedModes.modes.find(mode => mode.label === 'x'.repeat(129));
+  assert.ok(longMode && longMode.id.length <= 128, '过长的原生 id 也必须使用有界安全投影');
+  assert.equal(nativePermissionMode(workspaceMode.id, projectedModes), 'workspace/write');
+  assert.equal(nativePermissionMode(dangerMode.id, projectedModes), 'danger:full access');
+  assert.equal(nativePermissionMode(nativeDefaultProfile.id, projectedModes), 'default');
+  assert.equal(nativePermissionMode(longMode.id, projectedModes), 'x'.repeat(129));
+  assert.equal(nativePermissionMode('read-only', projectedModes), 'read-only', '旧版持久化的安全 native id 仍可恢复');
+  assert.equal(nativePermissionMode('default', projectedModes), null, '保留 default 始终表示不覆盖原生策略');
+
   const session = fakeSession();
   const events = [];
   const emit = event => events.push(event);
@@ -42,6 +76,19 @@ function fakeSession() {
   } }, questionSession, event => questions.push(event));
   assert.equal(questions.length, 2);
   const adapter = require('../src/main/adapters/codex').create();
+
+  // 会话热切换使用投影 id，实际 RPC 必须收到原始 Codex profile id，而不是散列值。
+  const modeSession = fakeSession();
+  modeSession.cwd = 'E:\\harness-mix';
+  modeSession.permissionModeCatalog = projectedModes;
+  const modeUpdates = [];
+  modeSession.host = { async request(method, params) { modeUpdates.push({ method, params }); return {}; } };
+  await adapter.setPermissionMode(modeSession, workspaceMode.id);
+  await adapter.setPermissionMode(modeSession, 'default');
+  assert.deepEqual(modeUpdates, [
+    { method: 'thread/settings/update', params: { threadId: 'thread-native', permissions: 'workspace/write' } },
+    { method: 'thread/settings/update', params: { threadId: 'thread-native', permissions: null } },
+  ], '安全 transport id 在边界处恢复为原生值');
   await adapter.respond(questionSession, 'codex-7-framework', { optionId: 'React' });
   await adapter.respond(questionSession, 'codex-7-name', { value: 'Harness Mix' });
   assert.deepEqual(await answer, { answers: { framework: { answers: ['React'] }, name: { answers: ['Harness Mix'] } } });
