@@ -389,7 +389,7 @@ function create() {
     async inspect() {
       const result = await new Promise((resolve) => {
         const { command, args } = cliSpawn("claude", ["--version"]);
-        execFile(command, args, { windowsHide: true }, (error, stdout) => resolve({ ok: !error, stdout }));
+        execFile(command, args, { windowsHide: true, timeout: 20000 }, (error, stdout) => resolve({ ok: !error, stdout }));
       });
       try { await loadSdk(); }
       catch { return { available: false, detail: "缺少 @anthropic-ai/claude-agent-sdk（npm install）" }; }

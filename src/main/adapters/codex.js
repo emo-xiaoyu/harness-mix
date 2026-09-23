@@ -462,7 +462,7 @@ function create() {
     async inspect() {
       const result = await new Promise((resolve) => {
         const { command, args } = cliSpawn('codex', ['--version']);
-        execFile(command, args, { windowsHide: true }, (error, stdout) => resolve({ error, stdout }));
+        execFile(command, args, { windowsHide: true, timeout: 20000 }, (error, stdout) => resolve({ error, stdout }));
       });
       return result.error
         ? { available: false, detail: '未找到 Codex CLI（npm i -g @openai/codex）' }

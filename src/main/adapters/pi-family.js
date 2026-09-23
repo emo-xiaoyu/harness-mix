@@ -132,7 +132,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes =
       async inspect() {
         const result = await new Promise((resolve) => {
           const { command, args } = cliSpawn(bin, ["--version"]);
-          execFile(command, args, { windowsHide: true }, (error, stdout) => resolve({ ok: !error, stdout }));
+          execFile(command, args, { windowsHide: true, timeout: 20000 }, (error, stdout) => resolve({ ok: !error, stdout }));
         });
         return result.ok
           ? { available: true, detail: `${bin} ${String(result.stdout).trim()}` }

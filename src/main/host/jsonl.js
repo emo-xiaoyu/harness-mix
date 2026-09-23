@@ -1,4 +1,6 @@
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 const { StringDecoder } = require("node:string_decoder");
 const { terminateTree } = require("../native/process-utils");
 
@@ -118,13 +120,42 @@ class JsonlProcess {
   }
 }
 
-/** 跨平台 CLI 启动：Windows 上 .cmd  shim 需要经 cmd.exe 执行 */
+/**
+ * Windows CLI 解析：逐 PATH 目录优先匹配 <bin>.exe（直接 spawn，不经 cmd.exe），
+ * 其次 <bin>.cmd / <bin>.bat（按 CVE-2024-27980 要求经 cmd.exe 包装执行）。
+ * 含路径分隔符的 bin 按给定路径就地解析；扩展名缺失时按 .exe → .cmd → .bat 补齐。
+ * 原生安装（claude.exe、WinGet codex.exe、opencode.exe 等无 .cmd shim 的形态）
+ * 也必须能被找到。
+ */
+function resolveWindowsCli(bin) {
+  const extensions = [".exe", ".cmd", ".bat"];
+  const candidates = [];
+  if (/[\\/]/.test(bin) || /^[a-zA-Z]:/.test(bin)) {
+    if (/\.[a-z0-9]+$/i.test(bin)) candidates.push(bin);
+    else for (const ext of extensions) candidates.push(bin + ext);
+  } else {
+    for (const dir of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+      for (const ext of extensions) candidates.push(path.join(dir, bin + ext));
+    }
+  }
+  for (const file of candidates) {
+    try { if (fs.statSync(file).isFile()) return file; } catch { /* 继续尝试下一个候选 */ }
+  }
+  return null;
+}
+
+/** 跨平台 CLI 启动：Windows 上解析真实可执行文件，.cmd/.bat shim 经 cmd.exe 执行 */
 function cliSpawn(bin, args) {
   if (process.platform === "win32") {
-    const safe = [`${bin}.cmd`, ...args.map(String)].map((a) => (/[&|<>^%"]/.test(a) ? `"${a.replace(/["&|<>^%]/g, "")}"` : a.includes(" ") ? `"${a}"` : a));
+    const argv = args.map(String);
+    const resolved = resolveWindowsCli(bin);
+    if (resolved && !/\.(cmd|bat)$/i.test(resolved)) return { command: resolved, args: argv };
+    // 未解析到时退回 <bin>.cmd 裸名，让探测方拿到与旧行为一致的“未安装”错误
+    const target = resolved || `${bin}.cmd`;
+    const safe = [target, ...argv].map((a) => (/[&|<>^%"]/.test(a) ? `"${a.replace(/["&|<>^%]/g, "")}"` : a.includes(" ") ? `"${a}"` : a));
     return { command: "cmd.exe", args: ["/d", "/s", "/c", safe.join(" ")] };
   }
   return { command: bin, args: args.map(String) };
 }
 
-module.exports = { JsonlProcess, cliSpawn };
+module.exports = { JsonlProcess, cliSpawn, resolveWindowsCli };
