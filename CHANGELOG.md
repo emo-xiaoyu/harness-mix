@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 — 2026-09-23
+
+- Aligns all six `@harness-mix/native-*` runtime packages at 0.3.0 with the CLI and pins `optionalDependencies` to the same version (0.3.0 shipped with pins still at 0.2.4 — resolvable and contract-identical, but off the lock-step convention). Native binaries are rebuilt from unchanged Rust sources; win32-x64 ships real binaries, the other five platforms are source-only metadata packages as before. 六个 native 运行时包对齐 0.3.0 并同步钉版。
+
 ## 0.3.0 — 2026-09-22
 
 - **The Agent Team board is now operable by the user** (`harnessmix/thread/team/task/cancel`, `task/reassign`, `team/message/send`, `thread/collaboration/continue`): cancel a running task through the same settlement path as `cancel_delegation`, reassign failed or interrupted tasks to existing members (task reset to pending, `reassignedFrom` kept), nudge members as the lead, and resume paused collaboration through an injected lead instruction turn — authorization is principal-checked in `collaboration.userAction`. Task failures always reach the lead via a system mailbox notice carrying the reason, and `assign_team_task` accepts `retry {max 1..3}` so the Host auto re-dispatches the same member within the lead turn (session and workspace reused, prompt warns not to replay completed side effects); user cancels stay silent and unretried. Delegation dispatch also tolerates a momentarily busy member session (mailbox pump, user nudge, settle tail): the "task executing" rejection is retried for up to 10s instead of failing the task without a member turn. Worktree apply under an off gate attaches one advisory verification to the result (zero-config safety net, gate semantics unchanged), and renderer team cards gain the kanban action buttons, disabled states and unread badges. 团队看板可操作：取消/改派/追问/继续协作，任务失败必达 lead 邮箱并支持自动重派，派发容忍瞬时忙碌的成员会话。
