@@ -1,5 +1,4 @@
 const { execFile } = require('node:child_process');
-const { createHash } = require('node:crypto');
 const { CodexAppServer } = require('./codex-app-server');
 const { cliSpawn } = require('../host/jsonl');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
@@ -21,6 +20,36 @@ const manifest = {
 };
 
 const MAX_TOOL_TEXT = 24_000;
+
+// Codex 26.917 起 permissionProfile/list 返回带 ':' 前缀的档案 id（如 ':read-only'），
+// 而渲染层契约要求 permission mode id 只能是 [A-Za-z0-9._~-]。非安全 id 经 base64url 往返编码，
+// UI 侧只见安全 id，发往原生 app-server 前解码还原。
+const PERMISSION_MODE_SAFE_ID = /^[A-Za-z0-9._~-]+$/;
+const PERMISSION_MODE_ENCODED_PREFIX = 'b64u-';
+
+function permissionModeTransportId(nativeId) {
+  if (typeof nativeId !== 'string' || !nativeId) return undefined;
+  if (PERMISSION_MODE_SAFE_ID.test(nativeId) && !nativeId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)) return nativeId;
+  return PERMISSION_MODE_ENCODED_PREFIX + Buffer.from(nativeId, 'utf8').toString('base64url');
+}
+
+function permissionModeNativeId(transportId) {
+  if (typeof transportId !== 'string' || !transportId.startsWith(PERMISSION_MODE_ENCODED_PREFIX)) return transportId;
+  return Buffer.from(transportId.slice(PERMISSION_MODE_ENCODED_PREFIX.length), 'base64url').toString('utf8');
+}
+
+// 渲染层本地化表只认显示名（Read only → 只读 等），原生档案 id 需先映射成标准显示名，
+// 未知档案回退显示原生 id，避免凭空猜测语义。
+const PERMISSION_PROFILE_LABELS = new Map([
+  [':read-only', 'Read only'],
+  [':workspace', 'Workspace write'],
+  [':danger-full-access', 'Full access (dangerous)'],
+  // 旧版无 ':' 前缀的档案 id
+  ['read-only', 'Read only'],
+  ['workspace', 'Workspace write'],
+  ['workspace-write', 'Workspace write'],
+  ['danger-full-access', 'Full access (dangerous)'],
+]);
 
 function text(value) {
   if (value == null) return undefined;
@@ -54,109 +83,6 @@ async function listAll(host, method, params = {}) {
     cursor = page?.nextCursor ?? null;
   } while (cursor);
   return data;
-}
-
-const TRANSPORT_PERMISSION_MODE_ID = /^[A-Za-z0-9._~-]+$/;
-const DEFAULT_PERMISSION_MODE_ID = 'default';
-const CODEX_PROFILE_ID_PREFIX = 'codex-profile-';
-const MAX_TRANSPORT_PERMISSION_MODE_ID_LENGTH = 128;
-const MAX_TRANSPORT_PERMISSION_MODE_COUNT = 32;
-
-/** The shared Desktop contract's id rule, kept local to avoid a JS→TS import. */
-function isTransportSafePermissionModeId(value) {
-  return typeof value === 'string'
-    && value.length <= MAX_TRANSPORT_PERMISSION_MODE_ID_LENGTH
-    && TRANSPORT_PERMISSION_MODE_ID.test(value);
-}
-
-/**
- * Convert a native Codex permission-profile id into a deterministic protocol id.
- *
- * Codex accepts arbitrary profile identifiers from configuration, while the
- * Desktop external-harness transport deliberately accepts only URL-safe ids.
- * A SHA-256 base64url digest keeps the public id stable, bounded, and opaque;
- * the original value never has to pass through the transport as an id.
- *
- * Limitation: the digest is not reversible. Callers must retain or refresh the
- * native catalog before sending a selected mode back to Codex.
- */
-function opaquePermissionModeId(nativeId) {
-  return CODEX_PROFILE_ID_PREFIX + createHash('sha256').update(nativeId, 'utf8').digest('base64url');
-}
-
-/**
- * Normalize native display text before it crosses the Desktop strict schema.
- * Native profile data is user-controlled configuration, so malformed labels or
- * descriptions must not make the whole Harness connection diagnostic fail.
- */
-function permissionModeText(value, fallback, maximumLength) {
-  if (typeof value !== 'string') return fallback;
-  const normalized = value.trim().slice(0, maximumLength);
-  return normalized || fallback;
-}
-
-/**
- * Project Codex's permission profiles into the finite, transport-safe catalog
- * used by Harness Mix. Safe legacy ids remain unchanged for persisted-thread
- * compatibility; unsafe ids use a deterministic opaque id and are mapped back
- * only in this adapter. `default` stays reserved for "use native defaults".
- */
-function permissionModeCatalog(profiles) {
-  const nativeProfiles = new Map();
-  for (const profile of profiles || []) {
-    if (!profile?.allowed || typeof profile.id !== 'string' || !profile.id) continue;
-    nativeProfiles.set(profile.id, profile);
-  }
-
-  // A native profile may legally be named like an opaque id. Reserve every
-  // directly exposed legacy id first so an unsafe profile cannot shadow it.
-  const reservedIds = new Set([...nativeProfiles.keys()].filter((id) => (
-    id !== DEFAULT_PERMISSION_MODE_ID && isTransportSafePermissionModeId(id)
-  )));
-  const usedIds = new Set([DEFAULT_PERMISSION_MODE_ID]);
-  const modes = [{
-    id: DEFAULT_PERMISSION_MODE_ID,
-    label: '原生默认',
-    description: '使用 Codex 当前配置的权限策略',
-  }];
-  const nativeByTransportId = new Map([[DEFAULT_PERMISSION_MODE_ID, null]]);
-
-  for (const [nativeId, profile] of nativeProfiles) {
-    const legacySafeId = nativeId !== DEFAULT_PERMISSION_MODE_ID && isTransportSafePermissionModeId(nativeId);
-    const baseId = legacySafeId ? nativeId : opaquePermissionModeId(nativeId);
-    let transportId = baseId;
-    let suffix = 1;
-    while (usedIds.has(transportId) || (!legacySafeId && reservedIds.has(transportId))) {
-      transportId = `${baseId}-${suffix++}`;
-    }
-    usedIds.add(transportId);
-    nativeByTransportId.set(transportId, nativeId);
-    const description = permissionModeText(profile.description, '', 1_024);
-    // The Desktop schema permits 32 total modes, including the reserved default.
-    // Keep resolving overflow profiles for persisted threads, but do not expose
-    // them as new UI choices until the shared protocol raises that hard limit.
-    if (modes.length < MAX_TRANSPORT_PERMISSION_MODE_COUNT) {
-      modes.push({
-        id: transportId,
-        label: permissionModeText(profile.name ?? nativeId, 'Codex 权限配置', 256),
-        ...(description ? { description } : {}),
-      });
-    }
-  }
-
-  return { modes, nativeByTransportId, nativeProfiles };
-}
-
-/**
- * Resolve a selected external mode id to the exact native Codex profile id.
- * The safe-id lookup is the normal path; the legacy path supports previously
- * persisted safe profile ids from before opaque projection was introduced.
- */
-function nativePermissionMode(mode, catalog) {
-  if (mode === DEFAULT_PERMISSION_MODE_ID) return null;
-  if (typeof mode !== 'string' || !catalog) return undefined;
-  if (catalog.nativeByTransportId.has(mode)) return catalog.nativeByTransportId.get(mode);
-  return isTransportSafePermissionModeId(mode) && catalog.nativeProfiles.has(mode) ? mode : undefined;
 }
 
 function toolTitle(item) {
@@ -423,9 +349,9 @@ function queueRequest(message, session, emit) {
   throw new Error(`Harness Mix 暂不处理 Codex 请求：${method}`);
 }
 
-function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort, cwd, permissionModeCatalog } = {}) {
+function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort, cwd } = {}) {
   const session = {
-    host, nativeSessionId, model, cwd, permissionModeCatalog,
+    host, nativeSessionId, model, cwd,
     pendingApprovals: new Map(),
     state: {
       turn: null, compaction: null, nativeTurnId: null, usage: undefined, effort,
@@ -491,7 +417,7 @@ async function startTurnAfterNativeSettlement(host, params) {
   }
 }
 
-function threadOptions(thread, nativePermissionMode) {
+function threadOptions(thread) {
   // turnPermissions 来自 Desktop 权限菜单（thread/settings/update 或 thread/start 参数），
   // 转发给原生 app-server 让显示选择与实际生效一致；permissions 优先级高于旧 permissionMode 档案
   const perms = thread.options?.turnPermissions ?? {};
@@ -504,7 +430,9 @@ function threadOptions(thread, nativePermissionMode) {
     ...(approvalsReviewer ? { approvalsReviewer } : {}),
     ...(sandbox ? { sandbox } : {}),
     ...(perms.permissions ? { permissions: perms.permissions } : {}),
-    ...(nativePermissionMode && !perms.permissions ? { permissions: nativePermissionMode } : {}),
+    ...(thread.options?.permissionMode && thread.options.permissionMode !== 'default' && !perms.permissions
+      ? { permissions: permissionModeNativeId(thread.options.permissionMode) }
+      : {}),
   };
 }
 
@@ -525,25 +453,8 @@ function create() {
     async open({ thread, emit, diagnostic, collaboration, managedMcp = [] }) {
       const host = await CodexAppServer.acquire(diagnostic, thread.options?.codexHome);
       try {
-        // A selected mode may be an opaque transport id. Refresh the native
-        // catalog in this cwd before thread/start so Codex receives its exact
-        // profile id instead of the UI-safe projection. If discovery fails, we
-        // deliberately omit the stale selection and keep the new thread usable.
-        const selectedMode = thread.options?.permissionMode;
-        let modeCatalog = null;
-        if (selectedMode && selectedMode !== DEFAULT_PERMISSION_MODE_ID && !thread.options?.turnPermissions?.permissions) {
-          try {
-            modeCatalog = permissionModeCatalog(await listAll(host, 'permissionProfile/list', { cwd: thread.cwd }));
-          } catch (error) {
-            diagnostic?.(`Codex 权限配置目录读取失败，将使用原生默认：${error.message}`);
-          }
-        }
-        const nativeMode = nativePermissionMode(selectedMode, modeCatalog);
-        if (selectedMode && selectedMode !== DEFAULT_PERMISSION_MODE_ID && nativeMode === undefined && modeCatalog) {
-          diagnostic?.('已选择的 Codex 权限配置不再可用，将使用原生默认');
-        }
         const servers = require('./managed-mcp').namedServers(managedMcp, collaboration);
-        const options = { ...threadOptions(thread, nativeMode), ...(Object.keys(servers).length ? { config: Object.fromEntries(Object.entries(servers).map(([name, value]) => [`mcp_servers.${name}`, value])) } : {}) };
+        const options = { ...threadOptions(thread), ...(Object.keys(servers).length ? { config: Object.fromEntries(Object.entries(servers).map(([name, value]) => [`mcp_servers.${name}`, value])) } : {}) };
         let result;
         if (thread.restore) {
           // 旧版 app-server 可能拒绝 resume 上的权限覆盖字段：降级重试不阻塞会话恢复
@@ -558,7 +469,7 @@ function create() {
           result = await host.request('thread/start', options);
         }
         const model = { id: result.model, name: result.model, provider: result.modelProvider ?? 'openai' };
-        const session = attachSession(host, result.thread.id, { emit, diagnostic, model, effort: result.reasoningEffort, cwd: thread.cwd, permissionModeCatalog: modeCatalog });
+        const session = attachSession(host, result.thread.id, { emit, diagnostic, model, effort: result.reasoningEffort, cwd: thread.cwd });
         session.turnPermissions = thread.options?.turnPermissions ?? null;
         session.collaborationEnabled = !!collaboration;
         emit({ kind: 'session', nativeSessionId: result.thread.id, model });
@@ -715,11 +626,16 @@ function create() {
         ]);
         const models = rawModels.map(modelView);
         const selected = models.find((model) => model.isDefault) ?? models[0];
-        const modes = permissionModeCatalog(profiles);
         return {
           models,
           thinkingLevels: selected?.efforts ?? [],
-          permissionModes: modes.modes,
+          permissionModes: [
+            { id: 'default', label: '原生默认', description: '使用 Codex 当前配置的权限策略' },
+            ...profiles.filter((profile) => profile.allowed).map((profile) => {
+              const transportId = permissionModeTransportId(profile.id);
+              return transportId === undefined ? null : { id: transportId, label: PERMISSION_PROFILE_LABELS.get(profile.id) ?? profile.id, description: profile.description };
+            }).filter(Boolean),
+          ],
         };
       } finally { host.release(); }
     },
@@ -729,12 +645,16 @@ function create() {
       const models = rawModels.map(modelView);
       const selected = models.find((model) => model.id === session.model?.id) ?? models.find((model) => model.isDefault) ?? models[0];
       const profiles = await listAll(session.host, 'permissionProfile/list', { cwd: session.cwd }).catch(() => []);
-      const modes = permissionModeCatalog(profiles);
-      session.permissionModeCatalog = modes;
       return {
         models,
         thinkingLevels: selected?.efforts ?? [],
-        permissionModes: modes.modes,
+        permissionModes: [
+          { id: 'default', label: '原生默认', description: '使用 Codex 当前配置的权限策略' },
+          ...profiles.filter((profile) => profile.allowed).map((profile) => {
+            const transportId = permissionModeTransportId(profile.id);
+            return transportId === undefined ? null : { id: transportId, label: PERMISSION_PROFILE_LABELS.get(profile.id) ?? profile.id, description: profile.description };
+          }).filter(Boolean),
+        ],
       };
     },
 
@@ -754,14 +674,7 @@ function create() {
     },
 
     async setPermissionMode(session, mode) {
-      let nativeMode = nativePermissionMode(mode, session.permissionModeCatalog);
-      if (nativeMode === undefined) {
-        const profiles = await listAll(session.host, 'permissionProfile/list', { cwd: session.cwd });
-        session.permissionModeCatalog = permissionModeCatalog(profiles);
-        nativeMode = nativePermissionMode(mode, session.permissionModeCatalog);
-      }
-      if (nativeMode === undefined) throw new Error('Native permission mode unavailable');
-      await session.host.request('thread/settings/update', { threadId: session.nativeSessionId, permissions: nativeMode });
+      await session.host.request('thread/settings/update', { threadId: session.nativeSessionId, permissions: mode === 'default' ? null : permissionModeNativeId(mode) });
     },
 
     async getContextUsage(session) { return session.state.usage; },
@@ -812,7 +725,4 @@ manifest.integrations = { mcp: true, skills: {
   project: ['.agents/skills'],
   overrides: { '.codex/skills': { env: 'CODEX_HOME', suffix: 'skills' } },
 } };
-module.exports = {
-  manifest, create, projectNotification, queueRequest, usageView, modelView,
-  startTurnAfterNativeSettlement, permissionModeCatalog, nativePermissionMode,
-};
+module.exports = { manifest, create, projectNotification, queueRequest, usageView, modelView, startTurnAfterNativeSettlement, permissionModeTransportId, permissionModeNativeId };

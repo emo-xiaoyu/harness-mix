@@ -167,6 +167,49 @@ function fakeSession() {
   assert.equal(usageView({ last: { totalTokens: 50 }, total: {}, modelContextWindow: 200 }).contextPercent, 25);
   assert.deepEqual(modelView({ model: 'gpt-x', displayName: 'GPT X', supportedReasoningEfforts: [], isDefault: true }).id, 'gpt-x');
 
+  // Codex 26.917 的 permissionProfile id 带 ':' 前缀（':read-only' 等），必须映射为
+  // UI 契约的 [A-Za-z0-9._~-] 安全 id，且发往原生前无损还原。
+  const { permissionModeTransportId, permissionModeNativeId } = require('../src/main/adapters/codex');
+  const SAFE_ID = /^[A-Za-z0-9._~-]+$/;
+  for (const nativeId of [':read-only', ':workspace', ':danger-full-access']) {
+    const transportId = permissionModeTransportId(nativeId);
+    assert.ok(SAFE_ID.test(transportId), `${nativeId} 映射后的 id 必须满足 UI 契约字符集`);
+    assert.notEqual(transportId, nativeId);
+    assert.equal(permissionModeNativeId(transportId), nativeId, '往返解码必须无损');
+  }
+  assert.equal(permissionModeTransportId('read-only'), 'read-only', '旧版安全 id 原样透传');
+  assert.equal(permissionModeNativeId('read-only'), 'read-only');
+  const markerNative = 'b64u-collision';
+  assert.notEqual(permissionModeTransportId(markerNative), markerNative, '以编码前缀开头的原生 id 也要编码，解码才无歧义');
+  assert.equal(permissionModeNativeId(permissionModeTransportId(markerNative)), markerNative);
+
+  const catalogSession = fakeSession();
+  catalogSession.host = { async request(method) {
+    if (method === 'model/list') return { data: [{ model: 'gpt-x', displayName: 'GPT X', supportedReasoningEfforts: [], isDefault: true }], nextCursor: null };
+    if (method === 'permissionProfile/list') return { data: [
+      { id: ':read-only', description: null, allowed: true },
+      { id: ':danger-full-access', description: '全权访问', allowed: true },
+      { id: ':blocked-profile', description: null, allowed: false },
+    ], nextCursor: null };
+    throw new Error(`unexpected ${method}`);
+  } };
+  const catalog = await adapter.describeFor(catalogSession);
+  const modeIds = catalog.permissionModes.map((mode) => mode.id);
+  assert.deepEqual(catalog.permissionModes[0], { id: 'default', label: '原生默认', description: '使用 Codex 当前配置的权限策略' });
+  assert.ok(modeIds.every((id) => SAFE_ID.test(id)), '目录中的 permission mode id 全部满足 UI 契约');
+  assert.ok(catalog.permissionModes.some((mode) => mode.label === 'Read only'), "':read-only' 映射为渲染层本地化表认识的显示名");
+  assert.ok(catalog.permissionModes.some((mode) => mode.label === 'Full access (dangerous)'), "':danger-full-access' 映射为危险全权访问显示名");
+  assert.ok(!catalog.permissionModes.some((mode) => mode.label === ':blocked-profile'), 'allowed:false 档案被过滤');
+
+  const permissionSession = fakeSession();
+  const permissionRequests = [];
+  permissionSession.host = { async request(method, params) { permissionRequests.push({ method, params }); return {}; } };
+  const encodedReadOnly = permissionModeTransportId(':read-only');
+  await adapter.setPermissionMode(permissionSession, encodedReadOnly);
+  assert.deepEqual(permissionRequests, [{ method: 'thread/settings/update', params: { threadId: 'thread-native', permissions: ':read-only' } }], '设置权限档位时解码回原生 id');
+  await adapter.setPermissionMode(permissionSession, 'default');
+  assert.deepEqual(permissionRequests.at(-1), { method: 'thread/settings/update', params: { threadId: 'thread-native', permissions: null } });
+
   // 权限透传：Desktop 选择（回合级）优先，缺失时回退线程级设置，均转发到原生 turn/start
   const sendSession = fakeSession();
   sendSession.model = { id: 'gpt-x' };
