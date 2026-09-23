@@ -24,6 +24,12 @@
       "level": "desktop-e2e",
       "checkedAt": "2026-09-13",
       "notes": "Restarted isolated Desktop acceptance passed with the 26.908 connection snapshot and draft identity contracts: Renderer request bridge ready, native input editable, Pi selected with its model, external turn routed through Harness Mix HostRuntime, and exact live Pi response rendered."
+    },
+    {
+      "desktopVersion": "26.917.6896.0",
+      "level": "protocol-and-smoke",
+      "checkedAt": "2026-09-23",
+      "notes": "Install inspection, protocol suite and live Shim+Host e2e passed. Fixed four 26.917 regressions: ':'-prefixed permissionProfile ids failing the renderer permission-mode charset (base64url transport ids plus friendly labels); a first-submission routing leak from a recreated request manager dropping the Codex account route marker (sticky user-thread-scoped marker on the request bridge plus a fail-closed submission guard); registry accounts pointing at the official CODEX_HOME being treated as isolated and routing plain Codex conversations through the Host (now native passthrough); and the request bridge forcing ephemeral onto official draft prewarms — 26.917 runs the first turn on the prewarmed thread, so the conversation never persisted (no sidebar entry, lost on switch). Live user-flow verification: new chat, prewarm, send lands as a single persistent official session with exactly one sidebar row; harness-routed prewarms stay ephemeral and promote on first input."
     }
   ]
 }
