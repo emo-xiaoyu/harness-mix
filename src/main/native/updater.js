@@ -11,17 +11,51 @@ const {
   acquireLock, compareVersions, detectChannel, readState, writeState,
 } = require('./update-state');
 
-function makeGit(root, exec = spawnSync) {
-  return (args, timeout = 20000) => {
-    const result = exec('git', args, {
-      cwd: root,
+// The checkout this module ships in. The host process is spawned by the Desktop
+// (via the shim) with an arbitrary working directory — commonly the Desktop
+// install dir, never the repo root — so git/npm must anchor here instead of
+// inheriting process.cwd(). Mirrors REPO_ROOT in protocol.js.
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+// A caller-supplied root resolves against REPO_ROOT, never against the process
+// cwd: '.' must keep meaning "the checkout", wherever the host was started.
+function resolveRoot(root) {
+  if (!root) return REPO_ROOT;
+  return path.isAbsolute(root) ? path.normalize(root) : path.resolve(REPO_ROOT, root);
+}
+
+// A bare "git rev-parse failed" was undiagnosable: a spawn-timeout kill or a
+// crashed git exits non-zero with an EMPTY stderr, and the old fallback dropped
+// the exit status, the signal and stdout with it. Keep the requested prefix and
+// append the status plus a bounded tail of stderr (stdout as fallback).
+function gitFailureDetail(result, args) {
+  const parts = [`git ${args[0]} failed`];
+  if (result.status !== null && result.status !== undefined) parts.push(`exit ${result.status}`);
+  if (result.signal) parts.push(`signal ${result.signal}`);
+  const output = String(result.stderr || result.stdout || '').trim();
+  if (output) parts.push(output.split('\n').slice(-2).join(' | ').slice(0, 300));
+  return parts.join(': ');
+}
+
+function makeGit(root = REPO_ROOT, exec = spawnSync) {
+  const cwd = resolveRoot(root);
+  // The wrapper awaits the exec result so synchronous runners (spawnSync, the
+  // test fakes) and promise runners (asyncRun, used by the host's settings-page
+  // check) share one code path. Checking `result.status` on an unresolved
+  // promise is always `undefined !== 0` — the original settings-page failure
+  // ("git rev-parse failed" on the very first rev-parse) — so never bypass it.
+  return async (args, timeout = 20000) => {
+    const result = await exec('git', args, {
+      cwd,
       encoding: 'utf8',
       timeout,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(String(result.stderr || `git ${args[0]} failed`).trim());
+    if (result.error) {
+      throw new Error(`git ${args[0]} failed to start: ${result.error.message}`, { cause: result.error });
+    }
+    if (result.status !== 0) throw new Error(gitFailureDetail(result, args));
     return String(result.stdout).trim();
   };
 }
@@ -36,14 +70,17 @@ function asyncRun() {
     let stderr = '';
     child.stdout?.on('data', chunk => { stdout += String(chunk); });
     child.stderr?.on('data', chunk => { stderr += String(chunk); });
-    child.on('error', error => resolve({ error, stdout, stderr, status: null }));
-    child.on('close', status => resolve({ error: null, stdout, stderr, status }));
+    child.on('error', error => resolve({ error, stdout, stderr, status: null, signal: null }));
+    // `close` also reports the signal: a spawn-timeout kill delivers
+    // status=null and (on Windows) empty streams, and the signal is then the
+    // only evidence of what happened.
+    child.on('close', (status, signal) => resolve({ error: null, stdout, stderr, status, signal }));
   });
 }
 
 // remoteState classifies the checkout relative to its upstream:
 // current | ahead | diverged | dirty | available (fast-forward possible).
-async function remoteState(root, git = makeGit(root)) {
+async function remoteState(root = REPO_ROOT, git = makeGit(root)) {
   const head = await git(['rev-parse', 'HEAD']);
   let upstream = 'origin/main';
   try {
@@ -72,18 +109,19 @@ function hookErrorDetail(error) {
   return tail.slice(0, 300);
 }
 
-function defaultHooks(root) {
+function defaultHooks(root = REPO_ROOT) {
+  const repo = resolveRoot(root);
   return {
     install() {
       try {
-        execFileSync(npmCommand(), ['install'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        execFileSync(npmCommand(), ['install'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       } catch (error) {
         throw new Error(`npm install 失败：${hookErrorDetail(error)}`);
       }
     },
     build() {
       try {
-        execFileSync(process.execPath, [path.join(root, 'scripts/build-native.cjs')], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        execFileSync(process.execPath, [path.join(repo, 'scripts/build-native.cjs')], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       } catch (error) {
         throw new Error(`build:native 失败：${hookErrorDetail(error)}`);
       }
@@ -101,7 +139,7 @@ async function applyUpdate(root, state, git = makeGit(root), hooks = defaultHook
     if (rebuild) await hooks.build();
   } catch (error) {
     // A failed install/build would leave a half-updated tree behind; restore it.
-    try { git(['reset', '--hard', state.head]); } catch { /* keep the original failure */ }
+    try { await git(['reset', '--hard', state.head]); } catch { /* keep the original failure */ }
     throw error;
   }
   return {
@@ -114,11 +152,12 @@ async function applyUpdate(root, state, git = makeGit(root), hooks = defaultHook
   };
 }
 
-async function autoUpdate({ root, log = console.log, exec, hooks } = {}) {
-  const git = makeGit(root, exec);
+async function autoUpdate({ root = REPO_ROOT, log = console.log, exec, hooks } = {}) {
+  const repo = resolveRoot(root);
+  const git = makeGit(repo, exec);
   let state;
   try {
-    state = await remoteState(root, git);
+    state = await remoteState(repo, git);
   } catch (error) {
     log(`[Harness Mix] 自动更新检查失败（不影响启动）：${error.message}`);
     return { updated: false, failed: true };
@@ -140,7 +179,7 @@ async function autoUpdate({ root, log = console.log, exec, hooks } = {}) {
       log(`[Harness Mix] 发现新版本 ${state.head.slice(0, 8)} → ${state.remote.slice(0, 8)}，正在更新…`);
       let outcome;
       try {
-        outcome = await applyUpdate(root, state, git, hooks || defaultHooks(root));
+        outcome = await applyUpdate(repo, state, git, hooks || defaultHooks(repo));
       } catch (error) {
         log(`[Harness Mix] 更新失败并已回退（不影响启动）：${error.message}`);
         return { updated: false, failed: true };
@@ -226,9 +265,10 @@ async function npmInstallGlobal(version, { run = spawnSync, log = () => {}, dela
 
 // Runs `scripts/launch-codex.cjs` from the (possibly just updated) checkout and
 // forwards its exit code. HARNESS_MIX_UPDATED guards against update loops.
-function reexecLauncher(root, args = []) {
+function reexecLauncher(root = REPO_ROOT, args = []) {
+  const repo = resolveRoot(root);
   return new Promise(resolve => {
-    const child = spawn(process.execPath, [path.join(root, 'scripts', 'launch-codex.cjs'), ...args], {
+    const child = spawn(process.execPath, [path.join(repo, 'scripts', 'launch-codex.cjs'), ...args], {
       env: { ...process.env, HARNESS_MIX_UPDATED: '1' },
       stdio: 'inherit',
       windowsHide: true,
@@ -246,7 +286,7 @@ function reexecLauncher(root, args = []) {
 // `hooks` lets the desktop-triggered helper inject lock-aware build handling;
 // `completePendingBuild` (launcher boot path) finishes a build the helper had
 // to defer because the running Desktop held the native binaries locked.
-async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = async () => {}, mode = 'apply', hooks = null, completePendingBuild = false, deps = {} } = {}) {
+async function runUpdateFlow({ root = REPO_ROOT, dataDir, log = console.log, stopDesktop = async () => {}, mode = 'apply', hooks = null, completePendingBuild = false, deps = {} } = {}) {
   const {
     gitExec,
     run = spawnSync,
@@ -254,11 +294,13 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
     delay = ms => new Promise(resolve => setTimeout(resolve, ms)),
     env = process.env,
   } = deps;
+  // Anchor every git/npm/package.json access to the checkout, not the host cwd.
+  const repo = resolveRoot(root);
   const halt = async () => { await stopDesktop(); await delay(3000); };
-  const flowHooks = () => hooks || defaultHooks(root);
+  const flowHooks = () => hooks || defaultHooks(repo);
 
-  const currentVersion = (readJson(path.join(root, 'package.json')) || {}).version || '0.0.0';
-  const channel = detectChannel(root);
+  const currentVersion = (readJson(path.join(repo, 'package.json')) || {}).version || '0.0.0';
+  const channel = detectChannel(repo);
   let state = readState(dataDir);
 
   if (channel === 'portable') {
@@ -302,7 +344,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
         }
       } else if (state.channel === 'git' && state.preUpdateHead) {
         await halt();
-        makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
+        await makeGit(repo, gitExec)(['reset', '--hard', state.preUpdateHead]);
         // Sources are back to the old head: rebuild so the binaries match it.
         await flowHooks().build();
       }
@@ -325,7 +367,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
         await flowHooks().build();
       } catch (error) {
         log(`[Harness Mix] 补完成构建失败，回退到更新前版本：${error.message}`);
-        if (state.channel === 'git' && state.preUpdateHead) makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
+        if (state.channel === 'git' && state.preUpdateHead) await makeGit(repo, gitExec)(['reset', '--hard', state.preUpdateHead]);
         writeState(dataDir, { ...readState(dataDir), pendingBuild: null, appliedVersion: null, prevVersion: null, attempts: 0 });
         return false;
       }
@@ -348,7 +390,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
           const result = await npmInstallGlobal(state.prevVersion, { run, log, delay });
           if (!result.ok) return false;
         } else if (state.channel === 'git' && state.preUpdateHead) {
-          makeGit(root, gitExec)(['reset', '--hard', state.preUpdateHead]);
+          await makeGit(repo, gitExec)(['reset', '--hard', state.preUpdateHead]);
           await flowHooks().build();
         }
         writeState(dataDir, { ...readState(dataDir), phase: 'idle', appliedVersion: null, prevVersion: null, attempts: 0, pendingVersion: null, pendingBuild: null, rolledBackAt: Date.now() });
@@ -366,7 +408,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
   if (channel === 'git') {
     let remote;
     try {
-      remote = await remoteState(root, makeGit(root, gitExec));
+      remote = await remoteState(repo, makeGit(repo, gitExec));
     } catch (error) {
       log(`[Harness Mix] 自动更新检查失败（不影响启动）：${error.message}`);
       return { updated: false, failed: true };
@@ -389,7 +431,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
       let outcome = null;
       let failure = null;
       try {
-        outcome = await applyUpdate(root, remote, makeGit(root, gitExec), flowHooks());
+        outcome = await applyUpdate(repo, remote, makeGit(repo, gitExec), flowHooks());
       } catch (error) {
         failure = error;
       } finally {
@@ -410,7 +452,7 @@ async function runUpdateFlow({ root, dataDir, log = console.log, stopDesktop = a
   }
 
   // 3b) npm channel.
-  if (!isGlobalInstall(root, { run })) {
+  if (!isGlobalInstall(repo, { run })) {
     log('[Harness Mix] 当前不是 npm 全局安装，跳过自动更新；可手动运行 npm install -g harness-mix@latest');
     return { updated: false, reason: 'not-global' };
   }
@@ -457,4 +499,5 @@ module.exports = {
   autoUpdate, remoteState, applyUpdate, makeGit, asyncRun, defaultHooks,
   runUpdateFlow, reexecLauncher, fetchLatestVersion, npmInstallGlobal,
   resolveRegistry, isGlobalInstall, npmGlobalRoot, readJson,
+  REPO_ROOT, resolveRoot, gitFailureDetail,
 };

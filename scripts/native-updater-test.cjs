@@ -1,6 +1,10 @@
 // Native auto-updater decision coverage: every remote state and hook trigger path.
 const assert = require('node:assert/strict');
-const { autoUpdate } = require('../src/main/native/updater');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { autoUpdate, asyncRun, makeGit, REPO_ROOT } = require('../src/main/native/updater');
 
 function fakeGit(script) {
   const calls = [];
@@ -105,5 +109,50 @@ const base = {
     assert.ok(calls.some(c => c.startsWith('reset --hard aaa111')));
   }
 
-  console.log('native-updater: current/ahead/diverged/dirty/ff/ff-docs-only/offline/rollback all covered');
+  // 9. Real-git regressions for the settings-page failure ("git rev-parse
+  //    failed"): the host process is spawned by the Desktop with a cwd that is
+  //    NOT the checkout, and its check runs git through the async runner.
+  //    - git must anchor to the module's repo root, not the process cwd;
+  //    - the async runner must be awaited like the sync one (the live bug:
+  //      `result.status !== 0` on an unresolved promise is always true, so the
+  //      very first rev-parse threw);
+  //    - a failing git must quote its exit status and stderr, not a bare
+  //      "git rev-parse failed".
+  {
+    const probe = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true });
+    if (probe.error) {
+      console.log('native-updater: git not on PATH, skipping real-git cwd regression');
+    } else {
+      const originalCwd = process.cwd();
+      const foreign = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-updater-cwd-'));
+      process.chdir(foreign); // a non-repo temp directory, like the host process cwd
+      try {
+        const git = makeGit(REPO_ROOT);
+        const head = await git(['rev-parse', 'HEAD']);
+        assert.match(head, /^[0-9a-f]{40}$/);
+        // The exact settings-page shape (protocol.js): makeGit + asyncRun.
+        assert.equal(await makeGit(REPO_ROOT, asyncRun())(['rev-parse', 'HEAD']), head);
+        // A relative root must still mean the checkout, never the process cwd.
+        assert.equal(await makeGit('.')(['rev-parse', 'HEAD']), head);
+        // No root at all must fall back to the checkout as well.
+        assert.equal(await makeGit()(['rev-parse', 'HEAD']), head);
+        // Failure in a non-repo dir must carry git's own evidence.
+        let message = '';
+        try {
+          await makeGit(foreign)(['rev-parse', 'HEAD']);
+          assert.fail('rev-parse in a non-repository must throw');
+        } catch (error) {
+          message = error.message;
+        }
+        assert.ok(message.startsWith('git rev-parse failed'), message);
+        assert.ok(message.includes('exit 128'), message);
+        assert.ok(message.length > 'git rev-parse failed'.length, message);
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(foreign, { recursive: true, force: true });
+      }
+    }
+  }
+
+  console.log('native-updater: current/ahead/diverged/dirty/ff/ff-docs-only/offline/rollback/host-cwd all covered');
 })().catch(error => { console.error(error); process.exitCode = 1; });
