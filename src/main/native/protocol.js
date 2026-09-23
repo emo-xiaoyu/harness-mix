@@ -804,7 +804,11 @@ class NativeProtocol {
       const effectiveRoute = route || { harnessId: 'codex-harness', ...(typeof params.model === 'string' ? { model: { id: params.model } } : {}) };
       const id = ALIASES[effectiveRoute.harnessId] || effectiveRoute.harnessId;
       if (!this.runtime.adapters.has(id)) throw new Error(`Unsupported Harness: ${id}`);
-      if (params.ephemeral && params.threadSource) throw new Error('Ephemeral background thread is not supported');
+      // Desktop 26.917 的草稿预热带 threadSource:"user" + ephemeral；runtime 本就支持
+      // ephemeral 外部线程（首个真实输入转正）。仍然拒绝真正的后台来源（标题生成、
+      // 插件宿主等）——它们不属于 Harness Mix 的托管范围。拒绝用户预热会迫使
+      // Desktop 回退到自己的原生执行路径，同一条消息双执行、侧边栏出现重复会话。
+      if (params.ephemeral && params.threadSource && params.threadSource !== 'user') throw new Error('Ephemeral background thread is not supported');
       const isWorktree = params.worktree === true || params.options?.worktree === true;
       const selectedModel = accountContext && typeof params.model === 'string'
         ? (await this.runtime.describe(id)).models.find(model => model.id === params.model)

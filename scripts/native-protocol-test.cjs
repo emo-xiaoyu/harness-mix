@@ -368,6 +368,11 @@ async function main() {
     await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/fork', { threadId, excludeTurns: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true, threadSource: 'thread_description' }), /Ephemeral background thread is not supported/);
+    // Desktop 26.917 的用户草稿预热带 threadSource:"user" + ephemeral：必须创建 ephemeral
+    // 外部线程（拒绝会迫使 Desktop 回退原生执行路径，同一条消息双执行、侧边栏重复会话）
+    const prewarmThread = await bridge.request('thread/start', { cwd: root, model: routeModel('pi'), ephemeral: true, threadSource: 'user' });
+    assert.ok(prewarmThread.thread?.id, '用户预热创建 ephemeral 外部线程');
+    assert.equal(runtime.threads.find(t => t.id === prewarmThread.thread.id)?.ephemeral, true, '预热线程标记为 ephemeral');
     // Worktree 隔离工作区丢弃与推送协议接口
     await assert.rejects(bridge.request('harnessmix/thread/workspace/discard', { threadId }), /该任务未使用 Worktree 隔离工作区/);
     await assert.rejects(bridge.request('harnessmix/thread/workspace/push', { threadId }), /该任务未使用 Worktree 隔离工作区/);

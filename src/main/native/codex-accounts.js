@@ -108,7 +108,16 @@ class CodexAccountManager {
     // codex 拒绝在不存在的 CODEX_HOME 下启动（进程退出码 1），改写路径会让这类账号
     // 的每次会话都死在拉起阶段，且用户无从看到原因。
     if (typeof entry.codexHome === 'string' && path.isAbsolute(entry.codexHome)) {
-      return { ...entry, codexHome: path.resolve(entry.codexHome), native: false };
+      const resolved = path.resolve(entry.codexHome);
+      // 指向官方主目录的注册表条目（旧迁移遗留，如 default → ~/.codex）是同一份会话库的
+      // 镜像：把它当隔离账号路由进 Host 会对同一存储建第二套管理视图，表现为权限菜单
+      // 被 Harness Mix 接管、Desktop 原生执行路径再跑一遍、侧边栏出现两个相同会话。
+      // 官方主目录一律视为 native 直通。
+      const officialHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+      if (resolved.toLowerCase() === officialHome.toLowerCase()) {
+        return { ...entry, codexHome: resolved, native: true };
+      }
+      return { ...entry, codexHome: resolved, native: false };
     }
     const codexHome = path.resolve(this.profilesRoot, entry.accountId);
     if (!codexHome.startsWith(`${path.resolve(this.profilesRoot)}${path.sep}`)) throw new Error('Invalid Codex account directory');
