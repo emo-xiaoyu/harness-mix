@@ -35,8 +35,13 @@ Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`T
 4. Team member 可调用 `get_team_state`、`update_team_task` 和 `send_team_message`。成员只能更新分配给自己的任务；消息可定向或广播，先写入持久邮箱，目标成员空闲时会直接投递到其原生 Session。
 5. Codex 对话顶部显示紧凑团队驾驶舱；点击「展开详情」后仍在原生内容流内展开 Team Workbench，不覆盖侧栏、对话或输入框。工作台用唯一 Lead 和最多六名成员的真实 Harness 图标呈现职责编队，每名成员拥有自己的职责、状态、任务列和进度，并显示团队通信与可回放事件时间轴。点击有原生 Session 的成员可直接进入其 Codex 子任务，点击「收起详情」或按 `Esc` 收起。
 6. Workbench 通过 `harnessmix/thread/team/inspect` 直接查询 Host 持久化状态并实时刷新，不依赖工具卡片初次输出的旧快照；只有 Team Lead 和该团队成员线程可以读取。每次团队状态变化保留最近 200 个回放快照。
+7. 「中断团队」与原生停止按钮按可恢复中断处理：级联取消成员回合后，Host 向每个在跑成员的原生会话发起一次**有界收尾握手**——成员以纯文本自述「已完成 / 进行中 / 阻塞 / 下一步」，交接落在作业、团队任务与 lead 邮箱（`kind=handoff`，以成员身份呈现），`member_handoff` 进入回放时间轴。「继续协作」的 Lead 指令与 `resume_delegation` 的恢复提示词都会携带这些交接（标注为成员自述、以文件系统为准）。握手默认上限 90 秒（`handshakeTimeoutMs` 可调）；成员不回复或会话已删则静默放弃，不改变中断语义。任务卡上的「取消」与宿主关机不握手：前者语义是放弃，后者必须立即退出。握手期间 `resume_delegation` 会提示稍候。
+
+团队模板支持项目作用域：`<工作目录>/.harness-mix/teams/*.md`（Markdown + YAML frontmatter，声明 `name`、`description` 与 `members` 的 `name/role/agent`，成员必须显式指定 Harness，1-6 人）。解析顺序为**项目 > 用户 > 内置**——同名时文件版就近覆盖存储版，编成随仓库走、可进 PR 评审。文件按 mtime 即时热加载，坏文件跳过并记录告警，不影响其余模板与 # 菜单。会话内编曲器的 # 菜单按当前会话目录合并项目模板（条目标「项目」），设置 → 协作 仍管理用户与内置模板。协议面 `harnessmix/collaboration/team-template/list` 接受可选 `threadId` 以指定项目作用域。
 
 这与普通委派的区别是：普通委派仍是 Lead → worker → Lead；Agent Team 允许 teammate 围绕同一任务图直接交接、反馈和解锁依赖，同时每个 Harness 继续独立持有自己的模型、工具、权限、账户和原生历史。
+
+编排脚本是 Agent Team 的执行驱动层：Lead 调用 `run_team_script(team_id, script)` 一次生成一段受限 DSL 脚本（`task({...})` 声明任务、`dependsOn` 传句柄排依赖、`Promise.all` 汇合并行、对 `.status`/`.result`/`.handoff` 分支、`phase("...")` 标记阶段），Host 编译进持久任务图后确定性执行，**执行期零模型调用**——脚本独立于 Lead 回合存活，完成或失败时以一次汇总回合唤醒 Lead。执行前四道验证门（解析带行号、成员静态绑定、任务数 ≤16、步数预算）在任何派发前拦截坏脚本；中断保留 journal，「继续协作」按 seq 重放：已结算任务零成本落定、绝不重派，中断任务采纳残留图任务并复用原会话与成员 handoff。driver 运行中该团队对直接 `delegate_to_agent` 独占。设计与三个核心决策见 [orchestration-script-design.md](orchestration-script-design.md)。
 
 ## 执行边界
 
@@ -50,7 +55,7 @@ Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`T
 - Claude 的 `canUseTool` 和 Codex MCP elicitation 继续走原生审批。需要确认时，用户在相应任务的审批界面处理；自动验证不会代答。
 - 主任务 Fork 会重新绑定自己的协作身份，不复用源任务的子任务访问权。
 - task_id、父子会话、任务文本、结果、worktree 起点以及 Team/Member/Task/Message 在独立串行存储中持久化；重启后在途 Job、Team Task 和 Member 一起变为 interrupted，不会继续显示为“工作中”，也不自动重复执行有副作用的操作。点击「继续协作」向原主任务发送续跑请求，主模型用 `list_delegations` / `resume_delegation` 恢复原子会话，并把同一 Team Task/Member 原子地切回进行中。原生会话丢失或无法恢复会明确报错。会话鉴权标识不持久化，重启重新签发。
-- 团队看板是可操作的（principal 是用户，授权在 Host 的 `collaboration.userAction` 统一裁决）：任务卡可「取消」进行中任务（走与 `cancel_delegation` 相同的结算路径）、「重试/改派」失败或中断任务（目标限既有成员，任务重置为待开始并保留 `reassignedFrom` 痕迹）；成员卡可「追问」以 lead 身份发团队消息；摘要卡与 Workbench 头部有「继续协作」，一次性委派的协作卡上有「恢复此任务」。改派与继续协作要求 lead 回合空闲：Host 向 lead 线程注入一条指令回合（指令自带目标成员的 `#` 提及，走与用户手打提及完全相同的授权路径），由 lead 在该回合内重新派发或恢复。协议面为 `harnessmix/thread/team/task/cancel`、`team/task/reassign`、`team/message/send`、`harnessmix/thread/collaboration/continue`。
+- 团队看板是可操作的（principal 是用户，授权在 Host 的 `collaboration.userAction` 统一裁决）：任务卡可「取消」进行中任务、「重试/改派」失败或中断任务；成员卡可「追问」以 lead 身份发团队消息。Workbench 头部可「中断团队」并保留可恢复的委派，或「新增任务」直接向持久任务图加入标题、描述、既有成员及已有任务依赖。原生停止按钮也按可恢复中断处理。「继续协作」会让空闲 Lead 检查中断委派和待派发任务，并通过原生协作工具恢复或派发；已完成的操作需先检查，不能重复执行。协议面为 `harnessmix/thread/team/interrupt`、`team/task/insert`、`team/task/cancel`、`team/task/reassign`、`team/message/send`、`harnessmix/thread/collaboration/continue`。
 - 任务失败必达 lead 邮箱：失败结算时以 `system` 伪参与者（不进 roster、不投递）写入一条带原因的通知，lead 无需轮询也能从 `get_team_state` 看到失败。`assign_team_task` 可声明 `retry {max 1..3}`：失败时 Host 在同一 lead 回合内自动重派给原成员（复用其会话与工作区，提示词附上次失败原因与“不要重放已完成副作用”），预算耗尽才落 failed；未声明则失败即落定。用户主动取消不是失败：不通知、不重试。
 
 ## 支持与验证范围
@@ -81,7 +86,7 @@ npm run e2e:native
 npm run build:native
 ```
 
-`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、Agent Team 身份/任务依赖/成员邮箱、时间轴持久化和共享快照策略，并覆盖看板用户操作（取消/改派/重试/追问/继续协作，含 lead 回合空闲约束与协议透传）、任务失败的 lead 邮箱 system 通知与 `retry` 自动重派、忙碌收件人排队投递与未读计数清零。`test:collaboration` 与 `test:collaboration-recovery` 已并入 `test:core-all`。UI smoke 检查摘要入口、内嵌工作台、Lead/成员职责、真实 Harness 图标、成员会话跳转、成员任务列、通信流、时间轴、看板操作按钮（失败/中断任务的重试/改派/恢复、进行中任务的取消）、lead 忙碌时「继续协作」的禁用态与成员未读徽标，截图位于 `output/collaboration-ui/team-inline-expanded.png`。这不是完整 Codex Desktop 的真实模型交互验收；构建过程不会重启当前桌面。
+`test:collaboration` 使用真实 MCP stdio 子进程、本地鉴权桥和受控原生会话 Adapter 验证并发、结果、跟进、取消、跨任务访问限制、Agent Team 身份/任务依赖/成员邮箱、时间轴持久化和共享快照策略，并覆盖看板用户操作（取消/改派/重试/追问/继续协作，含 lead 回合空闲约束与协议透传）、任务失败的 lead 邮箱 system 通知与 `retry` 自动重派、忙碌收件人排队投递与未读计数清零、中断收尾握手（交接三处落档、继续协作/恢复提示词携带交接、任务卡取消不握手、超时静默放弃），以及编排脚本（验证门含静态作用域检查的六类结构化错误、Lead 回合结束后独立存活、执行期零模型调用断言、结果驱动分支、中断→握手→继续协作 journal 重放不重派已完成任务并复用原会话、driver 独占、运行时错误结构化失败唤醒）。`team-template-test` 覆盖模板 CRUD/内置墓碑/# 提及展开与项目作用域文件模板（`.harness-mix/teams/*.md` 的解析边界、同名优先级、热加载、坏文件容错与协议 threadId 合并）；`test:collaboration-recovery` 覆盖 driver 重启语义（running → interrupted、journal 保留、游标重置）。UI 冒烟断言 Workbench 编排阶段条（状态/阶段/脚本任务进度）与紧凑面板的编排阶段标记。`test:collaboration` 与 `test:collaboration-recovery` 已并入 `test:core-all`。UI smoke 检查摘要入口、内嵌工作台、Lead/成员职责、真实 Harness 图标、成员会话跳转、成员任务列、通信流、时间轴、看板操作按钮（失败/中断任务的重试/改派/恢复、进行中任务的取消）、lead 忙碌时「继续协作」的禁用态与成员未读徽标，截图位于 `output/collaboration-ui/team-inline-expanded.png`。这不是完整 Codex Desktop 的真实模型交互验收；构建过程不会重启当前桌面。
 
 2026-09-12 验证：Pi→Claude 两个真实子任务分别在不同 worktree 运行，DSH→CodeBuddy 两个真实子任务也在独立 worktree 完成并由 DSH 主会话汇总 `COLLAB_VERIFIED`。恢复测试覆盖持久化身份、原子会话续跑、不重复建任务；Git 测试覆盖脏目录起点、暂存区保留、过期预览拒绝、冲突时不部分应用。Native Protocol 覆盖父子任务归属与原生 MCP 工具卡片，Electron 仅覆盖原生输入框中的协作引用增强。Runtime 保持 Adapter `open()` 返回对象的同一身份，避免原生回调更新到浅拷贝而被活动回合闸门丢弃。
 ## 统一历史

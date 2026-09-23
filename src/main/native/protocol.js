@@ -452,6 +452,26 @@ class NativeProtocol {
     if (!model) throw new Error('Selected model is no longer in the native catalog');
     return model;
   }
+
+  // 渲染端目录（harnessmix/collaboration/agents）使用外部 id（claude-code / harnessmix/pi-native /
+  // plugin-v1@hex）。团队模板保存时把成员引用归一回注册表内部 id，/team 展开才能解析。
+  normalizeAgentRef(input) {
+    const raw = String(input ?? '').trim();
+    if (!raw) return raw;
+    const candidates = [raw];
+    if (ALIASES[raw]) candidates.push(ALIASES[raw]);
+    const legacy = /^harnessmix\/([a-z0-9-]+)-native(?:@.+)?$/i.exec(raw);
+    if (legacy) { candidates.push(legacy[1]); if (ALIASES[legacy[1]]) candidates.push(ALIASES[legacy[1]]); }
+    try {
+      const route = raw.startsWith('harnessmix/plugin-v1@') ? decodeRoute(raw) : null;
+      if (route?.harnessId) { candidates.push(route.harnessId); if (ALIASES[route.harnessId]) candidates.push(ALIASES[route.harnessId]); }
+    } catch { /* invalid route falls through to raw */ }
+    for (const candidate of candidates) {
+      const resolved = this.runtime.resolveHarnessId(candidate);
+      if (resolved) return resolved;
+    }
+    return raw;
+  }
   async request(method, params = {}) {
     if (method === 'harnessmix/integrations/catalog') return this.runtime.integrations.catalog();
     if (method === 'harnessmix/integrations/list') return this.runtime.integrations.list(params);
@@ -464,6 +484,14 @@ class NativeProtocol {
     if (method === 'harnessmix/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
     if (method === 'harnessmix/collaboration/preferences') return this.runtime.collaboration.getPreferences();
     if (method === 'harnessmix/collaboration/preferences/save') return this.runtime.collaboration.setPreferences(params);
+    if (method === 'harnessmix/collaboration/team-template/list') {
+      // 可选 threadId → 以该线程的 cwd 为项目作用域，合并 .harness-mix/teams/*.md
+      const cwd = typeof params?.threadId === 'string' ? this.runtime.threads.find(t => t.id === params.threadId)?.cwd : undefined;
+      return { templates: await this.runtime.collaboration.listTeamTemplates(typeof cwd === 'string' ? cwd : undefined) };
+    }
+    if (method === 'harnessmix/collaboration/team-template/save') return this.runtime.collaboration.saveTeamTemplate({ ...params, members: (params.members ?? []).map(member => ({ ...member, agent: this.normalizeAgentRef(member.agent) })) });
+    if (method === 'harnessmix/collaboration/team-template/delete') return this.runtime.collaboration.deleteTeamTemplate(params.id);
+    if (method === 'harnessmix/collaboration/team-template/restore-builtins') return this.runtime.collaboration.restoreBuiltInTeamTemplates();
     if (method === 'harnessmix/usage/history') return this.runtime.usageHistory.history(params);
     if (method === 'harnessmix/usage/summary') return this.runtime.usageHistory.summary();
     if (method === 'harnessmix/health/snapshot') return this.runtime.health.snapshot();
@@ -784,8 +812,12 @@ class NativeProtocol {
     // cancel/message 任意时刻可执行；reassign/continue 由 Host 向 lead 线程注入指令回合。
     if (method === 'harnessmix/thread/team/task/cancel') return this.runtime.collaboration.userAction(params.threadId, 'task/cancel', { teamId: params.teamId, taskId: params.taskId });
     if (method === 'harnessmix/thread/team/task/reassign') return this.runtime.collaboration.userAction(params.threadId, 'task/reassign', { teamId: params.teamId, taskId: params.taskId, memberId: params.memberId, ...(params.note ? { note: params.note } : {}) });
+    if (method === 'harnessmix/thread/team/task/insert') return this.runtime.collaboration.userAction(params.threadId, 'task/insert', { teamId: params.teamId, title: params.title, description: params.description, memberId: params.memberId, dependsOn: params.dependsOn });
+    if (method === 'harnessmix/thread/team/interrupt') return this.runtime.collaboration.userAction(params.threadId, 'interrupt', { teamId: params.teamId });
     if (method === 'harnessmix/thread/team/message/send') return this.runtime.collaboration.userAction(params.threadId, 'message/send', { teamId: params.teamId, to: params.to ?? '*', message: params.message, ...(params.kind ? { kind: params.kind } : {}) });
-    if (method === 'harnessmix/thread/collaboration/continue') return this.runtime.collaboration.userAction(params.threadId, 'continue', params.taskId ? { taskId: params.taskId } : {});
+    if (method === 'harnessmix/thread/team/message/ack') return this.runtime.collaboration.userAction(params.threadId, 'message/ack', { teamId: params.teamId, ...(params.memberId ? { memberId: params.memberId } : {}) });
+    if (method === 'harnessmix/thread/collaboration/continue') return this.runtime.collaboration.userAction(params.threadId, 'continue', { ...(params.taskId ? { taskId: params.taskId } : {}), ...(params.teamId ? { teamId: params.teamId } : {}) });
+    if (method === 'harnessmix/thread/team/template/from-team') return this.runtime.collaboration.teamTemplateFromTeam(params.teamId, params);
     if (method === 'harnessmix/thread/inspect') {
       if (!thread) return { owner: 'codex', locked: true };
       const catalog = await this.runtime.describe(thread.harnessId);
@@ -970,7 +1002,7 @@ class NativeProtocol {
         fingerprint: JSON.stringify({ expectedTurnId, input }),
       });
     }
-    if (method === 'turn/interrupt') { await this.runtime.cancel(thread.id); return {}; }
+    if (method === 'turn/interrupt') { await this.runtime.cancel(thread.id, { interrupt: true }); return {}; }
     // 跨 Harness 任务协作：委派新子任务 / 跟进既有子任务，等待链由父线程协作 Turn 承载
     if (method === 'harnessmix/thread/delegate' || method === 'harnessmix/thread/message') {
       const task = params.task ?? params.text;

@@ -16,6 +16,23 @@ export interface CollaborationSession {
   running: boolean | null;
 }
 
+export interface CollaborationTeamTemplateMember {
+  name: string;
+  role: string;
+  agent: string;
+  available: boolean;
+}
+
+export interface CollaborationTeamTemplate {
+  id: string;
+  name: string;
+  description: string;
+  members: CollaborationTeamTemplateMember[];
+  /** 项目作用域模板来自 <cwd>/.harness-mix/teams/*.md，随仓库走 */
+  source?: 'project';
+  builtin?: boolean;
+}
+
 export interface NativeCodexOption {
   id: string;
   title: string;
@@ -28,6 +45,7 @@ export interface NativeCodexOption {
 export interface CollaborationMentionCatalog {
   agents: CollaborationAgent[];
   sessions: CollaborationSession[];
+  templates?: CollaborationTeamTemplate[];
   codexOptions?: NativeCodexOption[];
   canDelegate?: boolean;
 }
@@ -35,11 +53,13 @@ export interface CollaborationMentionCatalog {
 type MentionEntry =
   | ({ kind: 'agent' } & CollaborationAgent)
   | ({ kind: 'session' } & CollaborationSession)
+  | ({ kind: 'template' } & CollaborationTeamTemplate)
   | ({ kind: 'codex' } & NativeCodexOption);
 
 const entryKey = (entry: MentionEntry): string => {
   if (entry.kind === 'agent') return `agent:${entry.id}`;
   if (entry.kind === 'session') return `session:${entry.id}`;
+  if (entry.kind === 'template') return `template:${entry.id}`;
   return `codex:${entry.id}`;
 };
 
@@ -47,6 +67,7 @@ const entryKey = (entry: MentionEntry): string => {
 const entryLiteral = (entry: MentionEntry): string => {
   if (entry.kind === 'agent') return `#${entry.id} `;
   if (entry.kind === 'session') return `#[${entry.title.replace(/[\[\]()\r\n]/g, '')}](harness-mix://session/${entry.id}) `;
+  if (entry.kind === 'template') return `#[${entry.name.replace(/[\[\]()\r\n]/g, '')}](harness-mix://team-template/${entry.id}) `;
   return '';
 };
 
@@ -194,7 +215,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   let range: Range | null = null, start = 0, end = 0;
   let entries: MentionEntry[] = [];
   let matches: MentionEntry[] = [];
-  let activeKind: 'agent' | 'codex' | 'session' = 'agent';
+  let activeKind: 'agent' | 'codex' | 'session' | 'template' = 'agent';
   let canDelegate = true;
   const catalogs = new Map<HTMLElement, CollaborationMentionCatalog>();
   const badges = new Map<HTMLElement, HTMLElement>();
@@ -289,7 +310,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       badges.set(target, strip);
     }
 
-    const newKeys = perEditor ? [...perEditor.values()].map(e => e.kind === 'agent' ? `agent:${e.id}` : e.kind === 'session' ? `session:${e.id}` : `codex:${e.id}`).join(',') : '';
+    const newKeys = perEditor ? [...perEditor.values()].map(e => e.kind === 'agent' ? `agent:${e.id}` : e.kind === 'session' ? `session:${e.id}` : e.kind === 'template' ? `template:${e.id}` : `codex:${e.id}`).join(',') : '';
     const currentKeys = [...strip.querySelectorAll<HTMLElement>('[data-harness-mix-mention-badge]')].map(b => b.dataset.harnessMixMentionBadge).join(',');
     if (strip.isConnected && currentKeys === newKeys && strip.style.display === (hasAny ? 'inline-flex' : 'none')) {
       return;
@@ -306,21 +327,27 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         ? `agent:${entry.id}`
         : entry.kind === 'session'
           ? `session:${entry.id}`
-          : `codex:${entry.id}`;
+          : entry.kind === 'template'
+            ? `template:${entry.id}`
+            : `codex:${entry.id}`;
 
       const removeLabel = entry.kind === 'agent'
         ? `移除协作 Agent ${entry.name}`
         : entry.kind === 'session'
           ? `移除历史会话 ${entry.title}`
-          : `移除 Codex 选项 ${entry.title}`;
+          : entry.kind === 'template'
+            ? `移除团队模板 ${entry.name}`
+            : `移除 Codex 选项 ${entry.title}`;
       badge.setAttribute('aria-label', removeLabel);
       badge.title = `${removeLabel}（点击移除）`;
 
       const agentColor = entry.kind === 'agent'
         ? getAgentColor(entry.id)
-        : entry.kind === 'codex'
-          ? '#0ea5e9'
-          : '#8b5cf6';
+        : entry.kind === 'template'
+          ? '#0d9488'
+          : entry.kind === 'codex'
+            ? '#0ea5e9'
+            : '#8b5cf6';
 
       badge.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:1px 5px;border:0;border-radius:4px;background:transparent;color:${agentColor};font:500 15px/1.4 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;user-select:none;cursor:pointer;transition:background 0.15s,opacity 0.15s;`;
       badge.addEventListener('mouseenter', () => { badge.style.background = 'rgba(128,128,128,0.12)'; });
@@ -341,6 +368,11 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
           collaborationIcon(entry.kind === 'agent' ? entry.id : entry.harnessId, entry.kind === 'agent' ? entry.name : entry.title, 16),
           document.createTextNode(entry.kind === 'agent' ? entry.name : entry.title),
         );
+      } else if (entry.kind === 'template') {
+        const teamIcon = document.createElement('span');
+        teamIcon.textContent = '👥';
+        teamIcon.style.cssText = 'font-size:13px;line-height:1;';
+        iconWrap.append(teamIcon, document.createTextNode(entry.name));
       } else {
         const iconSpan = document.createElement('span');
         iconSpan.textContent = entry.icon || '📌';
@@ -365,6 +397,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     if (!editor) return;
     if (entry.kind === 'agent' && (!entry.available || !canDelegate)) return;
     if (entry.kind === 'session' && entry.running === true) return;
+    if (entry.kind === 'template' && entry.members.every(member => !member.available)) return;
     const target = editor;
     close();
     target.focus();
@@ -400,9 +433,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     tabs.setAttribute('role', 'tablist');
     tabs.style.cssText = 'display:flex;gap:4px;padding:2px 2px 6px;border-bottom:1px solid #8882;margin-bottom:4px';
 
-    const tabDefinitions: Array<{ kind: 'agent' | 'session'; label: string }> = [
+    const tabDefinitions: Array<{ kind: 'agent' | 'session' | 'template'; label: string }> = [
       { kind: 'agent', label: 'Agents' },
       { kind: 'session', label: '会话' },
+      { kind: 'template', label: '团队' },
     ];
 
     for (const tabInfo of tabDefinitions) {
@@ -430,14 +464,16 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         ? '当前主 Agent 未接入协作工具。请切换到 Codex（协作）、Claude Code、Pi 或 Oh My Pi 后分派任务。'
         : activeKind === 'agent'
           ? '没有匹配的 Agent'
-          : '没有匹配的历史会话';
+          : activeKind === 'template'
+            ? '没有团队模板，可在 设置 → 协作 中创建'
+            : '没有匹配的历史会话';
       notice.style.cssText = 'padding:10px 8px;font-size:12px;line-height:1.6;opacity:.65';
       menu.append(notice);
     }
 
     const list = document.createElement('div');
     list.setAttribute('role', 'listbox');
-    list.setAttribute('aria-label', activeKind === 'agent' ? '协作 Agents' : '历史会话');
+    list.setAttribute('aria-label', activeKind === 'agent' ? '协作 Agents' : activeKind === 'template' ? '团队模板' : '历史会话');
     menu.append(list);
 
     entries.forEach((entry, index) => {
@@ -449,7 +485,9 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         ? entry.available && canDelegate
         : entry.kind === 'session'
           ? entry.running !== true
-          : true;
+          : entry.kind === 'template'
+            ? entry.members.some(member => member.available)
+            : true;
       row.disabled = !available;
       row.id = `harness-mention-option-${index}`;
       row.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:7px;padding:7px 8px;color:inherit;font:inherit;cursor:pointer;background:${index === selected ? '#8882' : 'transparent'};opacity:${available ? 1 : .45}`;
@@ -457,15 +495,26 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       const copy = document.createElement('span');
       copy.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex:1;min-width:0';
       const name = document.createElement('span');
-      name.textContent = entry.kind === 'agent' ? entry.name : entry.title;
+      name.textContent = entry.kind === 'agent' || entry.kind === 'template' ? entry.name : entry.title;
       name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
+
+      if (entry.kind === 'template' && entry.source === 'project') {
+        const projectBadge = document.createElement('span');
+        projectBadge.textContent = '项目';
+        projectBadge.title = '来自本仓库 .harness-mix/teams/ 的团队模板';
+        projectBadge.setAttribute('data-harness-mix-template-source', 'project');
+        projectBadge.style.cssText = 'flex:none;font-size:10px;line-height:1;padding:2px 5px;border-radius:4px;opacity:.9;border:1px solid currentColor;color:inherit;';
+        name.append(projectBadge);
+      }
 
       const detail = document.createElement('span');
       detail.textContent = entry.kind === 'agent'
         ? (AGENT_DESCRIPTIONS[entry.id] || entry.description || `#${entry.id}`)
         : entry.kind === 'session'
           ? entry.cwd
-          : (entry.description || entry.category);
+          : entry.kind === 'template'
+            ? (entry.description || entry.members.map(member => member.name).join(' · '))
+            : (entry.description || entry.category);
       detail.style.cssText = 'font-size:11px;opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
       copy.append(name, detail);
 
@@ -474,12 +523,22 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         ? (entry.available ? '可协作' : '未就绪')
         : entry.kind === 'session'
           ? (entry.running ? '运行中' : '引用')
-          : (entry.category || '原生');
+          : entry.kind === 'template'
+            ? (entry.members.every(member => !member.agent)
+                ? '待指定 Harness'
+                : `拉起团队 · ${entry.members.length} 成员`)
+            : (entry.category || '原生');
       status.style.cssText = 'font-size:11px;opacity:.6';
 
       let iconEl: HTMLElement;
       if (entry.kind === 'agent' || entry.kind === 'session') {
         iconEl = collaborationIcon(entry.kind === 'agent' ? entry.id : entry.harnessId, name.textContent || '', 18);
+      } else if (entry.kind === 'template') {
+        const teamIcon = document.createElement('span');
+        teamIcon.textContent = '👥';
+        teamIcon.style.cssText = 'font-size:16px;line-height:1;width:18px;text-align:center;';
+        teamIcon.title = entry.members.map(member => `${member.name} · ${member.agent || '待指定 Harness'}${member.agent && !member.available ? '（不可用）' : ''}`).join('\n');
+        iconEl = teamIcon;
       } else {
         const iconSpan = document.createElement('span');
         iconSpan.textContent = entry.icon || '📎';
@@ -544,16 +603,22 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         .filter(s => `${s.title} ${s.cwd}`.toLowerCase().includes(query))
         .map(s => ({ kind: 'session' as const, ...s }));
 
-      matches = [...matchingAgents, ...matchingSessions];
+      const matchingTemplates: MentionEntry[] = (catalog.templates ?? [])
+        .filter(t => `${t.name} ${t.description}`.toLowerCase().includes(query))
+        .map(t => ({ kind: 'template' as const, ...t }));
 
-      if (query && !matchingAgents.length && matchingSessions.length) {
+      matches = [...matchingAgents, ...matchingSessions, ...matchingTemplates];
+
+      if (query && !matchingAgents.length && !matchingSessions.length && matchingTemplates.length) {
+        activeKind = 'template';
+      } else if (query && !matchingAgents.length && matchingSessions.length) {
         activeKind = 'session';
       } else {
         activeKind = 'agent';
       }
 
       entries = matches.filter(entry => entry.kind === activeKind);
-      selected = Math.max(0, entries.findIndex(entry => entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : true));
+      selected = Math.max(0, entries.findIndex(entry => entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : entry.kind === 'template' ? entry.members.some(member => member.available) : true));
 
       render();
       menu.hidden = !matches.length && catalog.canDelegate === undefined;
@@ -620,7 +685,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       for (let i = 0; i < entries.length; i++) {
         selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length;
         const entry = entries[selected];
-        if (entry && (entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : true)) break;
+        if (entry && (entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : entry.kind === 'template' ? entry.members.some(member => member.available) : true)) break;
       }
       render();
       menu.querySelector('[role="option"][aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });

@@ -4,9 +4,14 @@ import type { CollaborationUserActionInput } from './renderer-model-client.js';
 export interface TeamMemberPayload { id: string; name: string; role: string; agent: string; childId?: string; child_thread_id?: string; display_status?: string; unread?: number }
 export interface TeamTaskPayload { id: string; title: string; assignee: string; dependsOn?: string[]; status: string }
 export interface TeamMessagePayload { id: string; fromName?: string; from: string; to: string; body: string; at: number }
+export interface TeamDriverPayload {
+  script_id: string; status: string; phase?: string | null; error?: string | null; result?: unknown;
+  tasks?: Array<{ task_id: string; title: string; status: string }>;
+}
 export interface TeamCardPayload {
   action?: string; team_id: string; name: string; goal: string; status: string; lead_thread_id?: string;
   lead?: TeamMemberPayload; members: TeamMemberPayload[]; tasks: TeamTaskPayload[]; messages: TeamMessagePayload[]; updated_at?: number;
+  driver?: TeamDriverPayload;
 }
 interface TeamSnapshot { id: string; action: string; at: number; team: TeamCardPayload }
 interface TeamInspection { team: TeamCardPayload; snapshots: TeamSnapshot[] }
@@ -47,9 +52,9 @@ function parseInspection(value: unknown): TeamInspection | null {
   if (!isTeam(result.team) || !Array.isArray(result.snapshots)) return null;
   return { team: result.team, snapshots: result.snapshots.filter(entry => entry && typeof entry === 'object' && isTeam((entry as TeamSnapshot).team)) as TeamSnapshot[] };
 }
-const stateColor = (status?: string) => ({ ready: '#8b8b8b', pending: '#8b8b8b', working: '#2878e3', in_progress: '#2878e3', active: '#2878e3', completed: '#1f9d68', blocked: '#c17022', failed: '#d14343', interrupted: '#c17022' }[status ?? ''] ?? '#8b8b8b');
-const stateLabel = (status?: string) => ({ ready: '就绪', pending: '待开始', working: '工作中', in_progress: '进行中', completed: '已完成', blocked: '等待依赖', failed: '失败', interrupted: '已中断', active: '协作中' }[status ?? ''] ?? status ?? '未知');
-const actionLabel = (action?: string) => ({ team_created: '团队建立', task_assigned: '任务分配', task_updated: '任务更新', message_sent: '团队通信', task_started: '开始执行', member_session_ready: '会话就绪', task_settled: '任务结算', task_failed: '任务失败', task_cancelled: '任务取消', task_interrupted: '任务中断', task_resumed: '恢复执行', task_followup: '继续执行', task_reassigned: '任务改派', task_retry: '自动重试' }[action ?? ''] ?? action ?? '实时状态');
+const stateColor = (status?: string) => ({ ready: '#8b8b8b', pending: '#8b8b8b', working: '#2878e3', in_progress: '#2878e3', active: '#2878e3', running: '#2878e3', completed: '#1f9d68', blocked: '#c17022', failed: '#d14343', interrupted: '#c17022' }[status ?? ''] ?? '#8b8b8b');
+const stateLabel = (status?: string) => ({ ready: '就绪', pending: '待开始', working: '工作中', in_progress: '进行中', running: '运行中', completed: '已完成', blocked: '等待依赖', failed: '失败', interrupted: '已中断', active: '协作中' }[status ?? ''] ?? status ?? '未知');
+const actionLabel = (action?: string) => ({ team_created: '团队建立', task_assigned: '任务分配', task_updated: '任务更新', message_sent: '团队通信', message_acknowledged: '未读已清', task_started: '开始执行', member_session_ready: '会话就绪', task_settled: '任务结算', task_failed: '任务失败', task_cancelled: '任务取消', task_interrupted: '任务中断', task_resumed: '恢复执行', task_followup: '继续执行', task_reassigned: '任务改派', task_retry: '自动重试', script_started: '脚本启动', script_phase: '进入阶段', script_completed: '脚本完成', script_failed: '脚本失败', script_interrupted: '脚本中断', script_resumed: '脚本恢复' }[action ?? ''] ?? action ?? '实时状态');
 const memberPalette = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#f97316', '#ec4899', '#14b8a6', '#6366f1'];
 const memberColor = (index: number) => memberPalette[index % memberPalette.length];
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, css?: string): HTMLElementTagNameMap[K] { const node = document.createElement(tag); if (className) node.className = className; if (css) node.style.cssText = css; return node; }
@@ -123,7 +128,7 @@ async function runUserAction(userAction: TeamUserAction, node: HTMLElement, inpu
 function continueButton(payload: TeamCardPayload, userAction?: TeamUserAction) {
   const busy = payload.lead?.display_status === 'working';
   const node = actionButton('继续协作', busy ? '主导者回合进行中，结束后再继续' : '把中断的委派恢复为新的主导者回合', () => {
-    if (payload.lead_thread_id) void runUserAction(userAction!, node, { action: 'continue', threadId: payload.lead_thread_id! });
+    if (payload.lead_thread_id) void runUserAction(userAction!, node, { action: 'continue', threadId: payload.lead_thread_id!, teamId: payload.team_id });
   });
   if (busy) { node.disabled = true; node.style.opacity = '.45'; node.style.cursor = 'not-allowed'; }
   return node;
@@ -155,7 +160,7 @@ function headerStats(payload: TeamCardPayload) {
 const pillCss = (status?: string) => { const color = stateColor(status); return `font-size:8px;font-weight:750;padding:2px 7px;border-radius:99px;white-space:nowrap;color:${color};background:color-mix(in srgb,${color} 15%,transparent)`; };
 function statusPill(status?: string) { return text('span', stateLabel(status), pillCss(status)); }
 function statusDot(status: string | undefined, size = 7) { const dot = el('span', 'harness-mix-team-status-dot', `width:${size}px;height:${size}px;border-radius:50%;flex:none;background:${stateColor(status)}`); dot.dataset.status = status ?? ''; return dot; }
-const actionIcon = (action?: string) => ({ team_created: '🎬', task_assigned: '📋', task_updated: '🔄', task_started: '🚀', member_session_ready: '🔌', task_settled: '✅', task_failed: '❌', task_cancelled: '⛔', task_interrupted: '⏸', task_resumed: '▶️', task_followup: '💬', task_reassigned: '🔁', task_retry: '♻️' }[action ?? ''] ?? '•');
+const actionIcon = (action?: string) => ({ team_created: '🎬', task_assigned: '📋', task_updated: '🔄', message_sent: '📨', message_acknowledged: '📭', task_started: '🚀', member_session_ready: '🔌', task_settled: '✅', task_failed: '❌', task_cancelled: '⛔', task_interrupted: '⏸', task_resumed: '▶️', task_followup: '💬', task_reassigned: '🔁', task_retry: '♻️' }[action ?? ''] ?? '•');
 
 function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['openThread'], snapshots: TeamSnapshot[] = [], userAction?: TeamUserAction) {
   const board = el('main', 'harness-mix-team-board harness-mix-team-body', 'height:100%;min-height:0;color:inherit');
@@ -189,7 +194,17 @@ function renderBoard(payload: TeamCardPayload, openThread?: TeamCardOptions['ope
     copy.append(text('strong', member.name, 'font-size:12px;font-weight:680;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'));
     const status = el('span', undefined, 'display:flex;align-items:center;gap:5px;min-width:0');
     status.append(text('span', stateLabel(member.display_status), `font-size:9px;color:${stateColor(member.display_status)};white-space:nowrap`), text('span', `${done}/${assigned.length}`, 'font-size:9px;font-weight:650;opacity:.5;margin-left:auto'));
-    if (member.unread) status.append(text('span', `💬${member.unread}`, 'font-size:8.5px;font-weight:700;color:#2878e3;background:color-mix(in srgb,#2878e3 12%,transparent);border-radius:99px;padding:1px 6px;flex:none'));
+    if (member.unread) {
+      // 未读=等待送达成员会话的消息；点「已读」把滞留消息确认清零（投递事实保留在历史里）
+      if (userAction && payload.lead_thread_id) {
+        const ack = actionButton(`💬${member.unread} 已读`, `把 ${member.name} 名下 ${member.unread} 条未送达消息标记为已读`, () => {
+          void runUserAction(userAction, ack, { action: 'message/ack', threadId: payload.lead_thread_id!, teamId: payload.team_id, memberId: member.id });
+        }, '#2878e3');
+        status.append(ack);
+      } else {
+        status.append(text('span', `💬${member.unread}`, 'font-size:8.5px;font-weight:700;color:#2878e3;background:color-mix(in srgb,#2878e3 12%,transparent);border-radius:99px;padding:1px 6px;flex:none'));
+      }
+    }
     copy.append(status);
     const progress = el('progress'); progress.max = Math.max(1, assigned.length); progress.value = done; progress.style.cssText = `width:100%;height:4px;margin:0;accent-color:${color}`; progress.title = `${done}/${assigned.length} 个任务完成`;
     copy.append(progress); card.append(avatar, copy);
@@ -312,11 +327,11 @@ function renderSummary(payload: TeamCardPayload, open: () => void, openThread?: 
   const lead = payload.lead ?? { id: 'lead', name: 'Team Lead', role: '协调与验收', agent: 'codex', display_status: 'working' };
   const leadIcon = el('span', undefined, 'position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;border:2px solid color-mix(in srgb,#c35b24 40%,transparent);border-radius:11px;background:Canvas');
   leadIcon.append(collaborationIcon(lead.agent, lead.name, 28), text('span', '👑', 'position:absolute;top:-11px;right:-9px;font-size:11px'));
-  const copy = el('span', undefined, 'display:grid;min-width:0;gap:1px'), eyebrow = text('span', `AGENT TEAM · ${stateLabel(payload.status)}`, `font-size:9px;font-weight:760;letter-spacing:.11em;color:${stateColor(payload.status)}`), title = text('strong', payload.name, 'font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'); title.className = 'harness-mix-team-name';
+  const copy = el('span', undefined, 'display:grid;min-width:0;gap:1px'), eyebrow = text('span', `AGENT TEAM · ${stateLabel(payload.status)}${payload.driver?.status === 'running' ? ` · 编排${payload.driver.phase ? `：${payload.driver.phase}` : ''}` : payload.driver?.status === 'interrupted' ? ' · 编排已中断' : ''}`, `font-size:9px;font-weight:760;letter-spacing:.11em;color:${stateColor(payload.status)}`), title = text('strong', payload.name, 'font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'); title.className = 'harness-mix-team-name';
   const goal = text('span', payload.goal, 'font-size:10px;opacity:.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'); goal.title = payload.goal;
   copy.append(eyebrow, title, goal); identity.append(leadIcon, copy);
   const button = el('button', 'harness-mix-team-open', 'border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:8px;background:color-mix(in srgb,currentColor 5%,transparent);color:inherit;font:650 11px system-ui;padding:7px 10px;cursor:pointer;white-space:nowrap'); button.type = 'button'; button.textContent = '展开详情'; button.addEventListener('click', open); top.append(identity, metrics(payload), button);
-  if (userAction && payload.lead_thread_id && payload.tasks.some(task => task.status === 'interrupted')) top.append(continueButton(payload, userAction));
+  if (userAction && payload.lead_thread_id && payload.tasks.some(task => ['interrupted', 'pending'].includes(task.status))) top.append(continueButton(payload, userAction));
   const members = el('div', 'harness-mix-team-summary-members harness-mix-team-scroll', 'display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;padding-bottom:1px');
   payload.members.forEach((member, index) => {
     const color = memberColor(index);
@@ -361,6 +376,13 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     const subtitle = text('div', current.goal, 'font-size:9px;opacity:.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'); subtitle.title = current.goal;
     title.append(nameRow, subtitle);
     const statsWrap = el('div', undefined, 'display:flex;align-items:center;gap:15px;flex-wrap:wrap');
+    // 编排脚本阶段条：driver 存在时显示「编排状态 · 当前阶段 · 脚本任务进度」，
+    // 失败时染红并 hover 展示结构化错误；纯 Host 侧投影，无需模型汇报
+    const driverStrip = el('div', 'harness-mix-team-driver', 'display:none;align-items:center;gap:8px;flex:none;padding:5px 10px;border-radius:9px;border:1px solid color-mix(in srgb,#2878e3 34%,transparent);background:color-mix(in srgb,#2878e3 7%,transparent);font-size:10px;font-weight:650;max-width:280px');
+    const driverState = text('span', '', 'font-weight:760;white-space:nowrap');
+    const driverPhase = text('span', '', 'opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+    const driverSteps = text('span', '', 'opacity:.6;white-space:nowrap');
+    driverStrip.append(driverState, driverPhase, driverSteps);
     const progressWrap = el('div', undefined, 'display:flex;align-items:center;gap:7px;flex:none');
     progressWrap.append(text('span', '整体进度', 'font-size:9px;opacity:.55;white-space:nowrap'));
     const progressBar = el('progress'); progressBar.style.cssText = 'width:92px;height:5px;accent-color:#1f9d68';
@@ -370,9 +392,31 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     const live = el('button', undefined, 'border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;background:transparent;color:inherit;font:600 10px system-ui;padding:5px 7px;cursor:pointer'); live.type = 'button'; live.textContent = '实时';
     const play = el('button', undefined, 'border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;background:color-mix(in srgb,currentColor 6%,transparent);color:inherit;font:600 10px system-ui;padding:5px 8px;cursor:pointer'); play.type = 'button'; play.textContent = '回放';
     const collapse = el('button', 'harness-mix-team-back', 'border:0;background:transparent;color:inherit;font:650 10px system-ui;cursor:pointer;padding:6px 7px;opacity:.68'); collapse.type = 'button'; collapse.textContent = '收起详情'; collapse.addEventListener('click', close); timeline.append(event, range, live, play, collapse);
-    // 用户操作位（继续协作等）：随 render() 按 visible 状态重建，避免静态按钮过期
+    // 用户操作位随状态更新；新增任务表单独立保留，轮询不能清空用户输入。
     const headerActions = el('div', undefined, 'display:flex;align-items:center;gap:6px;flex:none');
-    header.append(title, statsWrap, progressWrap, timeline, headerActions);
+    const insertForm = el('form', 'harness-mix-team-insert-form', 'display:none;width:100%;gap:7px;align-items:center;flex-wrap:wrap');
+    const taskTitle = el('input'); taskTitle.placeholder = '任务标题'; taskTitle.required = true; taskTitle.maxLength = 160; taskTitle.style.cssText = 'flex:1;min-width:130px;padding:6px';
+    const taskDescription = el('input'); taskDescription.placeholder = '任务描述'; taskDescription.required = true; taskDescription.style.cssText = 'flex:2;min-width:180px;padding:6px';
+    const assignee = el('select'); assignee.title = '执行成员'; assignee.style.cssText = 'padding:6px;max-width:150px';
+    const dependency = el('select'); dependency.multiple = true; dependency.title = '依赖任务（可多选）'; dependency.size = 2; dependency.style.cssText = 'max-width:180px';
+    const saveTask = el('button'); saveTask.type = 'submit'; saveTask.textContent = '添加到任务图';
+    const insertStatus = text('span', '', 'font-size:10px;color:#d14343');
+    const fillInsertOptions = () => {
+      assignee.replaceChildren(...current.members.map(member => { const option = el('option'); option.value = member.id; option.textContent = `${member.name} · ${member.agent}`; return option; }));
+      dependency.replaceChildren(...current.tasks.map(task => { const option = el('option'); option.value = task.id; option.textContent = task.title; return option; }));
+    };
+    insertForm.append(taskTitle, taskDescription, assignee, dependency, saveTask, insertStatus);
+    insertForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!options.userAction || !current.lead_thread_id) return;
+      saveTask.disabled = true; insertStatus.textContent = '';
+      try {
+        await options.userAction({ action: 'task/insert', threadId: current.lead_thread_id, teamId: current.team_id, title: taskTitle.value.trim(), description: taskDescription.value.trim(), memberId: assignee.value, dependsOn: [...dependency.selectedOptions].map(option => option.value) });
+        insertForm.style.display = 'none'; insertForm.reset();
+      } catch (error) { insertStatus.textContent = (error as Error)?.message ?? String(error); }
+      finally { saveTask.disabled = false; }
+    });
+    header.append(title, driverStrip, statsWrap, progressWrap, timeline, headerActions, insertForm);
     const content = el('div', undefined, 'min-height:0'); workbench.append(header, content); source.after(workbench);
     let renderedSignature = '';
     const render = () => {
@@ -380,14 +424,39 @@ export function installTeamCards(options: TeamCardOptions = {}) {
       const visible = snapshot?.team ?? current;
       const feedSnapshots = index >= 0 ? snapshots.slice(0, index + 1) : snapshots;
       // 1.5s 轮询下无变化就跳过重渲染，避免面板闪烁、feed/任务列表滚动位置丢失
-      const signature = JSON.stringify([visible.updated_at, visible.status, visible.lead?.display_status, visible.members.map(member => member.display_status), visible.tasks.map(task => `${task.id}:${task.status}`), visible.messages.length, snapshots.length, index]);
+      const signature = JSON.stringify([visible.updated_at, visible.status, visible.lead?.display_status, visible.members.map(member => member.display_status), visible.tasks.map(task => `${task.id}:${task.status}`), visible.messages.length, snapshots.length, index, visible.driver ? [visible.driver.status, visible.driver.phase ?? null, visible.driver.error ?? null, (visible.driver.tasks ?? []).map(task => task.status).join(',')] : null]);
       if (signature === renderedSignature) return;
       renderedSignature = signature;
       content.replaceChildren(renderBoard(visible, async threadId => { close(); await options.openThread?.(threadId); }, feedSnapshots, options.userAction));
       teamName.textContent = visible.name; subtitle.textContent = visible.goal; subtitle.title = visible.goal;
       teamPill.textContent = stateLabel(visible.status); teamPill.style.cssText = pillCss(visible.status);
+      const driver = visible.driver;
+      driverStrip.style.display = driver ? 'flex' : 'none';
+      if (driver) {
+        const color = stateColor(driver.status);
+        driverState.textContent = `编排 ${stateLabel(driver.status)}`;
+        driverPhase.textContent = driver.phase ? `阶段：${driver.phase}` : '阶段：未标记';
+        const scriptTasks = driver.tasks ?? [];
+        driverSteps.textContent = scriptTasks.length ? `脚本任务 ${scriptTasks.filter(task => task.status === 'completed').length}/${scriptTasks.length}` : '';
+        driverStrip.style.borderColor = `color-mix(in srgb,${color} 40%,transparent)`;
+        driverStrip.style.background = `color-mix(in srgb,${color} 8%,transparent)`;
+        driverStrip.title = driver.status === 'failed' && driver.error ? `脚本错误：${driver.error}` : `编排脚本 ${driver.script_id} · ${stateLabel(driver.status)}`;
+      }
       statsWrap.replaceChildren(...headerStats(visible));
-      headerActions.replaceChildren(...(options.userAction && visible.tasks.some(task => task.status === 'interrupted') ? [continueButton(visible, options.userAction)] : []));
+      const actions: HTMLElement[] = [];
+      if (options.userAction && visible.lead_thread_id && index < 0) {
+        if (visible.tasks.some(task => ['interrupted', 'pending'].includes(task.status))) actions.push(continueButton(visible, options.userAction));
+        if (visible.lead?.display_status === 'working' || visible.tasks.some(task => task.status === 'in_progress')) {
+          const stop = actionButton('中断团队', '停止主导者与运行中的成员；之后可继续协作', () => { void runUserAction(options.userAction!, stop, { action: 'interrupt', threadId: visible.lead_thread_id!, teamId: visible.team_id }); }, '#c17022');
+          actions.push(stop);
+        }
+        const insert = actionButton('新增任务', '给现有团队任务图新增一项任务', () => {
+          if (insertForm.style.display === 'none') { fillInsertOptions(); insertForm.style.display = 'flex'; taskTitle.focus(); }
+          else insertForm.style.display = 'none';
+        });
+        actions.push(insert);
+      }
+      headerActions.replaceChildren(...actions);
       const completion = completionOf(visible); progressBar.max = Math.max(1, completion.total); progressBar.value = completion.done; progressPct.textContent = `${completion.pct}%`;
       range.max = String(Math.max(0, snapshots.length - 1));
       range.value = String(index >= 0 ? index : Math.max(0, snapshots.length - 1));

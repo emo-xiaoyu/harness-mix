@@ -38,6 +38,10 @@ async function main() {
   const finish = (id, answer) => { const { s } = pending.get(id); pending.delete(id); active--; s.emit({ kind: 'text-delta', text: answer }); s.emit({ kind: 'completed', finalAnswer: true }); };
   try {
     assert.deepEqual(mentionedAgents('ask #w and [Worker](harness-mix://agent/worker) `#lead` issue#lead #worker/foo', rt), ['worker']);
+    assert.deepEqual(mentionedAgents('\\#worker #reviewer 组成 Agent Team', rt), ['worker', 'reviewer'], 'Markdown 转义的 # 提及仍授权对应 Harness');
+    assert.deepEqual(mentionedAgents('\\\\#worker #reviewer 组成 Agent Team', rt), ['reviewer'], '双反斜杠不应变成单次转义的授权');
+    assert.deepEqual(mentionedAgents('\\[Worker]\\(harness-mix://agent/worker) 发消息', rt), ['worker'], 'Markdown 转义的 agent 链接仍授权对应 Harness');
+    assert.deepEqual(mentionedAgents('\\\\[Worker]\\(harness-mix://agent/worker) 发消息', rt), [], '双反斜杠的链接不构成授权');
     assert.deepEqual(mentionedAgents('leave @w to native Codex mentions', rt), []);
     assert.deepEqual(mentionedAgents('创建 Agent Team：Worker 负责开发，Reviewer 负责审查。', rt), ['worker', 'reviewer'], '纯文本 Harness 名称可在明确团队语境中授权');
     assert.deepEqual(mentionedAgents('讨论 Worker 和 Reviewer 的界面显示', rt), [], '普通产品讨论不得误启动跨 Harness 协作');
@@ -52,8 +56,10 @@ async function main() {
     assert.equal(teamProgress([{ status: 'completed' }, { status: 'blocked' }]).percent, 50);
     await assert.rejects(call('list_agents', {}), /no longer active/);
     rt.history.context = async ({ nativeSessionId }) => { assert.equal(nativeSessionId, 'c2Vzc2lvbg'); return { harnessId: 'pi', title: 'Old session', cwd: root, transcript: 'User: prior question\nAssistant: prior answer' }; };
-    await rt.send(parent.id, '#worker #reviewer review files #[Old session](harness-mix://session/c2Vzc2lvbg)');
+    await rt.send(parent.id, '\\#worker #reviewer review files #[Old session](harness-mix://session/c2Vzc2lvbg)');
     assert.ok(rt.execution.isRunning(parent.id));
+    assert.deepEqual(parent.activeMentions, ['worker', 'reviewer'], '转义提及在真实发送路径中授权两个 Harness');
+    assert.match(leadPrompt, /create a team member for each assigned Harness/, 'Lead 保留用户指定的跨 Harness 角色分工');
     assert.match(leadPrompt, /untrusted historical data[\s\S]*prior answer/);
     assert.match(leadPrompt, /Recovery checkpoint:[\s\S]*interrupted-fixture \(worker\)[\s\S]*call list_delegations now/);
     assert.equal(rt.collaboration.jobs.get('interrupted-fixture').status, 'interrupted', 'Prompt injection never auto-resumes interrupted work');
@@ -62,10 +68,11 @@ async function main() {
     const init = await transport.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     assert.ok(init.capabilities.tools);
     const catalog = await transport.request('tools/list', {});
-    assert.equal(catalog.tools.length, 15);
+    assert.equal(catalog.tools.length, 16);
     assert.ok(catalog.tools.some(tool => tool.name === 'review_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'apply_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'create_agent_team'));
+    assert.ok(catalog.tools.some(tool => tool.name === 'run_team_script'), '编排脚本工具进入 MCP 目录');
     assert.equal(catalog.tools.find(tool => tool.name === 'create_agent_team').inputSchema.properties.members.maxItems, 6, 'A Team supports six specialist members plus its Lead');
     await call('update_agent_plan', { steps: [{ text: 'Develop then review', status: 'in_progress' }] });
     assert.ok(rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id).some(item => item.type === 'plan' && item.entries[0].text === 'Develop then review'));
@@ -433,6 +440,28 @@ async function main() {
       assert.equal(protoTeam.team.messages.at(-1).body, 'via protocol', 'Protocol 方法触达 userAction');
       await wait(() => { const message = uaRt.collaboration.teams.get(uaTeam.team_id).messages.at(-1); return message.delivery === 'mailbox' && message.deliveryError; }, 'lead 空闲时直投降级回邮箱并记录原因');
       await assert.rejects(new NativeProtocol(uaRt, () => {}).request('harnessmix/thread/team/task/reassign', { threadId: uaParent.id, teamId: uaTeam.team_id, taskId: uaTask.id, memberId: uaTeam.members[0].id }), /已完成的任务不能改派/);
+      // 用户插入任务直接写入持久任务图；已完成依赖应立即成为 pending。
+      const uaProto = new NativeProtocol(uaRt, () => {});
+      const inserted = await uaProto.request('harnessmix/thread/team/task/insert', { threadId: uaParent.id, teamId: uaTeam.team_id, title: 'Final review', description: 'Review finished work', memberId: uaTeam.members[1].id, dependsOn: [uaTask.id] });
+      assert.equal(inserted.task.status, 'pending');
+      assert.equal(inserted.task.assignee, uaTeam.members[1].id);
+      assert.deepEqual(inserted.task.dependsOn, [uaTask.id]);
+      await assert.rejects(uaProto.request('harnessmix/thread/team/task/insert', { threadId: uaParent.id, teamId: uaTeam.team_id, title: 'Bad', description: 'Bad dependency', memberId: uaTeam.members[1].id, dependsOn: ['missing'] }), /依赖任务/);
+      const continuedTeam = await uaProto.request('harnessmix/thread/collaboration/continue', { threadId: uaParent.id, teamId: uaTeam.team_id });
+      assert.deepEqual(continuedTeam.pending, [inserted.task.id]);
+      await wait(() => uaLeadPrompt.includes(`team_id=${uaTeam.team_id}`) && uaLeadPrompt.includes('Final review') === false && uaRt.execution.isRunning(uaParent.id));
+      assert.match(uaLeadPrompt, /#reviewer/);
+      const insertedJob = await uaCall('delegate_to_agent', { agent_type: 'reviewer', task: 'Final review', team_id: uaTeam.team_id, member_id: uaTeam.members[1].id, team_task_id: inserted.task.id, isolation: 'shared' });
+      await wait(() => { const child = uaRt.collaboration.jobs.get(insertedJob.task_id).childId; return child && uaPending.has(child) && uaRt.execution.isRunning(child); });
+      await uaProto.request('harnessmix/thread/team/interrupt', { threadId: uaParent.id, teamId: uaTeam.team_id });
+      await wait(() => uaRt.collaboration.jobs.get(insertedJob.task_id).status === 'interrupted');
+      assert.equal(uaRt.collaboration.teams.get(uaTeam.team_id).tasks.find(entry => entry.id === inserted.task.id).status, 'interrupted');
+      assert.equal(uaRt.collaboration.teams.get(uaTeam.team_id).members.find(entry => entry.id === uaTeam.members[1].id).status, 'interrupted');
+      const resumedTeam = await uaProto.request('harnessmix/thread/collaboration/continue', { threadId: uaParent.id, teamId: uaTeam.team_id });
+      assert.deepEqual(resumedTeam.interrupted.map(job => job.task_id), [insertedJob.task_id]);
+      await wait(() => uaRt.execution.isRunning(uaParent.id));
+      await uaProto.request('turn/interrupt', { threadId: uaParent.id });
+      assert.equal(uaRt.execution.isRunning(uaParent.id), false, '原生停止按钮协议可结算团队 Lead 回合');
     } finally { await uaRt.close(); }
 
     // Phase 2 失败处理：retry 预算自动重派（同一成员，复用会话与工作区，附上次失败
@@ -570,6 +599,259 @@ async function main() {
       assert.equal(r2Rt.collaboration.jobs.get('apply-advisory-job').verification.status, r4Result.verification.status, 'advisory 结果持久化在作业上');
       assert.equal(r2Rt.verificationGates.inspect(r2Rt.threads.find(t => t.id === r4Child.id)).policy.mode, 'off', 'advisory 不改线程门禁策略');
     } finally { await r2Rt.close(); }
+
+    // Phase 5 中断收尾握手：team/interrupt 级联中断后，Host 给运行中的成员原生会话一次
+    // 有界收尾回合——成员自述交接落在作业（handoff）、任务图与 lead 邮箱（kind=handoff），
+    // 「继续协作」指令与 resume_delegation 提示词携带交接；任务卡取消不握手；成员不
+    // 回复时按超时静默放弃，不改变中断语义。
+    const hsRoot = await fs.mkdtemp(path.resolve('output/collaboration-handshake-'));
+    const hsRt = new HostRuntime({ dataDirectory: path.join(hsRoot, 'data') });
+    try {
+      await hsRt.store.load();
+      let hsLeadPrompt = '';
+      const hsPending = new Map();
+      const hsSends = [];
+      const hsLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send(s, text) { hsLeadPrompt = text; }, async cancel() {}, async close() {} };
+      const hsWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s, text) { hsPending.set(s.id, { s, text }); hsSends.push({ id: s.id, text }); }, async cancel(s) { hsPending.delete(s.id); }, async close() {} };
+      hsRt.adapters.set('lead', hsLead); hsRt.status.lead = { available: true };
+      hsRt.adapters.set('worker', hsWorker); hsRt.status.worker = { available: true };
+      const hsParent = await hsRt.createThread({ harnessId: 'lead', cwd: hsRoot });
+      const hsCall = (name, args) => hsRt.collaboration.call(hsParent.id, name, args);
+      const hsFinish = (id, text) => { const { s } = hsPending.get(id); hsPending.delete(id); s.emit({ kind: 'text-delta', text }); s.emit({ kind: 'completed', finalAnswer: true }); };
+      await hsRt.send(hsParent.id, '#worker 握手回归');
+      const hsTeam = await hsCall('create_agent_team', { name: 'Handshake team', goal: 'Interrupt with dignity', members: [{ name: 'Builder', role: 'Build', agent_type: 'worker' }] });
+      const hsTeamObj = hsRt.collaboration.teams.get(hsTeam.team_id);
+      const hsTask = (await hsCall('assign_team_task', { team_id: hsTeam.team_id, title: 'Build', description: 'Long running', assignee: hsTeam.members[0].id })).task;
+      const hsJob = await hsCall('delegate_to_agent', { agent_type: 'worker', task: 'long work', team_id: hsTeam.team_id, member_id: hsTeam.members[0].id, team_task_id: hsTask.id, isolation: 'shared' });
+      await wait(() => { const child = hsRt.collaboration.jobs.get(hsJob.task_id).childId; return child && hsPending.has(child); });
+      const hsChild = hsRt.collaboration.jobs.get(hsJob.task_id).childId;
+
+      // A) 握手成功：中断后成员收到收尾回合，自述交接三处落档
+      await hsRt.collaboration.userAction(hsParent.id, 'interrupt', { teamId: hsTeam.team_id });
+      await wait(() => hsPending.has(hsChild) && /Agent Team handoff/.test(hsPending.get(hsChild).text));
+      assert.match(hsPending.get(hsChild).text, /Do not read or write files/, '收尾回合禁止副作用');
+      await wait(() => hsRt.collaboration.jobs.get(hsJob.task_id).status === 'interrupted');
+      const hsHandoffText = '已完成：解析模块重构；进行中：导出器适配；阻塞：输出格式待确认；下一步：跑通导出回归。';
+      hsFinish(hsChild, hsHandoffText);
+      // 以 member_handoff 入史为同步点：job.handoff 赋值与 publishTeam 之间存在 await 窗口
+      await wait(() => hsTeamObj.history.some(entry => entry.action === 'member_handoff'));
+      assert.equal(hsRt.collaboration.jobs.get(hsJob.task_id).handoff, hsHandoffText);
+      assert.equal(hsTeamObj.tasks.find(t => t.id === hsTask.id).handoff, hsHandoffText, '交接写进任务图');
+      const hsMail = hsTeamObj.messages.find(m => m.kind === 'handoff' && m.taskId === hsTask.id);
+      assert.ok(hsMail && hsMail.to === 'lead' && hsMail.from === hsTeam.members[0].id, '交接以成员身份落入 lead 邮箱');
+      assert.ok(hsTeamObj.history.some(entry => entry.action === 'member_handoff'), 'member_handoff 进入回放时间轴');
+      assert.equal((await hsRt.collaboration.inspectTeam(hsParent.id, hsTeam.team_id)).team.tasks.find(t => t.id === hsTask.id).handoff, hsHandoffText, '团队检视面可见交接');
+
+      // B) 「继续协作」指令携带交接摘要，供恢复的 Lead 直接引用
+      await wait(() => !hsRt.execution.isRunning(hsParent.id));
+      const hsContinued = await hsRt.collaboration.userAction(hsParent.id, 'continue', { teamId: hsTeam.team_id });
+      assert.equal(hsContinued.dispatched, true);
+      await wait(() => hsLeadPrompt.includes('成员交接'));
+      assert.match(hsLeadPrompt, /导出回归/, '交接内容进入继续协作指令');
+
+      // C) resume_delegation：恢复提示词附上成员交接（Lead 回合由 continue 指令保持运行）
+      await hsRt.collaboration.call(hsParent.id, 'resume_delegation', { task_id: hsJob.task_id });
+      await wait(() => hsPending.has(hsChild) && /Worker handoff at interruption/.test(hsPending.get(hsChild).text));
+      assert.match(hsPending.get(hsChild).text, /输出格式待确认/, '恢复提示词引用成员自述');
+      hsFinish(hsChild, 'resumed and done');
+      await wait(() => hsRt.collaboration.jobs.get(hsJob.task_id).status === 'completed');
+
+      // D) 任务卡取消（task/cancel）不触发握手：语义是放弃，不是中断待恢复
+      const hsTask2 = (await hsCall('assign_team_task', { team_id: hsTeam.team_id, title: 'Cancel me', description: 'Plain cancel', assignee: hsTeam.members[0].id })).task;
+      const hsJob2 = await hsCall('delegate_to_agent', { agent_type: 'worker', task: 'work two', team_id: hsTeam.team_id, member_id: hsTeam.members[0].id, team_task_id: hsTask2.id, isolation: 'shared' });
+      await wait(() => { const child = hsRt.collaboration.jobs.get(hsJob2.task_id).childId; return child && hsPending.has(child); });
+      const hsChild2 = hsRt.collaboration.jobs.get(hsJob2.task_id).childId;
+      await hsRt.collaboration.userAction(hsParent.id, 'task/cancel', { teamId: hsTeam.team_id, taskId: hsTask2.id });
+      await wait(() => hsRt.collaboration.jobs.get(hsJob2.task_id).status === 'cancelled');
+      const sendsAfterCancel = hsSends.filter(send => send.id === hsChild2).length;
+      await new Promise(r => setTimeout(r, 250));
+      assert.equal(hsSends.filter(send => send.id === hsChild2).length, sendsAfterCancel, '任务卡取消不派发收尾回合');
+      assert.equal(hsRt.collaboration.jobs.get(hsJob2.task_id).handoff, undefined);
+
+      // E) 成员不回复：超时静默放弃，作业保持 interrupted、不写交接
+      hsRt.handshakeTimeoutMs = 250;
+      const hsTask3 = (await hsCall('assign_team_task', { team_id: hsTeam.team_id, title: 'Silent', description: 'Never replies', assignee: hsTeam.members[0].id })).task;
+      const hsJob3 = await hsCall('delegate_to_agent', { agent_type: 'worker', task: 'work three', team_id: hsTeam.team_id, member_id: hsTeam.members[0].id, team_task_id: hsTask3.id, isolation: 'shared' });
+      await wait(() => { const child = hsRt.collaboration.jobs.get(hsJob3.task_id).childId; return child && hsPending.has(child); });
+      const hsChild3 = hsRt.collaboration.jobs.get(hsJob3.task_id).childId;
+      await hsRt.collaboration.userAction(hsParent.id, 'interrupt', { teamId: hsTeam.team_id });
+      await wait(() => hsRt.collaboration.jobs.get(hsJob3.task_id).status === 'interrupted');
+      await wait(() => hsSends.filter(send => send.id === hsChild3).some(send => /Agent Team handoff/.test(send.text)));
+      await new Promise(r => setTimeout(r, 500));
+      assert.equal(hsRt.collaboration.jobs.get(hsJob3.task_id).handoff, undefined, '超时未回复则无交接');
+      assert.equal(hsTeamObj.tasks.find(t => t.id === hsTask3.id).status, 'interrupted', '中断语义不被握手改变');
+      await wait(() => !hsRt.execution.isRunning(hsChild3), '超时后收尾回合被止住');
+    } finally { await hsRt.close(); }
+
+    // Phase 6 编排脚本：Lead 一次生成脚本，Host 零模型执行，终态一次唤醒；验证门；
+    // 独占；Lead 回合结束后脚本独立存活；中断→握手→「继续协作」journal 重放（已结算
+    // 任务零重派、中断任务复用原会话）；结果驱动分支。
+    const scRoot = await fs.mkdtemp(path.resolve('output/collaboration-script-'));
+    const scRt = new HostRuntime({ dataDirectory: path.join(scRoot, 'data') });
+    try {
+      await scRt.store.load();
+      const scLeadSends = [];
+      const scPending = new Map();
+      const scSends = [];
+      const scLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send(s, text) { scLeadSends.push(text); }, async cancel() {}, async close() {} };
+      const scWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s, text) { scPending.set(s.id, { s, text }); scSends.push({ id: s.id, text }); }, async cancel(s) { scPending.delete(s.id); }, async close() {} };
+      const scReviewer = { ...scWorker, manifest: { id: 'reviewer', name: 'Reviewer', capabilities: { collaborationTools: true } } };
+      scRt.adapters.set('lead', scLead); scRt.status.lead = { available: true };
+      scRt.adapters.set('worker', scWorker); scRt.status.worker = { available: true };
+      scRt.adapters.set('reviewer', scReviewer); scRt.status.reviewer = { available: true };
+      const scParent = await scRt.createThread({ harnessId: 'lead', cwd: scRoot });
+      const scCall = (name, args) => scRt.collaboration.call(scParent.id, name, args);
+      const scFinish = (id, text) => { const { s } = scPending.get(id); scPending.delete(id); s.emit({ kind: 'text-delta', text }); s.emit({ kind: 'completed', finalAnswer: true }); };
+      const settleLead = () => {
+        const session = scRt.sessions.get(scParent.id);
+        session.emit({ kind: 'text-delta', text: 'ok' });
+        session.emit({ kind: 'completed', finalAnswer: true });
+      };
+      await scRt.send(scParent.id, '#worker #reviewer 编排脚本回归');
+      const scTeam = await scCall('create_agent_team', { name: 'Script team', goal: 'Orchestrate server-side', members: [{ name: 'Builder', role: 'Build', agent_type: 'worker' }, { name: 'Checker', role: 'Check', agent_type: 'reviewer' }] });
+      const scTeamObj = scRt.collaboration.teams.get(scTeam.team_id);
+      const scTaskByTitle = title => scTeamObj.tasks.find(t => t.title === title);
+
+      // A) 验证门：语法错误、未知成员、动态 member、无 task
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: 'const = 3' }), /验证门：声明需要变量名/);
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "task({ title: 'x', description: 'y', member: 'Nobody' })" }), /成员「Nobody」不在团队中/);
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "const who = 'Builder'\ntask({ title: 'x', description: 'y', member: who })" }), /member 必须是字符串字面量/);
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "phase('only')" }), /至少需要声明一个 task/);
+      await assert.rejects(scRt.collaboration.call((await scRt.createThread({ harnessId: 'worker', cwd: scRoot })).id, 'run_team_script', { team_id: scTeam.team_id, script: "task({ title: 'x', description: 'y', member: 'Builder' })" }), /no longer active|Only lead|participant/, '非 Lead 线程不能启动脚本');
+      // 静态作用域门：未定义变量在派发前拦截——先声明任务再写错变量也不烧 token
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "task({ title: '先行', description: 'would burn tokens', member: 'Builder' })\nconst x = undefinedVar" }), /验证门：[\s\S]*未定义的变量 "undefinedVar"/);
+      assert.ok(!scTeamObj.tasks.some(t => t.title === '先行'), '静态门在任何任务入图前拦截');
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "task({ title: 'y', description: 'z', member: 'Builder', dependsOn: [nope] })" }), /验证门：[\s\S]*未定义的变量 "nope"/);
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: "const a = task" }), /验证门：[\s\S]*只能调用/);
+
+      // B) 主流程：并行 + 依赖 + 阶段 + Lead 回合结束后独立存活 + 一次唤醒
+      const scScript = [
+        "phase('build')",
+        "const build = task({ title: '实现', description: '写实现并报告', member: 'Builder' })",
+        "const verify = task({ title: '审查', description: '独立审查实现', member: 'Checker', dependsOn: [build] })",
+        "const settled = Promise.all([build, verify])",
+        "phase('report')",
+        "return 'done:' + settled.length",
+      ].join('\n');
+      const scRun = await scCall('run_team_script', { team_id: scTeam.team_id, script: scScript });
+      assert.equal(scRun.status, 'running');
+      assert.match(scRun.note, /零模型调用/);
+      // 独占：driver 运行中直接委派与二次脚本均被拒（图任务由脚本异步创建，
+      // 独占门在任务解析之前生效，任意 team_task_id 即可触发）
+      await assert.rejects(scCall('delegate_to_agent', { agent_type: 'worker', task: 'x', team_id: scTeam.team_id, member_id: scTeam.members[0].id, team_task_id: 'any' }), /独占/);
+      await assert.rejects(scCall('run_team_script', { team_id: scTeam.team_id, script: scScript }), /已有编排脚本在运行/);
+      // Lead 回合结束（工具已返回）：脚本独立存活
+      settleLead();
+      await wait(() => !scRt.execution.isRunning(scParent.id));
+      await wait(() => scPending.size === 1 && /写实现并报告/.test([...scPending.values()][0].text));
+      const scBuilderChild = [...scPending.keys()][0];
+      assert.equal(scTaskByTitle('审查').status, 'blocked', '依赖未完成时后继保持 blocked');
+      assert.equal(scTeamObj.driver.phase, 'build');
+      scFinish(scBuilderChild, '实现完成 A');
+      await wait(() => [...scPending.values()].some(entry => /独立审查实现/.test(entry.text)));
+      assert.equal(scTaskByTitle('实现').status, 'completed', 'Lead 回合结束后任务照常结算');
+      const scCheckerChild = [...scPending.keys()].find(id => id !== scBuilderChild);
+      scFinish(scCheckerChild, '审查通过');
+      await wait(() => scTeamObj.driver.status === 'completed');
+      assert.equal(scTeamObj.driver.result, 'done:2');
+      assert.ok(scTeamObj.history.some(entry => entry.action === 'script_completed'), 'script_completed 入史');
+      // 零模型执行：执行期 Lead 仅收到一次终态唤醒
+      await wait(() => scLeadSends.length === 2);
+      assert.match(scLeadSends[1], /编排脚本完成/);
+      assert.match(scLeadSends[1], /实现完成 A/);
+      assert.match(scLeadSends[1], /审查通过/);
+      assert.match(scLeadSends[1], /最终阶段：report/);
+      assert.equal(scLeadSends.length, 2, '执行期零模型调用（仅用户初始消息 + 一次唤醒）');
+      assert.equal((await scRt.collaboration.inspectTeam(scParent.id, scTeam.team_id)).team.driver.status, 'completed', 'teamView 暴露 driver 状态');
+      settleLead(); // 唤醒回合在 fake lead 上不会自行结束，结算后才能开下一场景
+      await wait(() => !scRt.execution.isRunning(scParent.id));
+
+      // C) 结果驱动分支：失败任务走 else 路径
+      await scRt.send(scParent.id, '#worker 分支回归');
+      const scTeam2 = await scCall('create_agent_team', { name: 'Branch team', goal: 'Branch on results', members: [{ name: 'Builder', role: 'Build', agent_type: 'worker' }] });
+      const scTeam2Obj = scRt.collaboration.teams.get(scTeam2.team_id);
+      await scCall('run_team_script', { team_id: scTeam2.team_id, script: [
+        "const probe = task({ title: '探测', description: 'probe the branch', member: 'Builder' })",
+        "if (probe.status === 'completed') {",
+        "  return 'branch-ok'",
+        "}",
+        "return 'branch-failed'",
+      ].join('\n') });
+      settleLead();
+      await wait(() => [...scPending.values()].some(entry => /probe the branch/.test(entry.text)));
+      const probeChild = [...scPending.keys()].find(id => scSends.some(send => send.id === id && /probe the branch/.test(send.text)));
+      scPending.get(probeChild).s.emit({ kind: 'error', message: 'probe broke' });
+      await wait(() => scTeam2Obj.driver.status === 'completed');
+      assert.equal(scTeam2Obj.driver.result, 'branch-failed', '失败结果驱动 else 分支');
+      // C 的终态唤醒落地并结算，避免与 D 的用户回合竞态
+      await wait(() => scLeadSends.some(text => /编排脚本完成[\s\S]*探测/.test(text)));
+      settleLead();
+      await wait(() => !scRt.execution.isRunning(scParent.id));
+
+      // D) 中断→握手→「继续协作」journal 重放
+      await scRt.send(scParent.id, '#worker 重放回归');
+      const scTeam3 = await scCall('create_agent_team', { name: 'Replay team', goal: 'Interrupt and resume', members: [{ name: 'Builder', role: 'Build', agent_type: 'worker' }] });
+      const scTeam3Obj = scRt.collaboration.teams.get(scTeam3.team_id);
+      await scCall('run_team_script', { team_id: scTeam3.team_id, script: [
+        "phase('run')",
+        "const first = task({ title: '第一步', description: 'first step', member: 'Builder' })",
+        "const second = task({ title: '第二步', description: 'second step', member: 'Builder' })",
+        "return 'replayed'",
+      ].join('\n') });
+      settleLead();
+      await wait(() => [...scPending.values()].some(entry => /first step/.test(entry.text)));
+      const firstChild = [...scPending.keys()].find(id => scSends.some(send => send.id === id && /first step/.test(send.text)));
+      scFinish(firstChild, '第一步完成');
+      await wait(() => [...scPending.values()].some(entry => /second step/.test(entry.text)));
+      const secondChild = [...scPending.keys()].find(id => scSends.some(send => send.id === id && /second step/.test(send.text)));
+      // 在第二步执行中中断：握手留给成员自述交接
+      await scRt.collaboration.userAction(scParent.id, 'interrupt', { teamId: scTeam3.team_id });
+      await wait(() => scTeam3Obj.driver.status === 'interrupted');
+      assert.equal(scTeam3Obj.tasks.find(t => t.title === '第一步').status, 'completed');
+      assert.equal(scTeam3Obj.tasks.find(t => t.title === '第二步').status, 'interrupted');
+      await wait(() => [...scPending.values()].some(entry => /Agent Team handoff/.test(entry.text)));
+      scFinish(secondChild, '第二步做到一半，阻塞在导出格式');
+      await wait(() => scRt.collaboration.jobs.get(scTeam3Obj.tasks.find(t => t.title === '第二步').jobId)?.handoff != null || scTeam3Obj.tasks.find(t => t.title === '第二步').handoff != null);
+      const firstStepSendCount = scSends.filter(send => /first step/.test(send.text)).length;
+      // 「继续协作」→ driver 重放：已完成的第一步零重派，第二步复用原会话
+      const scResumed = await scRt.collaboration.userAction(scParent.id, 'continue', { teamId: scTeam3.team_id });
+      assert.equal(scResumed.driver.status, 'running');
+      await wait(() => [...scPending.values()].some(entry => /Continue the interrupted team task/.test(entry.text)));
+      assert.equal(scSends.filter(send => /first step/.test(send.text)).length, firstStepSendCount, 'journal 命中的已完成任务不重新派发');
+      const resumeSend = scSends.find(send => send.id === secondChild && /Continue the interrupted team task/.test(send.text));
+      assert.ok(resumeSend, '中断任务复用原成员会话恢复');
+      assert.match(resumeSend.text, /第二步做到一半/, '恢复提示词携带成员交接');
+      scFinish(secondChild, '第二步完成');
+      await wait(() => scTeam3Obj.driver.status === 'completed');
+      assert.equal(scTeam3Obj.driver.result, 'replayed');
+      assert.equal(scTeam3Obj.tasks.filter(t => t.scriptId).length, 2, '重放不重复建任务');
+      await wait(() => scLeadSends.some(text => /编排脚本完成[\s\S]*第二步完成/.test(text)), '重放完成后唤醒 Lead');
+
+      // E) 运行时错误：静态门放行、解释期失败 → driver failed + 结构化错误唤醒。
+      // 任务先正常结算（Promise.all 汇合），失败发生在无在途任务时点
+      settleLead();
+      await wait(() => !scRt.execution.isRunning(scParent.id));
+      await scRt.send(scParent.id, '#worker 运行时错误回归');
+      await scCall('run_team_script', { team_id: scTeam.team_id, script: "const prep = task({ title: '准备', description: 'prepare work', member: 'Builder' })\nconst settled = Promise.all([prep])\nconst box = 'text'\nbox.push(1)\nreturn 'unreachable'" });
+      settleLead();
+      await wait(() => !scRt.execution.isRunning(scParent.id));
+      await wait(() => [...scPending.values()].some(entry => /prepare work/.test(entry.text)));
+      const prepChildId = [...scPending.keys()].find(id => scSends.some(send => send.id === id && /prepare work/.test(send.text)));
+      scFinish(prepChildId, '准备完成');
+      await wait(() => scTeamObj.tasks.find(t => t.title === '准备').status === 'completed');
+      await wait(() => scTeamObj.driver.status === 'failed');
+      assert.match(scTeamObj.driver.error, /只有数组支持 \.push/, '运行时错误结构化记录在 driver');
+      assert.ok(scTeamObj.history.some(entry => entry.action === 'script_failed'), 'script_failed 入史');
+      await wait(() => scLeadSends.some(text => /编排脚本失败[\s\S]*只有数组支持/.test(text)), '失败唤醒携带结构化错误');
+    } finally { await scRt.close(); }
 
     console.log('PASS: real MCP stdio → authenticated Host → parallel native-session adapters → results/follow-up/cancellation, ownership and shared review');
   } finally { transport.stop(); await rt.close(); }

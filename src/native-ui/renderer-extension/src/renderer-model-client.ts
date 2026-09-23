@@ -130,15 +130,21 @@ export const THREAD_USAGE_INSPECT_METHOD = "harnessmix/thread/usage/inspect";
 export const THREAD_TEAM_INSPECT_METHOD = "harnessmix/thread/team/inspect";
 export const THREAD_TEAM_TASK_CANCEL_METHOD = "harnessmix/thread/team/task/cancel";
 export const THREAD_TEAM_TASK_REASSIGN_METHOD = "harnessmix/thread/team/task/reassign";
+export const THREAD_TEAM_TASK_INSERT_METHOD = "harnessmix/thread/team/task/insert";
+export const THREAD_TEAM_INTERRUPT_METHOD = "harnessmix/thread/team/interrupt";
 export const THREAD_TEAM_MESSAGE_SEND_METHOD = "harnessmix/thread/team/message/send";
+export const THREAD_TEAM_MESSAGE_ACK_METHOD = "harnessmix/thread/team/message/ack";
 export const THREAD_COLLABORATION_CONTINUE_METHOD = "harnessmix/thread/collaboration/continue";
 
 // 看板用户操作：principal 是用户；授权与语义统一在 Host 的 collaboration.userAction 裁决。
 export type CollaborationUserActionInput =
   | { action: "task/cancel"; threadId: string; teamId: string; taskId: string }
   | { action: "task/reassign"; threadId: string; teamId: string; taskId: string; memberId: string; note?: string }
+  | { action: "task/insert"; threadId: string; teamId: string; title: string; description: string; memberId: string; dependsOn: string[] }
+  | { action: "interrupt"; threadId: string; teamId: string }
   | { action: "message/send"; threadId: string; teamId: string; to?: string; message: string; kind?: string }
-  | { action: "continue"; threadId: string; taskId?: string };
+  | { action: "message/ack"; threadId: string; teamId: string; memberId?: string }
+  | { action: "continue"; threadId: string; teamId?: string; taskId?: string };
 export const THREAD_USAGE_UPDATED_METHOD = "harnessmix/thread/usage/updated";
 export const THREAD_TOKEN_USAGE_UPDATED_METHOD = "thread/tokenUsage/updated";
 export const UPDATE_CHECK_METHOD = "harnessmix/update/check";
@@ -217,6 +223,10 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   usageSummary?(): Promise<unknown>;
   healthSnapshot?(): Promise<unknown>;
   healthRefresh?(): Promise<unknown>;
+  listTeamTemplates?(input?: { threadId?: string }): Promise<unknown>;
+  saveTeamTemplate?(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string }> }): Promise<unknown>;
+  deleteTeamTemplate?(id: string): Promise<unknown>;
+  restoreTeamTemplates?(): Promise<unknown>;
   subscribeThreadUsage?(listener: (update: ThreadUsageInspection) => void): () => void;
   selectThreadModel(input: ThreadModelSelectParams): Promise<HarnessModelSelectionState>;
   selectThreadThinking(input: ThreadThinkingSelectParams): Promise<HarnessModelSelectionState>;
@@ -497,8 +507,14 @@ export function createRendererModelClient(
         ? THREAD_TEAM_TASK_CANCEL_METHOD
         : input.action === "task/reassign"
           ? THREAD_TEAM_TASK_REASSIGN_METHOD
+          : input.action === "task/insert"
+            ? THREAD_TEAM_TASK_INSERT_METHOD
+            : input.action === "interrupt"
+              ? THREAD_TEAM_INTERRUPT_METHOD
           : input.action === "message/send"
             ? THREAD_TEAM_MESSAGE_SEND_METHOD
+          : input.action === "message/ack"
+            ? THREAD_TEAM_MESSAGE_ACK_METHOD
             : THREAD_COLLABORATION_CONTINUE_METHOD;
       const params: Record<string, unknown> = { threadId };
       for (const [key, value] of Object.entries(input)) {
@@ -517,6 +533,19 @@ export function createRendererModelClient(
     },
     async healthRefresh(): Promise<unknown> {
       return await manager.sendRequest('harnessmix/health/refresh', {});
+    },
+    async listTeamTemplates(input?: { threadId?: string }): Promise<unknown> {
+      // threadId → Host 以该线程的 cwd 为项目作用域，合并 .harness-mix/teams/*.md
+      return await manager.sendRequest('harnessmix/collaboration/team-template/list', input ?? {});
+    },
+    async saveTeamTemplate(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string }> }): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/collaboration/team-template/save', input);
+    },
+    async deleteTeamTemplate(id: string): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/collaboration/team-template/delete', { id });
+    },
+    async restoreTeamTemplates(): Promise<unknown> {
+      return await manager.sendRequest('harnessmix/collaboration/team-template/restore-builtins', {});
     },
     subscribeThreadUsage(listener: (update: ThreadUsageInspection) => void): () => void {
       const notifications = notificationTarget(source);

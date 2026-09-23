@@ -3,7 +3,7 @@ const { tools } = require('./collaboration-tools');
 
 // Host 通过 HARNESS_MIX_COLLAB_TEAM=0 表达「Agent Team 已在设置中停用」：
 // 此时对模型隐藏团队工具，只保留一次性委派类工具。
-const TEAM_TOOLS = new Set(['create_agent_team', 'assign_team_task', 'get_team_state', 'update_team_task', 'send_team_message']);
+const TEAM_TOOLS = new Set(['create_agent_team', 'assign_team_task', 'get_team_state', 'update_team_task', 'send_team_message', 'run_team_script']);
 const visibleTools = process.env.HARNESS_MIX_COLLAB_TEAM === '0'
   ? tools.filter((tool) => !TEAM_TOOLS.has(tool.name))
   : tools;

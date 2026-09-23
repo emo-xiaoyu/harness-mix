@@ -770,12 +770,17 @@ export function installRendererBindingProbe(
     if (!composer) return { agents: [], sessions: [] };
     const state = controller.get(composer);
     const client = modelClientForHost(modelControl?.currentHostId?.() ?? 'local');
-    const [agentResult, sessionResult, prefsResult] = await Promise.allSettled([
+    // 会话内编曲器带上 threadId：项目作用域团队模板（.harness-mix/teams/*.md）
+    // 按 cwd 合并进 # 菜单；全新草稿无 threadId，仅显示用户/内置模板
+    const templateThreadId = threadIdFromComposerModelTarget(mountedByComposer.get(composer)?.modelTarget ?? null);
+    const [agentResult, sessionResult, prefsResult, templateResult] = await Promise.allSettled([
       client?.listCollaborationAgents?.() ?? Promise.resolve([]),
       client?.listHarnessSessions?.({ harnessId: harnessIdSchema.parse('all-harnesses'), query, offset: 0, limit: 12 }) ?? Promise.resolve({ candidates: [], total: 0 }),
       client?.getCollaborationPreferences?.() ?? Promise.resolve({ collaboration: true, agentTeam: true }),
+      client?.listTeamTemplates?.(templateThreadId ? { threadId: templateThreadId } : {}) ?? Promise.resolve({ templates: [] }),
     ]);
     const collaborationEnabled = prefsResult.status === 'fulfilled' ? prefsResult.value.collaboration !== false : true;
+    const teamEnabled = prefsResult.status === 'fulfilled' ? prefsResult.value.agentTeam !== false : true;
     const agents = collaborationEnabled && agentResult.status === 'fulfilled' ? agentResult.value : [];
     (window as any).__lastMentionDebug = {
       hasClient: !!client,
@@ -788,7 +793,13 @@ export function installRendererBindingProbe(
       const match = /^\[([^\]]+)\]\s*/.exec(candidate.title ?? '');
       return { id: candidate.nativeSessionId, title: (candidate.title ?? '未命名会话').replace(/^\[[^\]]+\]\s*/, ''), harnessId: match?.[1] ?? 'codex', cwd: candidate.cwd, running: candidate.running };
     }) : [];
-    return { agents, sessions, canDelegate: agents.some(agent => agent.id === state.agent && agent.lead) };
+    const templates = collaborationEnabled && teamEnabled && templateResult.status === 'fulfilled'
+      && Array.isArray((templateResult.value as { templates?: unknown[] })?.templates)
+      ? (templateResult.value as { templates: Array<{ id: string; name: string; description: string; members: Array<{ name: string; role: string; agent: string; available: boolean }> }> }).templates
+        .filter(template => template && typeof template.id === 'string' && Array.isArray(template.members))
+        .map(template => ({ ...template, members: template.members.filter(member => member && typeof member.name === 'string') }))
+      : [];
+    return { agents, sessions, templates, canDelegate: agents.some(agent => agent.id === state.agent && agent.lead) };
   });
   const collabCards = installCollabCards({
     openThread: (threadId) => openRendererThread(threadId, { hostId: 'local' }),
@@ -876,6 +887,15 @@ export function installRendererBindingProbe(
       return {
         getCollaborationPreferences: () => client.getCollaborationPreferences!(),
         saveCollaborationPreferences: (input) => client.saveCollaborationPreferences!(input),
+        ...(client.listTeamTemplates && client.saveTeamTemplate && client.deleteTeamTemplate
+          ? {
+              listTeamTemplates: () => client.listTeamTemplates!(),
+              saveTeamTemplate: input => client.saveTeamTemplate!(input),
+              deleteTeamTemplate: id => client.deleteTeamTemplate!(id),
+              ...(client.restoreTeamTemplates ? { restoreTeamTemplates: () => client.restoreTeamTemplates!() } : {}),
+            }
+          : {}),
+        ...(client.listCollaborationAgents ? { listAgents: () => client.listCollaborationAgents!() } : {}),
       };
     },
     openImportedThread: (threadId, signal) =>

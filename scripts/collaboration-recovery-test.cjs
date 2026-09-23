@@ -62,6 +62,8 @@ async function main() {
   rt.collaboration.jobs.set('saved', { id: 'saved', owner: 'parent', agent: 'pi', childId: 'child', status: 'running', task: 'continue', workspace, teamId: 'team', memberId: 'member', teamTaskId: 'team-task' });
   rt.collaboration.jobs.set('finished', { id: 'finished', owner: 'parent', agent: 'pi', childId: 'done', status: 'completed', result: 'kept' });
   rt.collaboration.teams.set('team', { id: 'team', owner: 'parent', name: 'Recovery team', goal: 'Resume safely', status: 'active', members: [{ id: 'member', name: 'Builder', role: 'Continue work', agent: 'pi', status: 'working', childId: 'child' }], tasks: [{ id: 'team-task', title: 'Continue', description: 'Resume after restart', assignee: 'member', dependsOn: [], status: 'in_progress' }], messages: [], updatedAt: Date.now() });
+  // 编排脚本重启语义：running driver → interrupted，journal/seq 保留供「继续协作」重放
+  rt.collaboration.teams.set('team-driver', { id: 'team-driver', owner: 'parent', name: 'Driver team', goal: 'Resume the script', status: 'active', members: [{ id: 'member', name: 'Builder', role: 'Continue work', agent: 'pi', status: 'working', childId: 'child' }], tasks: [{ id: 'driver-task', title: 'Step', description: 'Script step', assignee: 'member', dependsOn: [], status: 'in_progress', scriptId: 'script-1' }], messages: [], updatedAt: Date.now(), driver: { id: 'script-1', teamId: 'team-driver', owner: 'parent', status: 'running', phase: 'run', script: "phase('run')", journal: [{ seq: 0, kind: 'phase', name: 'run' }], seq: 1, steps: 3, result: null, error: null } });
   await rt.collaboration.save();
   await rt.collaboration.saveTeams();
   const restarted = new Collaboration(rt); await restarted.initialize();
@@ -71,6 +73,11 @@ async function main() {
   assert.equal(restarted.jobs.get('finished').result, 'kept');
   assert.equal(restarted.teams.get('team').members[0].status, 'interrupted');
   assert.equal(restarted.teams.get('team').tasks[0].status, 'interrupted');
+  const driverTeam = restarted.teams.get('team-driver');
+  assert.equal(driverTeam.driver.status, 'interrupted', '重启时在跑的编排脚本转 interrupted');
+  assert.equal(driverTeam.driver.journal.length, 1, 'journal 保留供重放');
+  assert.equal(driverTeam.driver.seq, 0, '重放游标重置');
+  assert.ok(driverTeam.driver.pending instanceof Set, '瞬态集合重启后重建');
   assert.equal(restarted.keys.size, 0, 'No session authorization keys persisted');
   // Resume must reuse the durable child identity, rather than spawn a replacement.
   const parent = { id: 'parent', cwd: repo, title: 'Lead' }, child = { id: 'child', parentThreadId: 'parent', cwd: workspace.cwd };
