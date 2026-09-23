@@ -186,6 +186,10 @@ export { resolveCodexAccountSelection } from "./renderer-codex-account-state.js"
 
 interface HostHarnessAvailabilityState {
   codexAccounts: RendererCodexAccountState | null;
+  // Latch: this Host ever reported an isolated (Harness-Mix-routed) Codex account.
+  // Survives account-state recreation so the submission guard can fail closed
+  // even while the per-client state is being rebuilt.
+  codexAccountsIsolated: boolean;
   availability: HarnessAvailability;
   errors: HarnessAvailabilityErrors;
   webUi: HarnessWebUiAvailability;
@@ -207,6 +211,28 @@ export function refreshConnectionHosts(
 export function rendererUsageRefreshDelay(attempt: number): number {
   const index = Math.max(0, Math.min(Math.trunc(attempt), rendererUsageRefreshDelays.length - 1));
   return rendererUsageRefreshDelays[index] ?? rendererUsageRefreshDelays[0];
+}
+
+/**
+ * A Codex-agent draft submission must fail closed while the composer's Codex
+ * account routing state is unknown (request manager just recreated, account
+ * list not loaded yet) on a Host known to carry isolated, Harness-Mix-routed
+ * Codex accounts. Sending in that window drops the account route marker and
+ * silently creates the thread on the official Codex route — the duplicate
+ * sidebar session regression. Hosts without isolated accounts, or without an
+ * owned bridge for the composer's Host, keep the plain passthrough behavior.
+ */
+export function shouldBlockCodexDraftSubmission(input: {
+  accountsResolved: boolean;
+  accountsLoaded: boolean;
+  hostIsolatedAccountsLatched: boolean;
+  policyHostId: string | null;
+  composerHostId: string | null;
+}): boolean {
+  if (input.accountsResolved && input.accountsLoaded) return false;
+  if (!input.hostIsolatedAccountsLatched) return false;
+  if (input.composerHostId === null) return false;
+  return input.policyHostId === input.composerHostId;
 }
 
 /**
@@ -852,6 +878,7 @@ export function installRendererBindingProbe(
   };
   const createHostHarnessAvailabilityState = (): HostHarnessAvailabilityState => ({
     codexAccounts: null,
+    codexAccountsIsolated: false,
     availability: Object.fromEntries(
       externalAgents.map((agent) => [agent, "checking"]),
     ) as HarnessAvailability,
@@ -2234,6 +2261,27 @@ export function installRendererBindingProbe(
     if (!accounts) return;
     await accounts.refresh();
     if (disposed || codexAccountsForHost(hostId) !== accounts) return;
+    if (hostId !== null && accounts.accounts.some((account) => account.management === "isolated")) {
+      hostHarnessAvailabilityState(hostId).codexAccountsIsolated = true;
+    }
+    // Mirror the effective Codex account selection (explicit override or the
+    // active account) onto the draft policy's sticky route marker. Desktop
+    // 26.917+ can recreate its request manager mid-draft and issue thread
+    // starts that bypass prepareComposer entirely; without this sync the
+    // marker stays null and the first submission leaks to the official route
+    // as an ephemeral, sidebar-less session.
+    const policy = window.__harnessmixDraftPrewarmPolicyV1;
+    if (hostId !== null && policy?.hostId === hostId && policy.selectAccount) {
+      const routeAccount = codexAccountRouteOverride(
+        accounts.accounts,
+        accounts.selection.selectedAccountId,
+      );
+      try {
+        policy.selectAccount(routeAccount);
+      } catch {
+        // Routing falls back to the next explicit account selection.
+      }
+    }
     for (const mounted of mountedByComposer.values()) {
       if (mounted.hostId !== hostId) continue;
       renderMounted(mounted);
@@ -2884,16 +2932,36 @@ export function installRendererBindingProbe(
     if (current.agent === "codex") {
       // A Host switch may replace its policy while retaining this Host's draft
       // override. Apply it to the matching policy at submission, not another Host.
-      const selection = composerCodexAccounts(composer)?.selection;
+      const accounts = composerCodexAccounts(composer);
+      const policy = window.__harnessmixDraftPrewarmPolicyV1;
+      const hostAvailability =
+        mounted.hostId === null ? null : hostHarnessAvailabilityState(mounted.hostId);
+      if (
+        shouldBlockCodexDraftSubmission({
+          accountsResolved: accounts !== null,
+          accountsLoaded: accounts?.loaded === true,
+          hostIsolatedAccountsLatched: hostAvailability?.codexAccountsIsolated === true,
+          policyHostId: policy?.hostId ?? null,
+          composerHostId: mounted.hostId,
+        })
+      ) {
+        // The owned bridge is installed for this Host and the Host is known to
+        // carry isolated (routed) Codex accounts, but the composer's account
+        // routing state could not be resolved yet — typically the request
+        // manager was just recreated (new thread/task) and the replacement
+        // has not been captured. Letting the submission through now would
+        // drop the account route marker and silently create the thread on
+        // the official Codex route (duplicate session). Fail closed, kick a
+        // reload, and let the next submission attempt re-run this guard.
+        void loadCodexAccounts();
+        return false;
+      }
+      const selection = accounts?.selection;
       const accountId =
         controller.isSubmissionPending(composer) && current.codexAccountId
           ? current.codexAccountId
           : selection?.selectedAccountId;
-      const override = codexAccountRouteOverride(
-        composerCodexAccounts(composer)?.accounts ?? [],
-        accountId,
-      );
-      const policy = window.__harnessmixDraftPrewarmPolicyV1;
+      const override = codexAccountRouteOverride(accounts?.accounts ?? [], accountId);
       if (override !== null && (policy?.hostId !== mounted.hostId || !policy.selectAccount)) {
         return false;
       }

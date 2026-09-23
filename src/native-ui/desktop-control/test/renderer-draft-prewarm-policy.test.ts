@@ -505,6 +505,7 @@ describe("Renderer draft prewarm policy", () => {
     await bridge.prewarmThreadStart?.({ ephemeral: true, model: "gpt-5" });
     policy.select(null);
     await bridge.prewarmThreadStart?.({ cwd: "/tmp/official", model: "gpt-5" });
+    await bridge.prewarmThreadStart?.({ cwd: "/tmp/official", model: "gpt-5", ephemeral: true });
 
     expect(sendRequest).toHaveBeenCalledWith("thread/start", {
       cwd: "/tmp/project",
@@ -519,14 +520,20 @@ describe("Renderer draft prewarm policy", () => {
       ephemeral: true,
       model: "gpt-5",
     });
+    // Official prewarms keep the Desktop's own flags: 26.917 runs the first
+    // turn on the prewarmed thread, so forcing ephemeral lost the session.
     expect(prewarmThreadStart).toHaveBeenNthCalledWith(3, {
+      cwd: "/tmp/official",
+      model: "gpt-5",
+    });
+    expect(prewarmThreadStart).toHaveBeenNthCalledWith(4, {
       cwd: "/tmp/official",
       model: "gpt-5",
       ephemeral: true,
     });
   });
 
-  it("routes a draft Codex Account without changing the default Account", async () => {
+  it("keeps a draft Codex Account route sticky for user threads only", async () => {
     const sendRequest = vi.fn(async () => undefined);
     const manager = requestManagerFixture();
     const bridge = requestBridgeFixture({ sendRequest });
@@ -540,7 +547,23 @@ describe("Renderer draft prewarm policy", () => {
 
     expect(policy.selectAccount("reviewer")).toBe(true);
     await bridge.sendRequest("thread/start", { cwd: "/tmp/project", model: "gpt-5" });
+    // A fresh task after a request-manager recreation must keep the route
+    // (26.917 duplicate/ephemeral sidebar-less session regression).
     await bridge.sendRequest("thread/start", { cwd: "/tmp/next", model: "gpt-5" });
+    // Internal background threads never ride the account route.
+    await bridge.sendRequest("thread/start", {
+      cwd: "/tmp/next",
+      model: "gpt-5",
+      threadSource: "thread_title",
+    });
+    await bridge.sendRequest("thread/start", {
+      cwd: "/tmp/next",
+      model: "gpt-5",
+      threadSource: "mcp_extension_host",
+    });
+    // An explicit switch back to the native account clears the marker.
+    policy.selectAccount(null);
+    await bridge.sendRequest("thread/start", { cwd: "/tmp/plain", model: "gpt-5" });
 
     expect(sendRequest).toHaveBeenNthCalledWith(1, "thread/start", {
       cwd: "/tmp/project",
@@ -549,6 +572,21 @@ describe("Renderer draft prewarm policy", () => {
     });
     expect(sendRequest).toHaveBeenNthCalledWith(2, "thread/start", {
       cwd: "/tmp/next",
+      model: "gpt-5",
+      __harnessmixAccountId: "reviewer",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(3, "thread/start", {
+      cwd: "/tmp/next",
+      model: "gpt-5",
+      threadSource: "thread_title",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(4, "thread/start", {
+      cwd: "/tmp/next",
+      model: "gpt-5",
+      threadSource: "mcp_extension_host",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(5, "thread/start", {
+      cwd: "/tmp/plain",
       model: "gpt-5",
     });
   });

@@ -39,6 +39,13 @@ export class RendererCodexAccountState {
 
   constructor(readonly client: RendererModelClient) {}
 
+  #loaded = false;
+
+  /** True once a refresh completed. Empty + not loaded means routing is still unknown. */
+  get loaded(): boolean {
+    return this.#loaded;
+  }
+
   get selection(): ReturnType<typeof resolveCodexAccountSelection> {
     return resolveCodexAccountSelection(this.accounts, this.overrideAccountId);
   }
@@ -50,6 +57,7 @@ export class RendererCodexAccountState {
       .then((result) => {
         this.accounts = result.accounts;
         this.overrideAccountId = this.selection.overrideAccountId;
+        this.#loaded = true;
       })
       .catch(() => {
         // Keep only this Host's last known data on transient failures. A Host

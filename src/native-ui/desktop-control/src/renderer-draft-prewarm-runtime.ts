@@ -507,13 +507,22 @@ export function installDraftPrewarmPolicyBridge(
     if (!isRecord(parameters) || parameters.ephemeral === true) {
       return parameters;
     }
-    const routed = {
+    // The Codex account route rides only user-facing threads. Internal
+    // background threads (title generation, extension hosts) stay on the
+    // official route. The marker is sticky instead of consumed per thread:
+    // a fresh task created right after a Desktop request-manager recreation
+    // (26.917+) must not silently lose its route and leak to the official
+    // route as a duplicate/ephemeral sidebar-less session. It is cleared by
+    // the next account selection (selectAccount(null)).
+    const userThread =
+      parameters.threadSource === undefined || parameters.threadSource === "user";
+    return {
       ...parameters,
       ...(selectedModel === null ? {} : { model: selectedModel }),
-      ...(selectedCodexAccountId === null ? {} : { __harnessmixAccountId: selectedCodexAccountId }),
+      ...(selectedCodexAccountId !== null && userThread
+        ? { __harnessmixAccountId: selectedCodexAccountId }
+        : {}),
     };
-    selectedCodexAccountId = null;
-    return routed;
   };
   const routedSend = (method: string, parameters: unknown, options?: unknown): unknown => {
     const routedParameters = method === "thread/start" ? routeThreadStart(parameters) : parameters;
@@ -535,10 +544,24 @@ export function installDraftPrewarmPolicyBridge(
   };
   const routedPrewarm = (parameters: unknown, options?: unknown): unknown => {
     const routed = routeThreadStart(parameters);
-    // A prewarmed draft is never a user-created task. Keep both external and
-    // official Codex prewarms ephemeral so switching the selected Harness does
-    // not publish an empty persistent sidebar thread.
-    const routedParameters = isRecord(routed) ? { ...routed, ephemeral: true } : routed;
+    if (!isRecord(routed)) {
+      return options === undefined
+        ? originalPrewarm.call(bridge, routed)
+        : originalPrewarm.call(bridge, routed, options);
+    }
+    // Prewarms that carry a Harness Mix route (model carrier or Codex account
+    // marker) stay ephemeral: switching the selected Harness must not publish
+    // an empty persistent sidebar thread, and the Host runtime promotes an
+    // ephemeral external thread on its first real input. On the local Host the
+    // route is decoded Host-side, so decide by the carried route, not by the
+    // bridge. Official prewarms keep the Desktop's own flags untouched — since
+    // Desktop 26.917 the first turn runs on the prewarmed thread itself, and
+    // forcing ephemeral there meant the conversation never persisted: no
+    // sidebar entry, session vanished on conversation switch.
+    const carriesRoute =
+      (typeof routed.model === "string" && routed.model.startsWith("harnessmix/")) ||
+      typeof routed.__harnessmixAccountId === "string";
+    const routedParameters = carriesRoute ? { ...routed, ephemeral: true } : routed;
     if (shouldUseBridge("thread/start", routedParameters)) {
       return routedSend("thread/start", routedParameters, options);
     }

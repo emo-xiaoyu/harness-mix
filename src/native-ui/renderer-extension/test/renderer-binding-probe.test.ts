@@ -29,6 +29,7 @@ import {
   shouldRefreshCodexAccountsForAdapterState,
   rendererUsageRefreshDelay,
   shouldApplyDraftAgentCarrier,
+  shouldBlockCodexDraftSubmission,
   shouldPersistNewThreadConfigurationSelection,
   shouldReloadExternalCatalogAfterAvailabilityRefresh,
   shouldRetryExternalThreadUsage,
@@ -1199,6 +1200,78 @@ describe("Renderer Composer DOM behavior", () => {
   it("persists explicit configuration selections only for a new-Thread draft", () => {
     expect(shouldPersistNewThreadConfigurationSelection("draft")).toBe(true);
     expect(shouldPersistNewThreadConfigurationSelection("locked")).toBe(false);
+  });
+
+  it("fails closed a Codex draft submission while account routing is unknown on a routed Host", () => {
+    // 26.917 regression window: a freshly recreated request manager loses the
+    // Codex account route marker; sending then leaks to the official route and
+    // duplicates the sidebar session.
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: false,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: "local",
+        composerHostId: "local",
+      }),
+    ).toBe(true);
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: true,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: "local",
+        composerHostId: "local",
+      }),
+    ).toBe(true);
+    // Healthy path: routing state known — never block.
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: true,
+        accountsLoaded: true,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: "local",
+        composerHostId: "local",
+      }),
+    ).toBe(false);
+    // Hosts without isolated accounts keep the plain Codex passthrough.
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: false,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: false,
+        policyHostId: "local",
+        composerHostId: "local",
+      }),
+    ).toBe(false);
+    // No owned bridge for this composer's Host — nothing to fail closed on.
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: false,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: "remote",
+        composerHostId: "local",
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: false,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: null,
+        composerHostId: "local",
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlockCodexDraftSubmission({
+        accountsResolved: false,
+        accountsLoaded: false,
+        hostIsolatedAccountsLatched: true,
+        policyHostId: "local",
+        composerHostId: null,
+      }),
+    ).toBe(false);
   });
 
   it("does not bind readable Thinking when current options are unavailable", () => {
