@@ -68,8 +68,8 @@ Shim 只接管作为 Desktop 协议端点的普通 `app-server`。`app-server pr
 
 - 默认通道：激活时经 `IPackageDebugSettings::EnableDebugging` 注入环境块（`CODEX_CLI_PATH` 指向 shim 绝对路径，另含 `HARNESSMIX_STOCK_CODEX_PATH` 等 5 个变量）。
 - Codex Desktop ≥26.917 起有两个新行为：其一，app-server CLI 解析器只接受**裸命令名**形态的 `CODEX_CLI_PATH`（含路径分隔符或盘符的值被否决并回退到桌面托管 core）；其二，桌面启动时会自重启（broker → 主进程）并**丢弃激活环境块**，主进程环境改由注册表重建。
-- 因此 ≥26.917 上启动器双通道注入：激活块中传 `CODEX_CLI_PATH=harness-mix-shim` 裸名 + `PATH` 前缀；同时把同名值与 shim 目录前缀幂等写入 `HKCU\Environment`（保留 PATH 原有值类型）。宿主所需的其余变量由 shim 侧车文件（`node-path.txt` / `stock-path.txt`）与 `native-host.cjs` 的 `nativeEnvironment()` 兜底，不依赖注册表。
-- 效果：桌面每次启动（包括开始菜单直启）都经 shim 路由。移除：`npm start -- --clean-env`（只清理本安装写入的值）。关闭该通道：`HARNESS_MIX_REGISTRY_ENV=0`。强制裸名/绝对路径调试：`HARNESS_MIX_CODEX_CLI_PATH_MODE=bare|absolute`。
+- 因此 ≥26.917 上启动器双通道注入：激活块中传 `CODEX_CLI_PATH=harness-mix-shim` 裸名 + `PATH` 前缀；同时把同名值写入 `HKCU\Environment`，并把 shim 目录移到用户 PATH 首位（裸名要求 shim 先于任何同名可执行文件命中，重复条目会被去重）。写入幂等，PATH 保留原有值类型（`REG_EXPAND_SZ`）；宿主所需的其余变量由 shim 侧车文件（`node-path.txt` / `stock-path.txt`）与 `native-host.cjs` 的 `nativeEnvironment()` 兜底，不依赖注册表。
+- 所有权跟踪：写入前把原值记入 `<数据目录>/registry-env-state.json`。`npm start -- --clean-env` 只回退/移除经该记录证明由本启动器写入的值（用户事后改动过的值保持不动）。关闭该通道：`HARNESS_MIX_REGISTRY_ENV=0`；`HARNESS_MIX_CODEX_CLI_PATH_MODE=absolute` 除恢复激活块的绝对路径形态外，也会清理注册表通道中本启动器的值。强制裸名调试：`HARNESS_MIX_CODEX_CLI_PATH_MODE=bare`。
 
 ## 进程监管
 
