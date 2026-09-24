@@ -98,6 +98,46 @@ async function until(fn) {
     assert.equal(permitted.options.workerPermissions, 'full');
     assert.deepEqual(permitted.options.turnPermissions, { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' });
     await rt.removeThread(permitted.id);
+    // 权限模式：空闲热应用失败 → 事务回滚不落账；回合运行中（等审批）→ 挂起，下轮投递前应用
+    const modeLog = [];
+    let failMode = false;
+    const modeAdapter = {
+      manifest: { id: 'mode-harness', name: 'Mode', capabilities: {} },
+      async open(input) { emit = input.emit; return {}; },
+      async send() {},
+      async cancel() {}, async respond() {}, async close() {},
+      async setPermissionMode(session, mode) { if (failMode) throw new Error('Native mode unavailable'); modeLog.push(mode); },
+    };
+    rt.adapters.set(modeAdapter.manifest.id, modeAdapter); rt.status[modeAdapter.manifest.id] = { available: true };
+    const modeThread = await rt.createThread({ harnessId: modeAdapter.manifest.id, cwd: root });
+    await rt.send(modeThread.id, 'warm up');
+    emit({ kind: 'completed', finalAnswer: true });
+    await until(() => modeThread.status === 'ready' && !modeThread.reviewPending);
+    failMode = true;
+    await assert.rejects(rt.setOptions(modeThread.id, { permissionMode: 'gone' }), /Native mode unavailable/);
+    assert.equal(modeThread.options.permissionMode, undefined, '热应用失败不落账，保持旧值');
+    failMode = false;
+    await rt.setOptions(modeThread.id, { permissionMode: 'approve' });
+    assert.equal(modeThread.options.permissionMode, 'approve');
+    assert.deepEqual(modeLog, ['approve'], '空闲时热应用一次');
+    await rt.send(modeThread.id, 'run');
+    emit({ kind: 'approval', requestId: 'm', method: 'confirm', title: 'Allow?' });
+    await until(() => rt.execution.lastTurn(modeThread.id).status === 'waiting_interaction');
+    await rt.setOptions(modeThread.id, { permissionMode: 'bypassPermissions' });
+    assert.equal(modeThread.options.permissionMode, 'bypassPermissions', '回合运行中选择被接受为挂起档位');
+    assert.deepEqual(modeLog, ['approve'], '回合运行中不向原生会话热应用');
+    await rt.respondApproval(modeThread.id, 'm', { confirmed: false });
+    emit({ kind: 'completed', finalAnswer: true });
+    await until(() => modeThread.status === 'ready' && !modeThread.reviewPending);
+    await rt.send(modeThread.id, 'next turn');
+    assert.deepEqual(modeLog, ['approve', 'bypassPermissions'], '挂起档位在下轮投递前应用');
+    emit({ kind: 'completed', finalAnswer: true });
+    await until(() => modeThread.status === 'ready' && !modeThread.reviewPending);
+    await rt.send(modeThread.id, 'no repeat');
+    assert.deepEqual(modeLog, ['approve', 'bypassPermissions'], '已应用档位不重复下发');
+    emit({ kind: 'completed', finalAnswer: true });
+    await until(() => modeThread.status === 'ready' && !modeThread.reviewPending);
+    await rt.removeThread(modeThread.id);
     await rt.close();
     const saved = await rt.store.load();
     assert.equal(saved[0].coreState.turns.find(turn => turn.id === first).status, 'completed');

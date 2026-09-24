@@ -1053,13 +1053,10 @@ class NativeProtocol {
     }
     if (method === 'harnessmix/thread/model/select') { await this.runtime.setModel(thread.id, await this.resolveModel(thread.harnessId, params.model)); return this.configuration(thread); }
     if (method === 'harnessmix/thread/thinking/select') { await this.runtime.setThinking(thread.id, params.thinkingOptionId); return this.configuration(thread); }
+    // 权限模式：空闲时 setOptions 内热应用到原生会话；回合运行中记录为挂起档位
+    // （下轮投递前应用），两种情况都立即返回新档位为生效值。
     if (method === 'harnessmix/thread/permission-mode/select') {
       await this.runtime.setOptions(thread.id, { permissionMode: params.permissionModeId });
-      const session = this.runtime.sessions.get(thread.id);
-      const adapter = this.runtime.adapters.get(thread.harnessId);
-      if (session && adapter && typeof adapter.setPermissionMode === 'function') {
-        try { await adapter.setPermissionMode(session, params.permissionModeId); } catch {}
-      }
       return this.configuration(thread);
     }
     // 原地切换 Harness：会话历史保留，下条消息携带一次性上下文信封（/switch 指令的 RPC 等价物）

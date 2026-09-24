@@ -404,6 +404,8 @@ class HostRuntime {
     }
     const session = await this.#ensureOpen(thread);
     if (!session) throw Error(thread.error ?? '原生会话未连接');
+    // 回合标记 running 之前应用挂起的权限模式：native 适配器空闲检查此刻才通过。
+    await this.#applyQueuedPermissionMode(thread, session);
     if (collaborationOf && (!this.execution.isRunning(collaborationOf) || thread.parentThreadId !== collaborationOf)) throw Error('协作父任务已结束');
     const mentions = this.collaboration.getPreferences().collaboration ? mentionedAgents(typed, this) : [];
     if (mentions.length) thread.activeMentions = mentions;
@@ -779,17 +781,36 @@ class HostRuntime {
     this.#broadcast();
   }
 
-  /** 合并任务选项；权限模式能热应用则热应用（Claude），否则下次连接原生进程时生效（Pi 启动旗标） */
+  /**
+   * 合并任务选项。权限模式：空闲时先热应用到原生会话、成功才落账（原生拒绝时保持旧值并如实抛错）；
+   * 回合运行中（典型：原生正卡在审批卡等 respond()）不热应用——记录为挂起档位，下次投递前由
+   * #applyQueuedPermissionMode 应用。Pi 家族无热应用接口，照旧在下次连接原生进程时经启动旗标生效。
+   */
   async setOptions(threadId, options) {
     const thread = this.#requireThread(threadId);
-    thread.options = { ...thread.options, ...options };
     const session = this.sessions.get(threadId);
-    if (session && options.permissionMode && typeof session.adapter.setPermissionMode === "function") {
+    if (options.permissionMode && session && typeof session.adapter.setPermissionMode === "function" && !this.execution.isRunning(threadId)) {
       await session.adapter.setPermissionMode(session, options.permissionMode);
+      session.queuedPermissionModeApplied = options.permissionMode;
     }
+    thread.options = { ...thread.options, ...options };
     await this.#save();
     this.#broadcast();
     return thread.options;
+  }
+
+  /**
+   * 投递前应用挂起的权限模式（回合运行中选择的档位）。失败不阻断回合：保持挂起、
+   * 下轮投递前重试；期间原生审批仍经 respond() 走 Desktop 权限卡，不代作决定。
+   */
+  async #applyQueuedPermissionMode(thread, session) {
+    const mode = thread.options?.permissionMode;
+    if (!mode || !session || typeof session.adapter?.setPermissionMode !== "function") return;
+    if (session.queuedPermissionModeApplied === mode) return;
+    try {
+      await session.adapter.setPermissionMode(session, mode);
+      session.queuedPermissionModeApplied = mode;
+    } catch { /* 保持挂起，下轮投递前重试 */ }
   }
 
   /** 任务 Fork：由 Adapter 向原生程序申请分叉出新会话，Host 建立新任务卡片 */

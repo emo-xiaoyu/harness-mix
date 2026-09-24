@@ -13,13 +13,16 @@ async function main() {
   let emit;
   const emits = [];
   const answers = [];
+  const permissionModeCalls = [];
   const adapter = { manifest: { id: 'pi', name: 'Pi', capabilities: { streaming: true, models: true, approvals: true, questions: true, resume: true, fork: true } },
     async open(input) { emits.push(input.emit); emit = input.emit; return {}; },
     async describe() { return { models: [{ id: 'demo', name: 'Demo', provider: 'test' }], thinkingLevels: [{ id: 'high', label: 'High', default: true }, { id: 'low', label: 'Low' }], permissionModes: [] }; },
-    async send(session, text, hooks, extras) { sendExtras.push(extras); }, async cancel() {}, async close() {},
+    async send(session, text, hooks, extras) { sendExtras.push(extras); sentTexts.push(text); }, async cancel() {}, async close() {},
+    async setPermissionMode(session, mode) { permissionModeCalls.push(mode); },
     async fork(source) { return { session: {}, nativeSessionId: `forked-${source.id}` }; },
     async respond(session, id, answer) { answers.push({ id, answer }); } };
   const sendExtras = [];
+  const sentTexts = [];
   runtime.adapters.set('pi', adapter); runtime.status.pi = { available: true };
   const events = [];
   let observeQueueOrder = false;
@@ -193,6 +196,11 @@ async function main() {
     const emptyQ = events.filter(e => e.method === 'item/tool/requestUserInput').at(-1);
     await bridge.respond({ id: emptyQ.id, result: { answers: { empty: { answers: [] } } } });
     assert.equal(answers[3].answer.value, '', '空答案数组回退为空字符串而非 undefined');
+    // 权限模式（回合运行中，原生正忙/等审批）：选择立即接受为挂起档位并回报生效值，
+    // 不向原生会话热应用（CodeBuddy 等会因 turn 进行中拒绝配置）
+    const queuedMode = await bridge.request('harnessmix/thread/permission-mode/select', { threadId, permissionModeId: 'bypassPermissions' });
+    assert.equal(queuedMode.effectivePermissionModeId, 'bypassPermissions', '回合运行中的权限模式选择被接受为生效档位');
+    assert.deepEqual(permissionModeCalls, [], '回合运行中不向原生会话热应用权限模式');
     emit({ kind: 'file-change', changes: [{ path: 'a.txt', changeType: 'added', before: '', after: 'hello', complete: true }] });
     emit({ kind: 'completed', finalAnswer: true });
     await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
@@ -239,6 +247,7 @@ async function main() {
     assert.equal(runtime.threads.find(t => t.id === threadId).archived, true);
     await bridge.request('thread/unarchive', { threadId });
     await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'cancel' }] });
+    assert.deepEqual(permissionModeCalls, ['bypassPermissions'], '挂起的权限模式在下轮投递前应用到原生会话');
     await bridge.request('turn/interrupt', { threadId });
     await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(events.filter(e => e.method === 'turn/completed').at(-1).params.turn.status, 'interrupted');
@@ -260,6 +269,14 @@ async function main() {
     assert.ok(runtime.execution.isRunning(threadId) && runtime.threads.find(t => t.id === threadId).currentTurn.id === current, 'Stale steering never cancels the running Turn');
     emit({ kind: 'completed', finalAnswer: true });
     await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
+    // 权限模式（空闲）：热应用一次并回报生效值；已应用的档位在后续轮次不重复下发
+    const idleMode = await bridge.request('harnessmix/thread/permission-mode/select', { threadId, permissionModeId: 'approve' });
+    assert.equal(idleMode.effectivePermissionModeId, 'approve', '空闲时的权限模式选择立即生效');
+    assert.deepEqual(permissionModeCalls, ['bypassPermissions', 'approve'], '空闲时热应用恰好一次');
+    await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'mode-check' }] });
+    emit({ kind: 'completed', finalAnswer: true });
+    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
+    assert.deepEqual(permissionModeCalls, ['bypassPermissions', 'approve'], '已应用的权限模式在后续轮次不重复下发');
     assert.equal(await bridge.request('thread/start', { model: 'official-model' }), undefined, 'Official Codex thread/start passes through');
     for (const [method, params] of [
       ['thread/read', { threadId: 'official-thread', includeTurns: true }],
