@@ -86,5 +86,17 @@ assert.equal(models.length, 2);
 assert.deepEqual(models[0], { id: 'm1', name: 'M1', provider: 'p1', description: undefined, efforts: [{ id: 'low', label: 'low', hint: undefined }, { id: 'high', label: 'high', hint: undefined }], defaultEffort: 'low' });
 assert.equal(models[1].efforts, undefined);
 
+// 6. session/title：provider 源（LLM 生成的语义标题）转发为 kind:'title'；
+// fallback 源只是首条消息截取（与 Host 本地派生等价），不转发避免抖动
+const titleFrame = (kind) => ({ type: 'event', event: { type: 'session/title', seq: 20, time: 0, data: { title: '运行shell命令并回显输出', messageSeqs: [7], source: { kind } } } });
+const providerTitle = projectWireEvent(titleFrame('provider'), session);
+assert.equal(providerTitle.length, 1, 'session/title provider 源 → 原生标题事件');
+assert.equal(providerTitle[0].kind, 'title');
+assert.equal(providerTitle[0].title, '运行shell命令并回显输出');
+assert.deepEqual(projectWireEvent(titleFrame('fallback'), session), [], 'session/title fallback 源不转发');
+// 真实 fixture 中存在 provider 与 fallback 两种来源（simple-message 为 fallback）
+const fixtureTitles = fixture('simple-message.jsonl').filter((f) => f.event?.type === 'session/title');
+assert.ok(fixtureTitles.length >= 1, 'fixture 捕获了 session/title 事件');
+
 console.log('dsh-adapter: Web Remote 工具/diff 边界/用量/审批/提问/目录投影 passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

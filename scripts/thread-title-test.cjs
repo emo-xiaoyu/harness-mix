@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { HostRuntime, isDefaultTitle, deriveThreadTitle } = require('../src/main/host/runtime');
 const { NativeProtocol, routeModel } = require('../src/main/native/protocol');
+const { projectEvent } = require('../src/main/adapters/claude');
 
 async function run() {
   console.log('--- Unit tests: isDefaultTitle & deriveThreadTitle ---');
@@ -27,6 +28,14 @@ async function run() {
   assert.equal(deriveThreadTitle('', [], { isWorktree: true }), '新任务 (隔离分支)');
   assert.equal(deriveThreadTitle('修复登录问题', [], { isWorktree: true }), '修复登录问题 (隔离分支)');
 
+  // Claude Code 的 summary 消息（auto-compact 生成）投影为原生标题事件
+  // （projectEvent 统一附带 nativeRef 包装，标题分支不消费它）
+  const claudeTitle = projectEvent({ type: 'summary', summary: ' 修复登录流程的会话摘要 ', leafUuid: 'u1' });
+  assert.equal(claudeTitle.length, 1);
+  assert.equal(claudeTitle[0].kind, 'title');
+  assert.equal(claudeTitle[0].title, '修复登录流程的会话摘要');
+  assert.deepEqual(projectEvent({ type: 'summary', summary: '   ' }), [], '空白 Claude summary 忽略');
+
   console.log('--- Integration tests: HostRuntime & NativeProtocol ---');
   const root = path.resolve('output/thread-title-test', String(Date.now()));
   await fs.mkdir(root, { recursive: true });
@@ -41,10 +50,11 @@ async function run() {
     manifest: { id: 'antigravity', name: 'Antigravity', capabilities: { streaming: true } },
     async open(input) { return {}; },
     async describe() { return { models: [{ id: 'gemini-flash', name: 'Gemini' }] }; },
-    async send(session, text, hooks) { hooks.emit({ kind: 'completed', finalAnswer: true }); },
+    async send(session, text, hooks) { lastHooks = hooks; hooks.emit({ kind: 'completed', finalAnswer: true }); },
     async cancel() {},
     async close() {},
   };
+  let lastHooks = null;
   runtime.adapters.set('antigravity', adapter);
   runtime.status.antigravity = { available: true };
 
@@ -73,6 +83,22 @@ async function run() {
   const customThread = await runtime.createThread({ harnessId: 'antigravity', cwd: root, title: '保留显式标题' });
   await runtime.send(customThread.id, '这是一条测试消息');
   assert.equal(customThread.title, '保留显式标题');
+
+  // 5.5 原生 harness 标题事件（DSH session/title / Claude summary → kind:'title'）：
+  // 未锁定时采纳为标题并通知 Desktop；用户/Desktop 已命名（titleLocked）则忽略
+  const nativeTitled = await runtime.createThread({ harnessId: 'antigravity', cwd: root });
+  await runtime.send(nativeTitled.id, '逐行输出数字');
+  lastHooks.emit({ kind: 'title', title: '逐行输出数字1至100000' });
+  assert.equal(nativeTitled.title, '逐行输出数字1至100000', '原生标题事件被采纳为线程标题');
+  const nativeTitleEvent = events.filter(e => e.method === 'thread/name/updated' && e.params?.threadId === nativeTitled.id).at(-1);
+  assert.equal(nativeTitleEvent.params.threadName, '逐行输出数字1至100000', '原生标题采纳后通知 Desktop');
+  lastHooks.emit({ kind: 'title', title: '更晚的原生标题' });
+  assert.equal(nativeTitled.title, '更晚的原生标题', '更晚到达的原生标题可以替换更早的');
+  await runtime.renameThread(nativeTitled.id, '用户命名');
+  lastHooks.emit({ kind: 'title', title: '原生试图覆盖' });
+  assert.equal(nativeTitled.title, '用户命名', '用户/Desktop 显式命名后原生标题不再覆盖');
+  lastHooks.emit({ kind: 'title', title: '' });
+  assert.equal(nativeTitled.title, '用户命名', '空原生标题被忽略');
 
   // 6. 历史任务重启回填测试 (Backfill on initialize)
   const legacyThread = await runtime.createThread({ harnessId: 'antigravity', cwd: root, title: '新任务' });

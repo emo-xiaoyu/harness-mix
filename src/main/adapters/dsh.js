@@ -134,6 +134,13 @@ function projectWireEvent(frame, session) {
     case "todo/write":
       out.push({ kind: "plan", entries: data.todos ?? data.entries ?? [] });
       break;
+    // DSH 原生会话标题：provider 源是 LLM 生成的语义标题，转发给 Host 采纳为
+    // 线程标题；fallback 源只是首条消息截取（与 Host 本地派生等价），跳过避免抖动
+    case "session/title": {
+      const title = typeof data.title === "string" ? data.title.trim() : "";
+      if (title && data.source?.kind === "provider") out.push({ kind: "title", title });
+      break;
+    }
     case "compaction/start":
       out.push({ kind: "status", text: "DSH 正在压缩上下文…" });
       break;

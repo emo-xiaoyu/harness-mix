@@ -23,7 +23,7 @@ function recordName(id) { return `${encodeURIComponent(id)}.json`; }
 
 function summarize(thread) {
   const firstUser = (thread.messages ?? []).find(message => message.role === 'user');
-  const fields = ['id', 'harnessId', 'title', 'cwd', 'originalCwd', 'nativeSessionId', 'status', 'connectionStatus', 'createdAt', 'updatedAt', 'archived', 'section', 'sectionEnteredAt', 'projectId', 'parentThreadId', 'ephemeral', 'gitInfo', 'workspace', 'isolation', 'harnessChain', 'pendingHandoff', 'options', 'model'];
+  const fields = ['id', 'harnessId', 'title', 'titleLocked', 'cwd', 'originalCwd', 'nativeSessionId', 'status', 'connectionStatus', 'createdAt', 'updatedAt', 'archived', 'section', 'sectionEnteredAt', 'projectId', 'parentThreadId', 'ephemeral', 'gitInfo', 'workspace', 'isolation', 'harnessChain', 'pendingHandoff', 'options', 'model'];
   const summary = Object.fromEntries(fields.filter(key => thread[key] !== undefined).map(key => [key, thread[key]]));
   summary.preview = firstUser?.text || thread.preview || thread.title || '';
   summary.messageCount = thread.messages?.length ?? thread.messageCount ?? 0;

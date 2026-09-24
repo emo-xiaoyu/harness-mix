@@ -1051,9 +1051,24 @@ class HostRuntime {
     if (typeof title !== 'string' || !title.trim()) throw new Error('任务标题不能为空');
     const thread = this.#requireThread(threadId);
     thread.title = title.trim();
+    // 用户/Desktop 已显式命名：后续原生标题事件不再覆盖（renameThread 是
+    // thread/name/set 的唯一入口，Desktop 智能命名也走这里）
+    thread.titleLocked = true;
     await this.#save(); this.#broadcast();
     for (const listener of this.listeners) listener({ type: 'thread-updated', thread });
     return thread;
+  }
+
+  /** 原生标题采纳：仅当标题未被显式命名（titleLocked）时替换；更晚到达的原生
+   *  标题可以替换更早的（fallback 先到、provider 生成标题后到时以生成标题为准） */
+  #adoptNativeTitle(thread, title) {
+    let next = typeof title === 'string' ? title.trim() : '';
+    if (next.length > 30) next = next.slice(0, 30).trim() + '…';
+    if (!next || thread.titleLocked || thread.title === next) return;
+    thread.title = next;
+    void this.#save().catch(() => {});
+    this.#broadcast();
+    for (const listener of this.listeners) listener({ type: 'thread-updated', thread });
   }
 
   async updateThreadMetadata(threadId, gitInfo) {
@@ -1293,6 +1308,9 @@ class HostRuntime {
     if (!event) return;
     const thread = this.threads.find((t) => t.id === threadId);
     if (!thread) return;
+    // 原生 harness 自己生成的会话标题（DSH session/title 的 provider 源、Claude
+    // summary 等）：线程未被用户/Desktop 显式命名时采纳为标题，不进 Core 投影
+    if (event.kind === 'title') { this.#adoptNativeTitle(thread, event.title); return; }
     const turn = this.execution.lastTurn(thread.id);
     event = { ...event, timestamp: event.timestamp ?? Date.now() };
     // 投影异常（畸形事件载荷等）绝不能沿 emit 同步抛回 Adapter——那会杀死原生
