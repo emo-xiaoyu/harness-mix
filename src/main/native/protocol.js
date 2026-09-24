@@ -808,7 +808,7 @@ class NativeProtocol {
       return { commands: commands.map(c => ({ id: c.id, invocation: '/' + c.id, label: c.label || c.id, ...(c.description ? { description: c.description.slice(0, 512) } : {}), argumentMode: c.action === 'insert' ? 'text' : 'none' })) };
     }
     if (method === 'harnessmix/thread/list') {
-      return mergeThreadPage({ data: [], nextCursor: null }, this.runtime.threads, params || {}, thread => this.projectThread(thread, false));
+      return mergeThreadPage({ data: [], nextCursor: null }, this.runtime.threads, params || {}, thread => this.projectThread(thread, false), projectIdsForThread);
     }
     if (method === 'harnessmix/thread/ownership/list') return { threads: params.threadIds.map(id => ({ threadId: id, owner: this.owns(id) ? 'external' : 'codex', ...(this.owns(id) ? { harnessId: externalId(this.thread(id).harnessId) } : {}) })) };
     if (method === 'harnessmix/thread/team/inspect') return this.runtime.collaboration.inspectTeam(params.threadId, params.teamId);

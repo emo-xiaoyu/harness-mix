@@ -271,6 +271,15 @@ async function main() {
     await bridge.request('turn/interrupt', { threadId });
     await wait(() => !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     assert.equal(events.filter(e => e.method === 'turn/completed').at(-1).params.turn.status, 'interrupted');
+    // Desktop 停止任务后的「继续」按钮发送空输入回合（turnTrigger: resume_interrupted_task）：
+    // 官方 app-server 将其解释为继续被打断的任务，契约边界必须翻译为显式继续指令，
+    // 而不是把空文本透传给 runtime 的空输入校验（回归：此前抛「请输入消息」）。
+    const resumeTurn = await bridge.request('turn/start', { threadId, input: [], turnTrigger: 'resume_interrupted_task' });
+    await wait(() => sentTexts.at(-1) === '继续');
+    assert.ok(resumeTurn.turn.id, 'Empty continue turn starts a native Turn instead of failing');
+    assert.equal(runtime.threads.find(t => t.id === threadId).messages.filter(m => m.role === 'user').at(-1).text, '继续', 'Continue turn is visible as the user message');
+    emit({ kind: 'completed', finalAnswer: true });
+    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.threads.find(t => t.id === threadId).reviewPending && !runtime.sending.has(threadId));
     // External steering: cancel the active Turn, settle, then start a real new Turn.
     const stale = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: 'first' }] });
     await assert.rejects(bridge.request('turn/steer', { threadId, expectedTurnId: stale.turn.id, input: [] }), /non-empty text/, 'Invalid input is rejected before cancelling');
