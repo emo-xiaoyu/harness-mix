@@ -35,6 +35,7 @@ export interface RendererHostRequestManager {
   onNotification(method: string, parameters: unknown): void;
   onRequest(request: Record<string, unknown>): void;
   dispatchAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
+  sendAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
 }
 
 export interface RendererPrewarmedThreadManager {
@@ -70,7 +71,14 @@ export function installDraftPrewarmPolicyBridge(
   const originalSend = bridge.sendRequest;
   const originalPrewarm = bridge.prewarmThreadStart;
   const originalOnNotification = manager.onNotification;
-  const originalDispatchAppServerResponse = manager.dispatchAppServerResponse;
+  // Desktop 26.917 renamed the response hook. Keep the older name for
+  // supported builds and patch only the hook the live manager actually uses.
+  const responseMethod = typeof manager.sendAppServerResponse === "function"
+    ? "sendAppServerResponse"
+    : typeof manager.dispatchAppServerResponse === "function"
+      ? "dispatchAppServerResponse"
+      : null;
+  const originalDispatchAppServerResponse = responseMethod ? manager[responseMethod] : undefined;
   let selectedModel: string | null = null;
   let selectedCodexAccountId: string | null = null;
   const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -687,7 +695,7 @@ export function installDraftPrewarmPolicyBridge(
     return originalDispatchAppServerResponse?.call(manager, method, response);
   };
   if (!observesWindowNotifications) manager.onNotification = routedOnNotification;
-  if (originalDispatchAppServerResponse) manager.dispatchAppServerResponse = routedDispatchAppServerResponse;
+  if (responseMethod) manager[responseMethod] = routedDispatchAppServerResponse;
   if (isLocalSidecarHost) {
     target.__harnessmixSidecarReceiveV1 = (frame: string): void => {
       try { handleBridgeFrame(JSON.parse(frame)); }
@@ -744,8 +752,8 @@ export function installDraftPrewarmPolicyBridge(
       } else if (manager.onNotification === routedOnNotification) {
         manager.onNotification = originalOnNotification;
       }
-      if (originalDispatchAppServerResponse && manager.dispatchAppServerResponse === routedDispatchAppServerResponse) {
-        manager.dispatchAppServerResponse = originalDispatchAppServerResponse;
+      if (responseMethod && manager[responseMethod] === routedDispatchAppServerResponse) {
+        manager[responseMethod] = originalDispatchAppServerResponse;
       }
       if (isLocalSidecarHost) delete target.__harnessmixSidecarReceiveV1;
       if (bridgeReadyTimeout !== null) globalThis.clearTimeout(bridgeReadyTimeout);

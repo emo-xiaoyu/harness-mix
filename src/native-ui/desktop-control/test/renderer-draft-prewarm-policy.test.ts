@@ -55,6 +55,44 @@ describe("Desktop connection snapshot discovery", () => {
       .toThrow("approval response bridge is unavailable");
     expect(bridge.sendRequest).toBe(send);
   });
+  it("routes sidecar approvals through the Desktop 26.917 response hook", async () => {
+    const originalResponse = vi.fn();
+    const manager: RendererHostRequestManager = {
+      onNotification: vi.fn(),
+      onRequest: vi.fn(),
+      sendAppServerResponse: originalResponse,
+    };
+    const sidecarSend = vi.fn();
+    const target: DraftPrewarmPolicyTarget = {
+      __harnessmixSidecarModeV1: true,
+      __harnessmixSidecarSendV1: sidecarSend,
+    };
+    installDraftPrewarmPolicyBridge(manager, requestBridgeFixture(), "local", target,
+      { discardAllPrewarmedThreads: vi.fn() });
+
+    const receive = target.__harnessmixSidecarReceiveV1 as (frame: string) => void;
+    receive(JSON.stringify({ id: -71, method: "item/commandExecution/requestApproval", params: { threadId: "external-1" } }));
+    const routedRequest = (manager.onRequest as ReturnType<typeof vi.fn>).mock.lastCall?.[0] as { id: string };
+    expect(routedRequest.id).toMatch(/^harnessmix\/remote-control-bridge\/server-request\//);
+
+    manager.sendAppServerResponse?.("item/commandExecution/requestApproval", {
+      id: routedRequest.id,
+      result: { decision: "decline" },
+    });
+    await vi.waitFor(() => expect(sidecarSend).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(sidecarSend.mock.calls[0]?.[0] as string)).toEqual({
+      id: -71,
+      result: { decision: "decline" },
+    });
+    expect(originalResponse).not.toHaveBeenCalled();
+
+    const officialResponse = { id: "official-1", result: { decision: "decline" } };
+    manager.sendAppServerResponse?.("item/commandExecution/requestApproval", officialResponse);
+    expect(originalResponse).toHaveBeenCalledWith("item/commandExecution/requestApproval", officialResponse);
+
+    (target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void }).dispose();
+    expect(manager.sendAppServerResponse).toBe(originalResponse);
+  });
 });
 
 function requestBridgeFixture(
