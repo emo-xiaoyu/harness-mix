@@ -1113,9 +1113,13 @@ ${instruction}`;
       emit({ kind: 'tool', toolCallId: workCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'sendInput', workCallId);
       // 终态保持：cancel()/close() 已写入的 cancelled/interrupted 不得在此被覆写——
       // 关机竞态下覆写成 cancelled 会让重启后的 resume_delegation 拒绝恢复该作业。
-      // 编排脚本拥有的作业例外：driver 在跑时监督不随 Lead 回合结束而撤（脚本独立
-      // 于 Lead 回合存活），只有 driver 停止后才按原语义结算。
+      // 编排脚本与团队持久成员的作业都独立于 Lead 回合存活：脚本由 driver 监督；
+      // 团队成员遵循信箱模型（deliverToMember 已支持 Lead 回合外直投），在 Lead
+      // 回合之间继续执行并自行更新任务状态，任务落定时再唤醒空闲 Lead 交接。
+      // 仅显式中断（cancelling/interruptOwners）与关停才级联取消。
       const scriptSupervised = () => !!job.scriptId && this.teams.get(job.teamId)?.driver?.status === 'running';
+      const teamSupervised = () => !!job.teamId && !this.closing;
+      const supervised = () => scriptSupervised() || teamSupervised();
       if (job.status !== 'running' || this.closing) {
         if (job.status === 'running') {
           job.status = 'interrupted';
@@ -1123,7 +1127,7 @@ ${instruction}`;
         }
         return;
       }
-      if (!rt.execution.isRunning(parent.id) && !scriptSupervised()) {
+      if (!rt.execution.isRunning(parent.id) && !supervised()) {
         job.status = 'cancelled';
         await this.settleStoppedJob(job);
         return;
@@ -1135,11 +1139,14 @@ ${instruction}`;
       let sendDone = false, sendError, sendRetrying = false;
       const dispatchInput = async () => {
         for (let attempt = 0; ; attempt++) {
+          // 作业已取消/停止后不得再投递：忙等重试期间取消结算会让成员恰好空闲，
+          // 无此守卫时重试会突然成功，在已取消的作业下留下无人监督的僵尸回合
+          if (job.status !== 'running' || job.cancelling || this.cancelling.has(parent.id) || this.closing) throw new Error('Subtask cancelled before dispatch');
           try {
-            // 编排脚本作业可能在 Lead 回合结束后才派发：collaborationOf 只在 Lead
-            // 回合活动时携带，否则 #send 以「协作父任务已结束」拒绝——回落成员
+            // 编排脚本/团队成员作业可能在 Lead 回合结束后才派发：collaborationOf 只在
+            // Lead 回合活动时携带，否则 #send 以「协作父任务已结束」拒绝——回落成员
             // 独立成回合的路径（与邮箱投递的降级分支一致）
-            const collaborationOf = job.scriptId && !rt.execution.isRunning(parent.id) ? undefined : parent.id;
+            const collaborationOf = (job.scriptId || job.teamId) && !rt.execution.isRunning(parent.id) ? undefined : parent.id;
             return await rt.send(child.id, task, { collaborationOf, isolated: job.workspace.mode === 'worktree' });
           } catch (error) {
             if (!/任务正在执行/.test(String(error?.message ?? error)) || attempt >= 100) throw error;
@@ -1155,7 +1162,7 @@ ${instruction}`;
       const until = Date.now() + timeoutMs;
       let displayedStatus = 'running';
       let turnInactiveSince = null;
-      while (job.status === 'running' && !this.closing && !this.cancelling.has(parent.id) && (rt.execution.isRunning(parent.id) || scriptSupervised())) {
+      while (job.status === 'running' && !this.closing && !this.cancelling.has(parent.id) && (rt.execution.isRunning(parent.id) || supervised())) {
         // 已删除的 worker 线程：core 回合可能仍呈 running 态（removeThread 不结算回合），
         // 不得据此继续等待，否则作业空转到超时
         const childRunning = rt.threads.some(t => t.id === child.id) && (rt.execution.isRunning(child.id) || child.reviewPending);
@@ -1208,6 +1215,7 @@ ${instruction}`;
           }
         }
         if (team) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_settled'); this.drainTeamMailbox(team); }
+        if (team && !job.scriptId) void this.wakeLeadForTask(team, job);
       }
       if (job.workspace?.mode === 'worktree' && job.status === 'completed') {
         try {
@@ -1230,6 +1238,7 @@ ${instruction}`;
         }
         if (teamTask && !retried) { teamTask.status = 'failed'; teamTask.result = error.message; teamTask.updatedAt = Date.now(); }
         if (team && !retried) { this.refreshTeamStatus(team); await this.publishTeam(team, 'task_failed'); this.drainTeamMailbox(team); }
+        if (team && !retried && !job.scriptId) void this.wakeLeadForTask(team, job);
       }
     }
     finally {
@@ -1648,6 +1657,33 @@ ${instruction}`;
     return job;
   }
 
+  /**
+   * 团队成员任务在 Lead 回合之外落定（Lead 自然收尾后成员继续执行的信箱模型）时
+   * 唤醒空闲 Lead 交接结果：调度新解锁任务或完成最终验收。Lead 回合仍在运行时不
+   * 唤醒（运行中的 Lead 经自身工具等待/轮询看到结算）；Lead 上一回合被取消或出错
+   * 时维持降级语义——不把用户刚中止的协作再拉起来（与 deliverToMember 一致）。
+   */
+  async wakeLeadForTask(team, job) {
+    const rt = this.runtime;
+    if (this.closing || rt.execution.isRunning(team.owner)) return;
+    const lastTurn = rt.execution.lastTurn(team.owner);
+    if (['cancelled', 'error'].includes(lastTurn?.status ?? 'completed')) return;
+    const task = team.tasks.find(entry => entry.id === job.teamTaskId);
+    const member = team.members.find(entry => entry.id === job.memberId);
+    const mention = [...new Set(team.members.map(entry => entry.agent))].map(agent => `#${agent}`).join(' ');
+    const settled = task?.status === 'completed' ? '已完成' : `已落定（${task?.status ?? job.status}）`;
+    const text = `[Harness Mix collaboration · 团队任务${task?.status === 'completed' ? '完成' : '落定'}]\n${mention}\n`
+      + `团队成员「${member?.name ?? job.memberId}」的任务「${task?.title ?? job.teamTaskId}」${settled}。结果摘录（勿重放已完成的写入）：\n`
+      + `${String(task?.result ?? job.result ?? '').slice(0, 2000)}\n\n`
+      + '请用 get_team_state 核对共享任务图：调度新解锁的任务（delegate_to_agent，携带 team_id/member_id/team_task_id），或在其全部落定后完成最终验收与汇总。';
+    for (let attempt = 0; attempt < 600 && !this.closing; attempt++) {
+      if (!rt.execution.isRunning(team.owner)) {
+        try { await rt.send(team.owner, text, {}); return; } catch { /* Lead 忙/竞态：稍后重试 */ }
+      }
+      await delay(100);
+    }
+  }
+
   /** 脚本终态后的一次性 Lead 唤醒：等 Lead 空闲后注入汇总回合（约 60s 内重试） */
   async wakeLead(team, driver, outcome) {
     const rt = this.runtime;
@@ -1671,8 +1707,10 @@ ${instruction}`;
     }
   }
 
-  async cancelOwner(owner, { interrupt = this.interruptOwners.has(owner) } = {}) {
-    const jobs = [...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running');
+  // teamMembers=false 时跳过团队持久成员作业：Lead 回合自然结算只回收无团队归属的
+  // 孤儿委派（/delegate 协作链）；用户显式中断/停止走默认全量级联。
+  async cancelOwner(owner, { interrupt = this.interruptOwners.has(owner), teamMembers = true } = {}) {
+    const jobs = [...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running' && (teamMembers || !j.teamId));
     if (!jobs.length) return;
     this.cancelling.add(owner);
     try {

@@ -867,6 +867,68 @@ async function main() {
       await wait(() => scLeadSends.some(text => /编排脚本失败[\s\S]*只有数组支持/.test(text)), '失败唤醒携带结构化错误');
     } finally { await scRt.close(); }
 
+    // Phase 7 团队跨回合存活：Lead 回合自然收尾后成员继续执行（信箱模型），任务落定时
+    // 唤醒空闲 Lead 交接结果；显式中断仍级联取消。回归：此前 Lead 回合一结束，结算
+    // 路径 cancelOwner 全量取消 running 成员作业——团队任务被重置回 pending 且无人
+    // 推进，用户看到的就是「转圈卡死」。
+    const twRoot = await fs.mkdtemp(path.resolve('output/collaboration-team-wake-'));
+    const twRt = new HostRuntime({ dataDirectory: path.join(twRoot, 'data') });
+    try {
+      await twRt.store.load();
+      const twLeadSends = [];
+      const twPending = new Map();
+      const twLead = { manifest: { id: 'lead', name: 'Lead', capabilities: { collaborationTools: true } },
+        async open(input) { return { emit: input.emit, collaborationEnabled: true }; },
+        async send(s, text) { twLeadSends.push(text); }, async cancel() {}, async close() {} };
+      const twWorker = { manifest: { id: 'worker', name: 'Worker', capabilities: { collaborationTools: true } },
+        async open(input) { return { id: input.thread.id, emit: input.emit, collaborationEnabled: !!input.collaboration }; },
+        async send(s, text) { twPending.set(s.id, { s, text }); }, async cancel(s) { twPending.delete(s.id); }, async close() {} };
+      twRt.adapters.set('lead', twLead); twRt.status.lead = { available: true };
+      twRt.adapters.set('worker', twWorker); twRt.status.worker = { available: true };
+      const twParent = await twRt.createThread({ harnessId: 'lead', cwd: twRoot });
+      const twCall = (name, args) => twRt.collaboration.call(twParent.id, name, args);
+      const twSettleLead = () => { const session = twRt.sessions.get(twParent.id); session.emit({ kind: 'text-delta', text: 'ok' }); session.emit({ kind: 'completed', finalAnswer: true }); };
+      await twRt.send(twParent.id, '#worker 团队跨回合回归');
+      const twTeam = await twCall('create_agent_team', { name: '跨回合团队', goal: 'Cross-turn team', members: [{ name: 'Reviewer', role: 'Review', agent_type: 'worker' }] });
+      const twTask = await twCall('assign_team_task', { team_id: twTeam.team_id, title: '评审', description: 'review across turns', assignee: 'Reviewer' });
+      await twCall('delegate_to_agent', { agent_type: 'worker', task: 'review the code', team_id: twTeam.team_id, member_id: twTeam.members[0].id, team_task_id: twTask.task.id });
+      await wait(() => twPending.size === 1);
+      const twJob = [...twRt.collaboration.jobs.values()].find(j => j.teamId === twTeam.team_id);
+      const twTeamObj = twRt.collaboration.teams.get(twTeam.team_id);
+      // Lead 回合自然结束（成员仍在执行）：成员作业必须存活，不得被结算路径回收
+      twSettleLead();
+      await wait(() => !twRt.execution.isRunning(twParent.id));
+      assert.equal(twJob.status, 'running', 'Lead 回合自然结束后团队成员继续执行（不被 cancelOwner 回收）');
+      assert.equal(twTeamObj.tasks[0].status, 'in_progress');
+      // 成员完成：任务结算 + 唤醒空闲 Lead（新回合携带结果与 get_team_state 指引）
+      const twChild = [...twPending.keys()][0];
+      const twChildSession = twPending.get(twChild).s;
+      twPending.delete(twChild);
+      twChildSession.emit({ kind: 'text-delta', text: '评审结论：无缺陷' });
+      twChildSession.emit({ kind: 'completed', finalAnswer: true });
+      await wait(() => twTeamObj.tasks[0].status === 'completed');
+      await wait(() => twLeadSends.length === 2);
+      assert.match(twLeadSends[1], /团队任务完成/);
+      assert.match(twLeadSends[1], /评审结论：无缺陷/);
+      assert.match(twLeadSends[1], /get_team_state/);
+      assert.ok(twRt.execution.isRunning(twParent.id), '任务落定唤醒回合已在 Lead 上启动');
+      // 唤醒回合结束后不再有新的自动唤醒（单任务团队已收尾）
+      twSettleLead();
+      await wait(() => !twRt.execution.isRunning(twParent.id));
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.equal(twLeadSends.length, 2, '无新任务落定时不再追加唤醒回合');
+      assert.equal(twTeamObj.status, 'completed', '全部任务完成后团队收尾');
+      // 显式中断仍全量级联取消成员（保护既有语义）
+      await twRt.send(twParent.id, '#worker 第二轮');
+      const twTask2 = await twCall('assign_team_task', { team_id: twTeam.team_id, title: '二评', description: 'second review', assignee: 'Reviewer' });
+      await twCall('delegate_to_agent', { agent_type: 'worker', task: 'review again', team_id: twTeam.team_id, member_id: twTeam.members[0].id, team_task_id: twTask2.task.id });
+      await wait(() => twPending.size === 1);
+      const twJob2 = [...twRt.collaboration.jobs.values()].find(j => j.teamTaskId === twTask2.task.id);
+      await twRt.cancel(twParent.id);
+      await wait(() => twJob2.status === 'cancelled');
+      assert.equal(twJob2.status, 'cancelled', '用户显式停止 Lead 回合仍级联取消团队成员作业');
+    } finally { await twRt.close(); }
+
     console.log('PASS: real MCP stdio → authenticated Host → parallel native-session adapters → results/follow-up/cancellation, ownership and shared review');
   } finally { transport.stop(); await rt.close(); }
 }

@@ -1303,9 +1303,13 @@ class HostRuntime {
       thread.updatedAt = event.timestamp;
       this.#refreshContextUsage(thread);
       const message = thread.messages.find(m => m.coreTurnId === turn.id);
-      const activeChildren = [...this.collaboration.jobs.values()].some(job => job.owner === thread.id && job.status === 'running');
-      if (activeChildren) thread.reviewPending = true;
-      const settle = activeChildren ? this.collaboration.cancelOwner(thread.id).catch(() => {}).then(() => this.#settleReview(thread, message)) : this.#settleReview(thread, message);
+      const ownedJobs = [...this.collaboration.jobs.values()].filter(job => job.owner === thread.id && job.status === 'running');
+      if (ownedJobs.length) thread.reviewPending = true;
+      // Lead 回合自然结算：仅回收无团队归属的孤儿委派（/delegate 协作链，无人监督
+      // 会空转到超时）；团队持久成员跨 Lead 回合存活（信箱模型），由 run() 监督循环
+      // 自行结算并在任务落定时唤醒空闲 Lead。用户显式中断走 runtime.cancel 的全量级联。
+      const orphanChildren = ownedJobs.some(job => !job.teamId);
+      const settle = orphanChildren ? this.collaboration.cancelOwner(thread.id, { teamMembers: false }).catch(() => {}).then(() => this.#settleReview(thread, message)) : this.#settleReview(thread, message);
       const task = Promise.resolve(settle).then(async () => {
         if (this.verificationGates.policy(thread).autoRun) {
           await this.verificationGates.run(thread, { turnId: turn.id });
