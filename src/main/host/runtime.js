@@ -1160,6 +1160,7 @@ class HostRuntime {
     if (thread.workspace?.mode === 'worktree') {
       await removeWorkspace(thread.workspace).catch(() => {});
     }
+    await this.store.markRemoved(threadId);
     this.threads = this.threads.filter((t) => t.id !== threadId);
     await this.collaboration.forgetThread(threadId).catch(() => {});
     await this.#save();

@@ -45,6 +45,25 @@ const { ThreadStore } = require('../src/main/host/thread-store');
     assert.equal(stubs[0].coreState.items[0].content, item.content);
     assert.equal((await sharded.inspectFiles()).recordCount, 1);
     assert.ok((await fs.stat(path.join(shardedRoot, 'threads.json.bak'))).size > 0, 'monolithic source remains recoverable');
+    const index = JSON.parse(await fs.readFile(path.join(shardedRoot, 'threads', 'index.json'), 'utf8'));
+    const orphan = { ...thread, id: 'newer-unindexed', title: 'Recovered conversation', messages: [{ id: 'user-2', role: 'user', text: 'hi', at: Date.now() }], createdAt: Date.now() };
+    const orphanFile = path.join(shardedRoot, 'threads', 'records', 'newer-unindexed.json');
+    await fs.writeFile(orphanFile, JSON.stringify(compactThread(orphan)));
+    const newer = new Date(index.savedAt + 10_000);
+    await fs.utimes(orphanFile, newer, newer);
+    const oldOrphan = path.join(shardedRoot, 'threads', 'records', 'deleted-old.json');
+    await fs.writeFile(oldOrphan, JSON.stringify({ ...orphan, id: 'deleted-old' }));
+    const older = new Date(index.savedAt - 10_000);
+    await fs.utimes(oldOrphan, older, older);
+    const recovered = await sharded.loadIndex();
+    assert.ok(recovered.some(item => item.id === 'newer-unindexed' && item._storageStub),
+      'Cold startup recovers a complete record written after the stale index');
+    assert.ok(recovered.some(item => item.id === 'deleted-old'),
+      'Cold startup recovers an old record omitted by a replaced index');
+    await sharded.markRemoved('deleted-old');
+    const afterDelete = await sharded.loadIndex();
+    assert.ok(!afterDelete.some(item => item.id === 'deleted-old'),
+      'A durable deletion marker prevents resurrection after an interrupted delete');
     await fs.rm(shardedRoot, { recursive: true, force: true });
     const unsupportedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'harness-mix-storage-schema-'));
     await fs.writeFile(path.join(unsupportedRoot, 'threads.json'), JSON.stringify({ schemaVersion: 99, threads: [] }));

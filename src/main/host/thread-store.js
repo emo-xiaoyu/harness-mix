@@ -37,6 +37,7 @@ class ThreadStore {
     this.legacyFile = path.join(directory, 'threads.json');
     this.shardDirectory = path.join(directory, 'threads');
     this.recordsDirectory = path.join(this.shardDirectory, 'records');
+    this.deletedDirectory = path.join(this.shardDirectory, 'deleted');
     this.indexFile = path.join(this.shardDirectory, 'index.json');
     this.file = this.indexFile;
     this.writing = false;
@@ -61,12 +62,46 @@ class ThreadStore {
   async loadIndex() {
     const index = await this.#readIndex();
     if (!index) return this.#readLegacy();
-    return index.threads.map(summary => ({
+    // A crash between writing a new record and atomically replacing the index
+    // leaves a complete conversation that a cold start would otherwise hide.
+    // A record is written before its index entry. A stale or replaced index
+    // must not make a durable conversation disappear, regardless of its age.
+    // Explicit deletions are recorded separately before the index is changed.
+    const summaries = [...index.threads, ...await this.#unindexedRecords(index)];
+    return summaries.map(summary => ({
       ...summary,
       status: summary.status === 'working' ? 'interrupted' : summary.status === 'opening' ? 'ready' : summary.status,
       connectionStatus: 'ready',
       messages: [], tools: [], pendingApprovals: [], _storageStub: true,
     }));
+  }
+  async #unindexedRecords(index) {
+    const known = new Set(index.threads.map(thread => thread.id));
+    const entries = await fs.readdir(this.recordsDirectory, { withFileTypes: true }).catch(error => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    const recovered = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      let id;
+      try { id = decodeURIComponent(entry.name.slice(0, -5)); } catch { continue; }
+      if (known.has(id)) continue;
+      const file = path.join(this.recordsDirectory, entry.name);
+      try {
+        if (fsSync.existsSync(path.join(this.deletedDirectory, entry.name))) continue;
+        const record = JSON.parse(await fs.readFile(file, 'utf8'));
+        if (record?.id !== id || typeof record.harnessId !== 'string' || typeof record.cwd !== 'string') continue;
+        recovered.push(summarize(record));
+      } catch { /* An unreadable orphan must not block indexed conversations. */ }
+    }
+    recovered.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return recovered;
+  }
+  async markRemoved(threadId) {
+    // Persist intent before removing the index entry. If the process exits
+    // between index commit and record unlink, startup must not revive it.
+    await writeAtomic(path.join(this.deletedDirectory, recordName(threadId)), { id: threadId, deletedAt: Date.now() });
   }
   async load() {
     const index = await this.#readIndex();
