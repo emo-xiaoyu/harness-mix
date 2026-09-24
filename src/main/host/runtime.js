@@ -9,7 +9,7 @@ const { buildAdapters } = require("../adapters");
 const { ReviewController } = require('../workspace/review-controller');
 const { ReviewStore } = require('../workspace/review');
 const { CoreSession } = require('./core-session');
-const { Collaboration, mentionedAgents, defaultWorkerPermissionMode } = require('./collaboration');
+const { Collaboration, mentionedAgents, workerSessionOptions } = require('./collaboration');
 const { SessionHistory } = require('./session-history');
 const { Integrations } = require('./integrations');
 const { buildHandoffContext, composeHandoffEnvelope } = require('./handoff');
@@ -214,6 +214,10 @@ class HostRuntime {
         permissionMode: typeof options.permissionMode === "string" ? options.permissionMode : undefined,
         accountId: typeof options.accountId === "string" ? options.accountId : undefined,
         codexHome: typeof options.codexHome === "string" ? options.codexHome : undefined,
+        // 协作 worker 的免询问权限：ACP 系由适配器按会话目录动态解析档位；
+        // Codex worker 用 turnPermissions（approvalPolicy+sandbox）直连原生
+        turnPermissions: options.turnPermissions && typeof options.turnPermissions === "object" ? options.turnPermissions : undefined,
+        workerPermissions: typeof options.workerPermissions === "string" ? options.workerPermissions : undefined,
         worktree: worktree === true || options.worktree === true ? true : undefined,
       } : (worktree === true ? { worktree: true } : {}),
     };
@@ -577,10 +581,9 @@ class HostRuntime {
     const created = !child;
     if (created) {
       try {
-        const permMode = defaultWorkerPermissionMode(harnessId);
         child = await this.createThread({
           harnessId, cwd: parent.cwd, title: `${parent.title} › ${task.trim().slice(0, 24)}`,
-          options: { ...(permMode ? { permissionMode: permMode } : {}) },
+          options: workerSessionOptions(harnessId),
           parentThreadId: parent.id,
         });
       } catch (error) {

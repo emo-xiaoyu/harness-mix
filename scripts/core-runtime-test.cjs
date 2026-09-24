@@ -89,6 +89,15 @@ async function until(fn) {
     assert.equal(thread.messages.at(-1).coreTurn.status, 'cancelled');
     rt.reviews.begin = begin;
     assert.deepEqual(rt.shadowReport().errors, []);
+    // createThread 的 options 白名单必须保留协作 worker 的免打扰权限键
+    // （permissionMode 直连原生档位；workerPermissions 由 ACP 适配器动态解析；
+    // turnPermissions 是 Codex worker 的 approvalPolicy+sandbox 组合）
+    const permitted = await rt.createThread({ harnessId: adapter.manifest.id, cwd: root,
+      options: { permissionMode: 'yolo', workerPermissions: 'full', turnPermissions: { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' } } });
+    assert.equal(permitted.options.permissionMode, 'yolo');
+    assert.equal(permitted.options.workerPermissions, 'full');
+    assert.deepEqual(permitted.options.turnPermissions, { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' });
+    await rt.removeThread(permitted.id);
     await rt.close();
     const saved = await rt.store.load();
     assert.equal(saved[0].coreState.turns.find(turn => turn.id === first).status, 'completed');

@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { HostRuntime } = require('../src/main/host/runtime');
-const { mentionedAgents, teamTaskDepths, teamPhase, teamProgress } = require('../src/main/host/collaboration');
+const { mentionedAgents, teamTaskDepths, teamPhase, teamProgress, workerSessionOptions } = require('../src/main/host/collaboration');
 const { createWorkspace, reviewWorkspace, git } = require('../src/main/host/collaboration-worktree');
 const { JsonlProcess } = require('../src/main/host/jsonl');
 const wait = async fn => { for (let i = 0; i < 600; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Timed out'); };
@@ -37,6 +37,20 @@ async function main() {
   const call = (name, args) => rt.collaboration.call(parent.id, name, args);
   const finish = (id, answer) => { const { s } = pending.get(id); pending.delete(id); active--; s.emit({ kind: 'text-delta', text: answer }); s.emit({ kind: 'completed', finalAnswer: true }); };
   try {
+    // 协作/Agent Team/委派子会话的免打扰权限映射：各家选原生自有的免询问档；
+    // ACP 系交给适配器按会话目录动态解析；无对应档位的 Harness 保持原生默认
+    assert.deepEqual(workerSessionOptions('claude'), { permissionMode: 'bypassPermissions' });
+    assert.deepEqual(workerSessionOptions('antigravity'), { permissionMode: 'skip' });
+    assert.deepEqual(workerSessionOptions('pi'), { permissionMode: 'no-approve' });
+    assert.deepEqual(workerSessionOptions('omp'), { permissionMode: 'yolo' }, 'OMP 免询问档是 --approval-mode yolo（no-approve 是 Pi 的旗标）');
+    assert.deepEqual(workerSessionOptions('zcode'), { permissionMode: 'yolo' });
+    assert.deepEqual(workerSessionOptions('codex-harness'), { turnPermissions: { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' } });
+    assert.deepEqual(workerSessionOptions('codebuddy'), { workerPermissions: 'full' });
+    assert.deepEqual(workerSessionOptions('qoder'), { workerPermissions: 'full' });
+    assert.deepEqual(workerSessionOptions('grok'), { workerPermissions: 'full' });
+    assert.deepEqual(workerSessionOptions('dsh'), {}, 'DSH 走自有 Web Remote 审批，不设置 ACP 档位');
+    assert.deepEqual(workerSessionOptions('kiro-cli'), {}, 'Kiro autopilot 不是 Host 权限档位');
+    assert.deepEqual(workerSessionOptions('worker'), {});
     assert.deepEqual(mentionedAgents('ask #w and [Worker](harness-mix://agent/worker) `#lead` issue#lead #worker/foo', rt), ['worker']);
     assert.deepEqual(mentionedAgents('\\#worker #reviewer 组成 Agent Team', rt), ['worker', 'reviewer'], 'Markdown 转义的 # 提及仍授权对应 Harness');
     assert.deepEqual(mentionedAgents('\\\\#worker #reviewer 组成 Agent Team', rt), ['reviewer'], '双反斜杠不应变成单次转义的授权');

@@ -127,23 +127,43 @@ function teamProgress(tasks) {
   return progress;
 }
 
-function defaultWorkerPermissionMode(agent) {
+// 协作 / Agent Team / 委派子会话的免打扰权限：映射到各 Harness 原生自有的
+// “免询问/完全访问”档位（等价于用户手动选择该档，不伪造任何审批决定）。
+// ACP 系（CodeBuddy/Qoder/Trae/Cursor/Cline/Grok）的档位 id 由原生会话握手
+// 动态声明，交给适配器在 open 时按会话实际目录挑选（workerPermissions 标记）；
+// 没有免询问档位的 Harness（DSH/Kiro/OpenCode/OpenClaw/Hermes 等）保持原生
+// 默认，审批仍经 respond() 走 Desktop 权限卡。
+function workerSessionOptions(agent) {
   switch (agent) {
     case 'claude':
     case 'claude-code':
-      return 'bypassPermissions';
+      return { permissionMode: 'bypassPermissions' };
     case 'antigravity':
     case 'agy':
-      return 'skip';
+      return { permissionMode: 'skip' };
     case 'pi':
+      return { permissionMode: 'no-approve' };
     case 'omp':
-      return 'no-approve';
+      // OMP 的权限模型已与 Pi 分叉：--approval-mode yolo 才是免询问档
+      return { permissionMode: 'yolo' };
     case 'zcode':
       // Worker threads run in kernel-isolated workspaces with nobody watching
       // approval cards; yolo is the ZCode selector's no-prompts mode.
-      return 'yolo';
+      return { permissionMode: 'yolo' };
+    case 'codex':
+    case 'codex-harness':
+      return { turnPermissions: { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' } };
+    case 'codebuddy':
+    case 'workbuddy':
+    case 'qoder':
+    case 'trae':
+    case 'cursor-cli':
+    case 'cursor':
+    case 'cline':
+    case 'grok':
+      return { workerPermissions: 'full' };
     default:
-      return undefined;
+      return {};
   }
 }
 
@@ -1069,13 +1089,13 @@ ${instruction}`;
         job.workspace = await createWorkspace(parent.cwd, job.id, job.isolation);
         await this.save();
       }
-      const workerPermMode = defaultWorkerPermissionMode(job.agent);
+      const workerOptions = workerSessionOptions(job.agent);
       if (!spawnSettled) emit({ kind: 'tool', toolCallId: spawnCallId, title, input: task, state: 'running', output: JSON.stringify(this.view(job)) }, 'spawnAgent', spawnCallId);
       // resume/follow-up 时既有子会话可能已被删除：回落新建替代会话（同一 Harness、
       // 同一工作区），而不是永久报错把该作业废弃
       const child = (job.childId && rt.threads.find(t => t.id === job.childId)) || await rt.createThread({
         harnessId: job.agent, cwd: job.workspace.cwd, title: `${parent.title} › ${task.slice(0, 40)}`, parentThreadId: parent.id,
-        options: { ...(workerPermMode ? { permissionMode: workerPermMode } : {}) },
+        options: workerOptions,
         onCreated: async thread => {
           job.childId = thread.id;
           const team = job.teamId ? this.teams.get(job.teamId) : null;
@@ -1731,4 +1751,4 @@ function plainNameBoundary(char) {
   return !char || /[\s\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff,;:!?()[\]{}"'，。；：、！？“”‘’]/u.test(char);
 }
 
-module.exports = { Collaboration, mentionedAgents, defaultWorkerPermissionMode, teamTaskDepths, teamPhase, teamProgress };
+module.exports = { Collaboration, mentionedAgents, workerSessionOptions, teamTaskDepths, teamPhase, teamProgress };

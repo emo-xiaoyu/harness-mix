@@ -3,6 +3,7 @@ const { JsonlProcess } = require('../host/jsonl');
 const { AcpInteractions } = require('./acp-interactions');
 const { nativeCommand } = require('./native-acp-command');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
+const { pickFullAccessPermissionMode } = require('./permission-modes');
 
 const text = value => Array.isArray(value) ? value.map(text).filter(Boolean).join('\n') : value?.type === 'text' ? value.text || '' : value?.content ? text(value.content) : '';
 function extractToolOutput(tool, update) {
@@ -46,6 +47,16 @@ function updateConfig(s, result) {
   if (result.models) s.state.models = result.models;
   if (result.modes) s.state.modes = result.modes;
   s.model = catalog(s).models.find(m => m.isDefault);
+}
+
+// 协作 worker 免询问：从本会话握手声明的档位里挑“完全访问”档（档位 id 各
+// 家动态声明，无法静态映射）；原生没有对应档位或应用失败时保持默认并记诊断，
+// 不阻断 worker 会话建立——审批仍会经 respond() 走 Desktop 权限卡。
+async function applyWorkerFullAccess(adapter, s, name) {
+  const mode = pickFullAccessPermissionMode(catalog(s).permissionModes);
+  if (!mode) { s.diagnostic?.(`${name}: no native full-access permission mode; keeping default`); return; }
+  try { await adapter.setPermissionMode(s, mode); }
+  catch (error) { s.diagnostic?.(`${name}: full-access permission mode ${mode} failed: ${error.message}`); }
 }
 function isTurnProgressUpdate(update) {
   return ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update'].includes(update?.sessionUpdate);
@@ -252,6 +263,7 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
           if (thread.options?.model) await adapter.setModel(s, thread.options.model);
           if (thread.options?.thinking) await adapter.setThinkingLevel(s, thread.options.thinking);
           if (thread.options?.permissionMode) await adapter.setPermissionMode(s, thread.options.permissionMode);
+          else if (thread.options?.workerPermissions === 'full') await applyWorkerFullAccess(adapter, s, name);
           emit({ kind: 'session', nativeSessionId: s.nativeSessionId, model: s.model });
           return s;
         } catch (error) { await adapter.close(s); throw error; }

@@ -15,6 +15,9 @@ if (process.argv.includes('--fixture')) {
   let configs = [{ id: 'model', currentValue: 'native[variant]', options: [{ value: 'native[variant]', name: 'Native' }, { value: 'other' }] },
     { id: 'thought_level', currentValue: 'medium', options: [{ value: 'high', name: 'High' }, { value: 'medium' }] },
     { id: 'mode', currentValue: 'default', options: [{ value: 'default' }, { value: 'plan' }] }];
+  if (process.argv.includes('--yolo-mode')) {
+    configs = configs.map(c => c.id === 'mode' ? { ...c, options: [{ value: 'default' }, { value: 'yolo', name: '完全访问' }] } : c);
+  }
   require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
     const r = JSON.parse(line); let result = {};
     if (r.method === 'initialize') result = { agentCapabilities: { loadSession: true, promptCapabilities: { image: !process.argv.includes('--no-images') }, sessionCapabilities: { fork: {} }, _meta: { kiro: { extensionMethods: ['_kiro/session/compact', '_kiro/session/context'] } } } };
@@ -182,6 +185,22 @@ if (process.argv.includes('--fixture')) {
     ], models: null, modes: null } });
     assert.deepEqual(qoderCatalog.thinkingLevels.map(o => o.id), ['xhigh', 'none']);
     assert.deepEqual(qoderCatalog.permissionModes.map(o => o.id), ['default', 'yolo']);
+    // 协作 worker 免询问：ACP 系档位动态解析——会话声明了全访问档（yolo）就选中；
+    // 没有对应档位时保持原生默认且不阻断会话建立
+    const yoloAdapter = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 2000,
+      command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--yolo-mode'] }) }).create();
+    const yoloSession = await yoloAdapter.open({ thread: { cwd: process.cwd(), options: { workerPermissions: 'full' } }, emit: () => {} });
+    try {
+      assert.equal(yoloSession.state.configOptions.find(c => c.id === 'mode').currentValue, 'yolo', 'Worker full-access resolution picks the native yolo mode');
+    } finally { await yoloAdapter.close(yoloSession); }
+    const plainAdapter = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 2000,
+      command: () => ({ command: process.execPath, args: [__filename, '--fixture'] }) }).create();
+    let plainDiagnosis = '';
+    const plainSession = await plainAdapter.open({ thread: { cwd: process.cwd(), options: { workerPermissions: 'full' } }, emit: () => {}, diagnostic: message => { plainDiagnosis = message; } });
+    try {
+      assert.equal(plainSession.state.configOptions.find(c => c.id === 'mode').currentValue, 'default', 'No native full-access mode keeps the default');
+      assert.match(plainDiagnosis, /no native full-access permission mode/);
+    } finally { await plainAdapter.close(plainSession); }
     // 进度事件重置 idle，heartbeat-only 不重置：心跳场景下 idle 应当照常起效。
     const heartbeatOnly = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 1000, turnIdleTimeoutMs: 80, turnPromptTimeoutMs: 60_000, cancelGraceMs: 1000,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--ignore-prompt', '--heartbeat'] }) }).create();
