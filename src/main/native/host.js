@@ -6,6 +6,7 @@ const { HostRuntime } = require('../host/runtime');
 const { CodexAppServer } = require('../adapters/codex-app-server');
 const { NativeProtocol } = require('./protocol');
 const { mergeThreadPage } = require('./thread-list');
+const { projectIdsForThread } = require('./codex-projects');
 const { terminateTree } = require('./process-utils');
 const { redact } = require('./redact');
 const { dataDirectory } = require('./platform');
@@ -159,7 +160,7 @@ async function runNativeHost() {
         forwarded.delete(value.id);
         if (value.error) traffic('official-error', { method: request.method, error: value.error });
         if (request.method === 'thread/list' && value.result?.data && !request.params?.cursor) {
-          value.result = mergeThreadPage(value.result, runtime.threads, request.params || {}, t => protocol.projectThread(t, false));
+          value.result = mergeThreadPage(value.result, runtime.threads, request.params || {}, t => protocol.projectThread(t, false), projectIdsForThread);
         }
       }
       write(value);

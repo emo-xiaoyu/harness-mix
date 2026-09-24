@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { includesThread, mergeThreadPage } = require('../src/main/native/thread-list');
+const { projectIdForThread, projectIdsForThread, resolveThreadProjectId } = require('../src/main/native/codex-projects');
 const { cacheCodexRuntime } = require('../src/main/native/launcher');
 
 const thread = { id: 'external', title: 'Pi session', cwd: 'E:/project', createdAt: 10 };
@@ -37,6 +38,44 @@ const mergedWithArchived = mergeThreadPage({ data: [{ id: 'official-archived', a
 assert.deepEqual(mergedWithArchived.data.map(t => t.id), ['official-archived', 'archived-ext']);
 
 const root = fs.mkdtempSync(path.resolve('output/native-runtime-cache-test-'));
+const projectRoot = path.join(root, 'snipaste-pro');
+const nestedRoot = path.join(projectRoot, 'src');
+const projectState = {
+  'local-projects': {
+    'project-snipaste': { rootPaths: [projectRoot] },
+  },
+  'thread-project-assignments': {
+    moved: { projectKind: 'local', projectId: 'project-other' },
+  },
+  'projectless-thread-ids': ['projectless'],
+  'app-server-project-id-by-legacy-project-id-by-host': {
+    'local:test-home': { 'project-snipaste': 'server-project-snipaste' },
+  },
+};
+const projectThread = { id: 'new-external', cwd: nestedRoot, createdAt: 30 };
+assert.equal(resolveThreadProjectId(projectThread, projectState), 'project-snipaste');
+assert.equal(resolveThreadProjectId({ ...projectThread, id: 'moved' }, projectState), 'project-other');
+assert.equal(resolveThreadProjectId({ ...projectThread, id: 'projectless' }, projectState), null);
+const projectResolver = entry => resolveThreadProjectId(entry, projectState);
+const projectPage = mergeThreadPage({ data: [], nextCursor: null }, [projectThread],
+  { projectId: 'project-snipaste' }, entry => ({ ...entry, projectId: projectResolver(entry) }), projectResolver);
+assert.equal(projectPage.data[0]?.id, 'new-external', 'Saved Codex project includes the external thread');
+assert.equal(projectPage.data[0]?.projectId, 'project-snipaste');
+assert.equal(mergeThreadPage({ data: [], nextCursor: null }, [projectThread],
+  { projectId: 'project-other' }, entry => entry, projectResolver).data.length, 0);
+const codexHome = path.join(root, 'codex-home');
+fs.mkdirSync(codexHome);
+fs.writeFileSync(path.join(codexHome, '.codex-global-state.json'), JSON.stringify(projectState));
+const originalCodexHome = process.env.CODEX_HOME;
+try {
+  process.env.CODEX_HOME = codexHome;
+  assert.equal(projectIdForThread(projectThread), 'project-snipaste', 'Read Codex Desktop saved project roots');
+  assert.deepEqual(projectIdsForThread(projectThread), ['project-snipaste', 'server-project-snipaste']);
+  assert.equal(includesThread(projectThread, { projectId: 'server-project-snipaste' }, [], projectIdsForThread), true);
+} finally {
+  if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = originalCodexHome;
+}
 const resources = path.join(root, 'resources');
 const cache = path.join(root, 'cache');
 fs.mkdirSync(resources); fs.mkdirSync(cache);
@@ -51,7 +90,7 @@ assert.equal(fs.readFileSync(path.join(cache, 'codex-code-mode-host.exe'), 'utf8
 fs.truncateSync(path.join(cache, 'codex-code-mode-host.exe'), 0);
 cacheCodexRuntime(resources, cache);
 assert.ok(fs.statSync(path.join(cache, 'codex-code-mode-host.exe')).size > 0);
-console.log('PASS: section/tree filters, deduplication, and incomplete Codex runtime cache repair');
+console.log('PASS: project/section/tree filters, deduplication, and incomplete Codex runtime cache repair');
 
 async function testPrewarm() {
   const file = path.join(root, 'prewarm.cjs');

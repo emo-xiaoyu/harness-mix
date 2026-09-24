@@ -391,8 +391,13 @@ class HostRuntime {
     if (!commandId && !delegateOf && !collaborationOf && /^\/verify\s*$/.test(typed)) {
       return this.runVerification(thread.id);
     }
-    // 首个真实输入让预热（ephemeral）线程转正为持久会话
-    if (thread.ephemeral) delete thread.ephemeral;
+    // 首个真实输入让预热（ephemeral）线程转正为持久会话；转正即广播 thread-persisted，
+    // protocol.js 据此向 Desktop 重发 thread/started（ephemeral=false）——侧边栏只登记
+    // 非 ephemeral 宣告的线程，漏发会让转正后的会话永远不进项目列表
+    if (thread.ephemeral) {
+      delete thread.ephemeral;
+      for (const listener of this.listeners) listener({ type: "thread-persisted", thread });
+    }
     // 自动为默认标题任务派生语义标题
     if (isDefaultTitle(thread.title)) {
       const isWorktree = thread.workspace?.mode === 'worktree';
@@ -569,8 +574,11 @@ class HostRuntime {
       const adapter = this.#requireAdapter(harnessId);
       if (this.status[harnessId] && !this.status[harnessId].available) throw new Error(`${adapter.manifest.name} 不可用：${this.status[harnessId].detail || '未安装'}`);
     }
-    // 首个真实输入让预热（ephemeral）线程转正为持久会话
-    if (parent.ephemeral) delete parent.ephemeral;
+    // 首个真实输入让预热（ephemeral）线程转正为持久会话（广播契约与 send 路径一致）
+    if (parent.ephemeral) {
+      delete parent.ephemeral;
+      for (const listener of this.listeners) listener({ type: "thread-persisted", thread: parent });
+    }
     parent.messages.push({ id: randomUUID(), role: "user", text: displayText ?? task, at: Date.now() });
     parent.updatedAt = Date.now();
     delete parent.error;

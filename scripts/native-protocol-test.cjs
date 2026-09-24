@@ -117,6 +117,24 @@ async function main() {
     assert.equal(decodeRoute(isolated.thread.model).harnessId, 'codex-harness', 'An isolated Codex Account becomes an owned Codex adapter Thread');
     assert.equal(openedCodexThread.options.accountId, 'account-work');
     assert.equal(openedCodexThread.options.codexHome, path.join(root, 'isolated-codex-home'));
+    const projectHome = path.join(root, 'desktop-project-state');
+    await fs.mkdir(projectHome);
+    await fs.writeFile(path.join(projectHome, '.codex-global-state.json'), JSON.stringify({
+      'local-projects': { 'saved-project': { rootPaths: [root] } },
+      'thread-project-assignments': {},
+    }));
+    const previousCodexHome = process.env.CODEX_HOME;
+    try {
+      process.env.CODEX_HOME = projectHome;
+      assert.equal(bridge.projectThread(openedCodexThread).projectId, 'saved-project',
+        'External Thread projection carries the saved Codex project');
+      const projectThreads = await bridge.request('harnessmix/thread/list', { projectId: 'saved-project' });
+      assert.ok(projectThreads.data.some(thread => thread.id === isolated.thread.id),
+        'Project-scoped sidebar list includes an external Thread');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+    }
     assert.equal(openedCodexThread.options.model.id, 'gpt-test');
     const inspection = await bridge.inspect('pi');
     schemas.harnessInspectionSchema.parse(inspection);
@@ -160,6 +178,8 @@ async function main() {
     assert.equal(prewarmed.thread.ephemeral, true, 'Prewarm thread projects as ephemeral');
     await bridge.request('turn/start', { threadId: prewarmed.thread.id, input: [{ type: 'text', text: 'real input' }] });
     assert.equal(runtime.threads.find(t => t.id === prewarmed.thread.id).ephemeral, undefined, 'First real input materializes the thread');
+    assert.ok(events.some(e => e.method === 'thread/started' && e.params.thread?.id === prewarmed.thread.id && e.params.thread.ephemeral === false),
+      'Promoted thread re-announces thread/started with ephemeral=false so the sidebar records it');
     const materialized = await bridge.request('thread/read', { threadId: prewarmed.thread.id });
     assert.equal(materialized.thread.ephemeral, false, 'Materialized thread projects as persistent');
     await bridge.request('turn/interrupt', { threadId: prewarmed.thread.id });

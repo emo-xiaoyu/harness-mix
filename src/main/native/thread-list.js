@@ -1,5 +1,5 @@
 // Match Desktop queries before merging local threads into an official page.
-function includesThread(thread, query = {}, threads = []) {
+function includesThread(thread, query = {}, threads = [], projectIdsForThread = t => t.projectId ?? null) {
   if (thread.ephemeral || Boolean(thread.archived) !== Boolean(query.archived)) return false;
   // 父子归属查询（协作子任务/子代理列表）：按 parentThreadId 链匹配
   if (query.parentThreadId != null) return thread.parentThreadId === query.parentThreadId;
@@ -11,7 +11,10 @@ function includesThread(thread, query = {}, threads = []) {
     return false;
   }
   if (Object.hasOwn(query, 'sectionId') && (thread.section?.id ?? null) !== query.sectionId) return false;
-  if (Object.hasOwn(query, 'projectId') && (thread.projectId ?? null) !== query.projectId) return false;
+  if (Object.hasOwn(query, 'projectId')) {
+    const projectIds = projectIdsForThread(thread);
+    if (Array.isArray(projectIds) ? !projectIds.includes(query.projectId) : projectIds !== query.projectId) return false;
+  }
   if (query.isPinned === true && !thread.isPinned) return false;
   if (query.isPinned === false && thread.isPinned) return false;
   if (query.cwd != null && !(Array.isArray(query.cwd) ? query.cwd : [query.cwd]).includes(thread.cwd)) return false;
@@ -26,13 +29,13 @@ function includesThread(thread, query = {}, threads = []) {
   return true;
 }
 
-function mergeThreadPage(page, threads, query, project) {
+function mergeThreadPage(page, threads, query, project, projectIdsForThread) {
   if (query.cursor) return page;
-  const local = threads.filter(thread => includesThread(thread, query, threads));
+  const local = threads.filter(thread => includesThread(thread, query, threads, projectIdsForThread));
   if (query.sortKey === 'section_position') local.sort((a, b) => (a.sectionPosition || 0) - (b.sectionPosition || 0));
   const byId = new Map(page.data.map(thread => [thread.id, thread]));
   for (const thread of threads) {
-    if (!includesThread(thread, query, threads)) byId.delete(thread.id);
+    if (!includesThread(thread, query, threads, projectIdsForThread)) byId.delete(thread.id);
   }
   for (const thread of local) byId.set(thread.id, project(thread));
   const data = [...byId.values()];

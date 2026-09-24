@@ -24,6 +24,7 @@ const {
 const { nativeEnvironment } = require('./config');
 const { CodexAccountManager } = require('./codex-accounts');
 const { mergeThreadPage } = require('./thread-list');
+const { projectIdForThread, projectIdsForThread } = require('./codex-projects');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
@@ -290,6 +291,9 @@ class NativeProtocol {
     // Host 侧新建的线程（协作子任务等）也要通知 Desktop 侧栏，与 thread/start 同一契约
     this.unsubscribeRuntime = runtime.subscribe(event => {
       if (event?.type === 'thread-created' && event.thread) this.emit({ method: 'thread/started', params: { thread: this.projectThread(event.thread) } });
+      // 预热线程转正后重发 thread/started（ephemeral=false）：Desktop 侧边栏 state db
+      // 只登记非 ephemeral 宣告的线程，不重发则转正会话不进项目列表
+      if (event?.type === 'thread-persisted' && event.thread) this.emit({ method: 'thread/started', params: { thread: this.projectThread(event.thread) } });
       if (event?.type === 'thread-updated' && event.thread) {
         this.emit({ method: 'thread/name/updated', params: { threadId: event.thread.id, threadName: event.thread.title } });
       }
@@ -335,7 +339,7 @@ class NativeProtocol {
     const updatedAt = Math.floor((thread.updatedAt || thread.createdAt) / 1000);
     return { id: thread.id, preview: thread.messages?.find(m => m.role === 'user')?.text || thread.preview || thread.title,
       ephemeral: thread.ephemeral === true, modelProvider: 'harnessmix', model: routeModel(externalId(thread.harnessId)), reasoningEffort: null,
-      section: thread.section ?? null, sectionEnteredAt: thread.sectionEnteredAt ?? null, projectId: thread.projectId ?? null,
+      section: thread.section ?? null, sectionEnteredAt: thread.sectionEnteredAt ?? null, projectId: projectIdForThread(thread),
       createdAt: Math.floor(thread.createdAt / 1000),
       updatedAt, recencyAt: updatedAt,
       status: { type: thread.status === 'working' ? 'active' : 'idle', ...(thread.status === 'working' ? { activeFlags: [] } : {}) },
@@ -976,8 +980,12 @@ class NativeProtocol {
     }
     if (method === 'turn/start') {
       const { text, attachments } = await prepareInput(params.input, thread.cwd);
+      // Desktop 停止任务后的「继续」（resume_interrupted_task 等）发送空输入回合：官方 app-server
+      // 将其解释为继续被打断的任务。原生 harness 无空回合原语，在此契约边界翻译为显式继续
+      // 指令投递；正常 composer 提交在 Desktop 侧已保证非空，空输入只会来自继续类触发。
+      const resumePrompt = !text.trim() && !attachments.length;
       // Desktop fallback 路径在每个回合都携带完整权限参数；缺失时由适配器回退到线程级设置
-      return { turn: this.turn(await this.startNativeTurn(thread, text, attachments, undefined, pickTurnPermissions(params))) };
+      return { turn: this.turn(await this.startNativeTurn(thread, resumePrompt ? '继续' : text, attachments, undefined, pickTurnPermissions(params))) };
     }
     // External steering: cancel the active Turn, wait for it to fully settle, then start
     // the new input as a real new Turn. Never guess a stale target, never auto-start on
