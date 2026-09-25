@@ -22,10 +22,10 @@ app.whenReady().then(async () => {
     lifecycle.dispose();
     return pageIds;
   })()`);
-  assert.deepEqual(liveSettingsPages, ['connections', 'accounts', 'mcp', 'skills', 'session-import', 'storage', 'skins', 'pets', 'updates', 'about']);
+  assert.deepEqual(liveSettingsPages, ['connections', 'collaboration', 'accounts', 'mcp', 'skills', 'session-import', 'storage', 'usage', 'health', 'skins', 'pets', 'updates', 'about']);
   const { NativeProtocol } = require('../src/main/native/protocol');
   const nativeThreads = ['pi', 'claude', 'dsh', 'antigravity'].map((harnessId, index) => ({ id: 'sidebar-' + index, harnessId, model: { id: 'model-' + index, provider: 'native' }, options: {} }));
-  const protocol = new NativeProtocol({ threads: nativeThreads, getThread: id => nativeThreads.find(thread => thread.id === id), subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}) }, () => {});
+  const protocol = new NativeProtocol({ threads: nativeThreads, getThread: id => nativeThreads.find(thread => thread.id === id), subscribe: () => () => {}, core: { subscribe: () => () => {} }, describe: async () => ({}), getCapabilities: () => ({}), inspectThreadWorkspace: async () => ({ nativeDiff: false, nativePatch: false }) }, () => {});
   const inspections = await Promise.all(nativeThreads.map(thread => protocol.request('harnessmix/thread/inspect', { threadId: thread.id })));
   await win.webContents.executeJavaScript(`globalThis.testInspections=${JSON.stringify(inspections)}`);
   const result = await win.webContents.executeJavaScript(`(async () => {
@@ -176,8 +176,8 @@ app.whenReady().then(async () => {
     assert.match(skinResult.text, /Native Codex.*Miku 488137.*原神 · 晨曦.*鸣潮 · 共鸣.*龙珠 · 筋斗云.*金辉盛境.*夜曲工作室.*静谧花园/s);
     assert.equal(skinResult.active, 'miku-488137');
   assert.equal(skinResult.style, true);
-    assert.equal(skinResult.cardCount, 17);
-    assert.equal(skinResult.bundledPreviewCount, 16);
+    assert.equal(skinResult.cardCount, 30);
+    assert.equal(skinResult.bundledPreviewCount, 17);
     fs.writeFileSync(path.join(out, 'settings-skins.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(() => {
       const shadow = globalThis.__harnessmixSettingsShellV1.root.shadowRoot;

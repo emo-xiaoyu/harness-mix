@@ -31,14 +31,17 @@ export interface CodexAccountDisplayName {
 const ACCOUNT_COLORS = ["#5b38c9", "#239b88", "#ce6724", "#2878c7", "#b34778", "#65752a"] as const;
 
 export function codexAccountDisplayName(account: CodexAccountSummary): CodexAccountDisplayName {
-  const full = account.email ?? account.label;
-  const separator = account.email?.lastIndexOf("@") ?? -1;
-  if (!account.email || separator <= 0 || separator === account.email.length - 1) {
+  const email = account.management === "native" && account.accountId !== "official-codex"
+    ? undefined
+    : account.email;
+  const full = email ?? account.label;
+  const separator = email?.lastIndexOf("@") ?? -1;
+  if (!email || separator <= 0 || separator === email.length - 1) {
     return { local: full, domain: null, full };
   }
   return {
-    local: account.email.slice(0, separator),
-    domain: account.email.slice(separator + 1),
+    local: email.slice(0, separator),
+    domain: email.slice(separator + 1),
     full,
   };
 }
@@ -58,22 +61,103 @@ function accountColor(accountId: string): string {
 }
 
 function accountInitial(account: CodexAccountSummary): string {
-  const display = codexAccountDisplayName(account).local.trim();
-  return display.match(/[\p{L}\p{N}]/u)?.[0]?.toUpperCase() ?? "?";
+  const local = codexAccountDisplayName(account).local.trim();
+  return local.match(/[\p{L}\p{N}]/u)?.[0]?.toUpperCase() ?? "?";
 }
 
-function setInteractiveHighlight(button: HTMLButtonElement): void {
-  const update = (hovered: boolean): void => {
+function trackSelectionHighlight(button: HTMLButtonElement): void {
+  const paint = (hovered: boolean): void => {
     const selected = button.getAttribute("aria-checked") === "true";
     button.style.background =
       selected || (hovered && !button.disabled)
         ? `rgba(127, 127, 127, ${selected ? "0.16" : "0.1"})`
         : "transparent";
   };
-  button.addEventListener("pointerenter", () => update(true));
-  button.addEventListener("pointerleave", () => update(false));
-  button.addEventListener("focus", () => update(true));
-  button.addEventListener("blur", () => update(false));
+  button.addEventListener("pointerenter", () => paint(true));
+  button.addEventListener("pointerleave", () => paint(false));
+  button.addEventListener("focus", () => paint(true));
+  button.addEventListener("blur", () => paint(false));
+}
+
+function buildAccountRow(
+  document: Document,
+  account: CodexAccountSummary,
+  accountsLabel: string,
+  onSelect: (accountId: string) => void,
+): RendererCodexAccountOptionControl {
+  const row = document.createElement("div");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.codexAccountId = account.accountId;
+  button.setAttribute("role", "menuitemradio");
+  button.style.display = "grid";
+  button.style.gridTemplateColumns = "20px minmax(0, 1fr) 16px";
+  button.style.alignItems = "center";
+  button.style.gap = "7px";
+  button.style.width = "100%";
+  button.style.height = "32px";
+  button.style.padding = "0 7px";
+  button.style.color = "inherit";
+  button.style.background = "transparent";
+  button.style.border = "0";
+  button.style.borderRadius = "5px";
+  button.style.textAlign = "left";
+  button.style.cursor = "pointer";
+  trackSelectionHighlight(button);
+
+  const avatar = document.createElement("span");
+  avatar.textContent = accountInitial(account);
+  avatar.style.display = "inline-flex";
+  avatar.style.alignItems = "center";
+  avatar.style.justifyContent = "center";
+  avatar.style.width = "20px";
+  avatar.style.height = "20px";
+  avatar.style.color = "#fff";
+  avatar.style.background = accountColor(account.accountId);
+  avatar.style.borderRadius = "50%";
+  avatar.style.font = "700 10px/1 system-ui, sans-serif";
+
+  const displayName = codexAccountDisplayName(account);
+  const name = document.createElement("span");
+  name.style.display = "flex";
+  name.style.alignItems = "baseline";
+  name.style.minWidth = "0";
+  name.style.gap = "4px";
+  const local = document.createElement("strong");
+  local.textContent = displayName.local;
+  local.style.minWidth = "0";
+  local.style.overflow = "hidden";
+  local.style.font = "600 13px/1 system-ui, sans-serif";
+  local.style.textOverflow = "ellipsis";
+  local.style.whiteSpace = "nowrap";
+  name.append(local);
+  if (displayName.domain) {
+    const domain = document.createElement("span");
+    domain.textContent = displayName.domain;
+    domain.style.maxWidth = "48%";
+    domain.style.overflow = "hidden";
+    domain.style.flex = "none";
+    domain.style.font = "400 11px/1 system-ui, sans-serif";
+    domain.style.opacity = "0.58";
+    domain.style.textOverflow = "ellipsis";
+    domain.style.whiteSpace = "nowrap";
+    name.append(domain);
+  }
+
+  const check = document.createElement("span");
+  check.textContent = "✓";
+  check.setAttribute("aria-hidden", "true");
+  check.style.width = "16px";
+  check.style.textAlign = "center";
+  check.style.font = "600 14px/1 system-ui, sans-serif";
+  check.style.visibility = "hidden";
+
+  button.title = displayName.full;
+  button.setAttribute("aria-label", `${accountsLabel}: ${displayName.full}`);
+  button.append(avatar, name, check);
+  button.addEventListener("click", () => onSelect(account.accountId));
+  row.append(button);
+  return { row, button, check, action: null };
 }
 
 export function createRendererCodexAccountGroup(input: {
@@ -149,6 +233,8 @@ export function createRendererCodexAccountGroup(input: {
   accountSection.append(header, list, manage);
   root.append(accountSection);
 
+  // The badge is owned by the caller (it docks onto the picker trigger), so it
+  // is only created here, never mounted into this group.
   const badge = document.createElement("span");
   badge.setAttribute("aria-hidden", "true");
   badge.style.display = "none";
@@ -169,80 +255,9 @@ export function createRendererCodexAccountGroup(input: {
     list.replaceChildren();
     options.clear();
     for (const account of nextAccounts) {
-      const row = document.createElement("div");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.codexAccountId = account.accountId;
-      button.setAttribute("role", "menuitemradio");
-      button.style.display = "grid";
-      button.style.gridTemplateColumns = "20px minmax(0, 1fr) 16px";
-      button.style.alignItems = "center";
-      button.style.gap = "7px";
-      button.style.width = "100%";
-      button.style.height = "32px";
-      button.style.padding = "0 7px";
-      button.style.color = "inherit";
-      button.style.background = "transparent";
-      button.style.border = "0";
-      button.style.borderRadius = "5px";
-      button.style.textAlign = "left";
-      button.style.cursor = "pointer";
-      setInteractiveHighlight(button);
-
-      const avatar = document.createElement("span");
-      avatar.textContent = accountInitial(account);
-      avatar.style.display = "inline-flex";
-      avatar.style.alignItems = "center";
-      avatar.style.justifyContent = "center";
-      avatar.style.width = "20px";
-      avatar.style.height = "20px";
-      avatar.style.color = "#fff";
-      avatar.style.background = accountColor(account.accountId);
-      avatar.style.borderRadius = "50%";
-      avatar.style.font = "700 10px/1 system-ui, sans-serif";
-
-      const displayName = codexAccountDisplayName(account);
-      const name = document.createElement("span");
-      name.style.display = "flex";
-      name.style.alignItems = "baseline";
-      name.style.minWidth = "0";
-      name.style.gap = "4px";
-      const local = document.createElement("strong");
-      local.textContent = displayName.local;
-      local.style.minWidth = "0";
-      local.style.overflow = "hidden";
-      local.style.font = "600 13px/1 system-ui, sans-serif";
-      local.style.textOverflow = "ellipsis";
-      local.style.whiteSpace = "nowrap";
-      name.append(local);
-      if (displayName.domain) {
-        const domain = document.createElement("span");
-        domain.textContent = displayName.domain;
-        domain.style.maxWidth = "48%";
-        domain.style.overflow = "hidden";
-        domain.style.flex = "none";
-        domain.style.font = "400 11px/1 system-ui, sans-serif";
-        domain.style.opacity = "0.58";
-        domain.style.textOverflow = "ellipsis";
-        domain.style.whiteSpace = "nowrap";
-        name.append(domain);
-      }
-
-      const check = document.createElement("span");
-      check.textContent = "✓";
-      check.setAttribute("aria-hidden", "true");
-      check.style.width = "16px";
-      check.style.textAlign = "center";
-      check.style.font = "600 14px/1 system-ui, sans-serif";
-      check.style.visibility = "hidden";
-
-      button.title = displayName.full;
-      button.setAttribute("aria-label", `${input.accountsLabel}: ${displayName.full}`);
-      button.append(avatar, name, check);
-      button.addEventListener("click", () => input.onSelect(account.accountId));
-      row.append(button);
-      list.append(row);
-      options.set(account.accountId, { row, button, check, action: null });
+      const entry = buildAccountRow(document, account, input.accountsLabel, input.onSelect);
+      list.append(entry.row);
+      options.set(account.accountId, entry);
     }
     presentationSignature = codexAccountPresentationSignature(nextAccounts);
   };
@@ -253,8 +268,9 @@ export function createRendererCodexAccountGroup(input: {
     options,
     accounts,
     render({ accounts: nextAccounts, selectedAccountId, disabled, showBadge }) {
-      const nextSignature = codexAccountPresentationSignature(nextAccounts);
-      if (nextSignature !== presentationSignature) rebuild(nextAccounts);
+      if (codexAccountPresentationSignature(nextAccounts) !== presentationSignature) {
+        rebuild(nextAccounts);
+      }
       accounts = [...nextAccounts];
       control.accounts = accounts;
       root.hidden = accounts.length === 0;

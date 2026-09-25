@@ -1,3 +1,4 @@
+/** Contract-probe bundle entrypoint: install the binding with defaults only. */
 import { DEFAULT_RENDERER_AGENTS } from "./agent-selection-state.js";
 import { installRendererBinding } from "./install-renderer-binding.js";
 

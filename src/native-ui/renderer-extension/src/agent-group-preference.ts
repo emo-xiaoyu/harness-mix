@@ -1,14 +1,13 @@
 import { KNOWN_RENDERER_AGENTS, type ExternalRendererAgent } from "./agent-selection-state.js";
 
 /**
- * Where an external Agent currently lives from the user's point of view:
- * - "main": shown directly in the Agent picker and the Connections list.
- * - "more": folded away under a collapsible "More Agents" group so the
- *   picker stays short as the number of supported Harnesses grows.
+ * Presentation placement for an external Agent:
+ * - "main": directly visible in the Agent picker and the Connections page.
+ * - "more": tucked into the collapsible "More Agents" group so the picker
+ *   stays scannable as more Harnesses are supported.
  *
- * This is a purely presentational preference. It never affects whether an
- * Agent is installed, enabled, or reachable — those remain governed by
- * `enabledAgents` / `RendererAgentAvailability` elsewhere.
+ * Purely cosmetic: it never decides install state, enablement, or
+ * reachability — those belong to `enabledAgents` / availability elsewhere.
  */
 export type AgentGroupSection = "main" | "more";
 
@@ -18,13 +17,13 @@ export interface AgentGroupEntry {
 }
 
 export interface AgentGroupPreferenceStore {
-  /** All known external Agents, in display order, each tagged with its section. */
+  /** Every external Agent in display order, each tagged with its section. */
   list(): readonly AgentGroupEntry[];
   sectionOf(agent: ExternalRendererAgent): AgentGroupSection;
   /**
-   * Move `agent` into `section`. When `beforeAgent` is provided the Agent is
-   * inserted immediately before it (both must end up in the same section);
-   * otherwise it is appended to the end of the target section.
+   * Relocate `agent` into `section`. With `beforeAgent` given, insert directly
+   * before it (both must share the target section afterwards); without it the
+   * Agent is appended to that section's tail.
    */
   moveAgent(
     agent: ExternalRendererAgent,
@@ -46,33 +45,40 @@ interface StoredEntry {
   readonly section: AgentGroupSection;
 }
 
-function isKnownExternalAgent(value: unknown): value is ExternalRendererAgent {
+function belongsToKnownAgents(value: unknown): value is ExternalRendererAgent {
   return typeof value === "string" && (EXTERNAL_AGENTS as readonly string[]).includes(value);
 }
 
-function isStoredEntry(value: unknown): value is StoredEntry {
+function isValidStoredEntry(value: unknown): value is StoredEntry {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<StoredEntry>;
+  const entry = value as Partial<StoredEntry>;
   return (
-    isKnownExternalAgent(candidate.agent) &&
-    (candidate.section === "main" || candidate.section === "more")
+    belongsToKnownAgents(entry.agent) &&
+    (entry.section === "main" || entry.section === "more")
   );
 }
 
-function readStorage(storage: Pick<Storage, "getItem"> | null): StoredEntry[] | null {
+/** Renames the pre-rebrand Agent id so legacy saves stay readable. */
+function migrateStoredEntries(parsed: unknown[]): unknown[] {
+  return parsed.map((entry) =>
+    entry && (entry as StoredEntry).agent === "workbuddy" ? { ...entry, agent: "codebuddy" } : entry,
+  );
+}
+
+function loadStoredEntries(storage: Pick<Storage, "getItem"> | null): StoredEntry[] | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(AGENT_GROUP_PREFERENCE_STORAGE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    return parsed.map(entry => entry && entry.agent === 'workbuddy' ? { ...entry, agent: 'codebuddy' } : entry).filter(isStoredEntry);
+    return migrateStoredEntries(parsed).filter(isValidStoredEntry);
   } catch {
     return null;
   }
 }
 
-function writeStorage(
+function saveStoredEntries(
   storage: Pick<Storage, "setItem"> | null,
   entries: readonly StoredEntry[],
 ): void {
@@ -80,11 +86,11 @@ function writeStorage(
   try {
     storage.setItem(AGENT_GROUP_PREFERENCE_STORAGE_KEY, JSON.stringify(entries));
   } catch {
-    // Best effort only: private browsing / quota errors should not break the UI.
+    // Persistence is best effort; quota/private-mode failures must not surface.
   }
 }
 
-function safeLocalStorage(): Storage | null {
+function defaultLocalStorage(): Storage | null {
   try {
     return typeof window !== "undefined" ? window.localStorage : null;
   } catch {
@@ -92,52 +98,51 @@ function safeLocalStorage(): Storage | null {
   }
 }
 
+function freshSectionMap(): Map<ExternalRendererAgent, AgentGroupSection> {
+  return new Map(EXTERNAL_AGENTS.map((agent) => [agent, "main" as AgentGroupSection]));
+}
+
 /**
- * Creates an isolated preference store. Pass an explicit `storage` (or
- * `null`) in tests to avoid touching the real `localStorage` and to keep
- * cases independent from one another.
+ * Builds a self-contained preference store. Tests pass their own `storage`
+ * (or null) to keep cases isolated from the real `localStorage`.
  */
 export function createAgentGroupPreferenceStore(
-  storage: Storage | null = safeLocalStorage(),
+  storage: Storage | null = defaultLocalStorage(),
 ): AgentGroupPreferenceStore {
   let order: ExternalRendererAgent[] = [...EXTERNAL_AGENTS];
-  let sections = new Map<ExternalRendererAgent, AgentGroupSection>(
-    EXTERNAL_AGENTS.map((agent) => [agent, "main" as AgentGroupSection]),
-  );
+  let sections = freshSectionMap();
   const listeners = new Set<() => void>();
 
-  const stored = readStorage(storage);
-  if (stored && stored.length > 0) {
-    const seen = new Set<ExternalRendererAgent>();
-    const nextOrder: ExternalRendererAgent[] = [];
+  const applyStored = (stored: readonly StoredEntry[]): void => {
+    const placed = new Set<ExternalRendererAgent>();
+    const restoredOrder: ExternalRendererAgent[] = [];
     for (const entry of stored) {
       const agent = entry.agent as ExternalRendererAgent;
-      if (seen.has(agent)) continue;
-      seen.add(agent);
-      nextOrder.push(agent);
+      if (placed.has(agent)) continue;
+      placed.add(agent);
+      restoredOrder.push(agent);
       sections.set(agent, entry.section);
     }
-    // Agents that shipped after the user last saved a preference (new
-    // Harnesses) default to "main" and land at the end of the list.
+    // Harnesses introduced after the user's last save join as "main" at the end.
     for (const agent of EXTERNAL_AGENTS) {
-      if (!seen.has(agent)) nextOrder.push(agent);
+      if (!placed.has(agent)) restoredOrder.push(agent);
     }
-    order = nextOrder;
-  }
-
-  const persist = (): void => {
-    writeStorage(
-      storage,
-      order.map((agent) => ({ agent, section: sections.get(agent) ?? "main" })),
-    );
+    order = restoredOrder;
   };
-  const notify = (): void => {
+
+  const toEntries = (): readonly AgentGroupEntry[] =>
+    order.map((agent) => ({ agent, section: sections.get(agent) ?? "main" }));
+
+  const announce = (): void => {
     for (const listener of [...listeners]) listener();
   };
 
+  const stored = loadStoredEntries(storage);
+  if (stored && stored.length > 0) applyStored(stored);
+
   return {
     list() {
-      return order.map((agent) => ({ agent, section: sections.get(agent) ?? "main" }));
+      return toEntries();
     },
     sectionOf(agent) {
       return sections.get(agent) ?? "main";
@@ -145,18 +150,19 @@ export function createAgentGroupPreferenceStore(
     moveAgent(agent, section, beforeAgent = null) {
       if (!EXTERNAL_AGENTS.includes(agent)) return;
       order = order.filter((candidate) => candidate !== agent);
-      const insertAt = beforeAgent && beforeAgent !== agent ? order.indexOf(beforeAgent) : -1;
-      if (insertAt >= 0) order.splice(insertAt, 0, agent);
+      const anchor =
+        beforeAgent && beforeAgent !== agent ? order.indexOf(beforeAgent) : -1;
+      if (anchor >= 0) order.splice(anchor, 0, agent);
       else order.push(agent);
       sections.set(agent, section);
-      persist();
-      notify();
+      saveStoredEntries(storage, toEntries());
+      announce();
     },
     resetToDefault() {
       order = [...EXTERNAL_AGENTS];
-      sections = new Map(EXTERNAL_AGENTS.map((agent) => [agent, "main" as AgentGroupSection]));
-      persist();
-      notify();
+      sections = freshSectionMap();
+      saveStoredEntries(storage, toEntries());
+      announce();
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -167,7 +173,7 @@ export function createAgentGroupPreferenceStore(
 
 let sharedStore: AgentGroupPreferenceStore | null = null;
 
-/** Shared singleton so the Connections settings page and every Agent picker stay in sync. */
+/** One process-wide store so the Connections page and every picker agree. */
 export function getSharedAgentGroupPreferenceStore(): AgentGroupPreferenceStore {
   if (!sharedStore) sharedStore = createAgentGroupPreferenceStore();
   return sharedStore;

@@ -1,3 +1,8 @@
+/**
+ * Typed client for the native session-import API. Callers only ever see
+ * these fixed methods — never the raw request bridge. Concurrent imports of
+ * the same native session are coalesced into one in-flight promise.
+ */
 import {
   harnessSessionImportSourcesResultSchema,
   harnessSessionListParamsSchema,
@@ -24,7 +29,9 @@ export class RendererSessionImportUnavailableError extends Error {
   }
 }
 
-/** Fixed, typed methods only; callers never receive an arbitrary request bridge. */
+/** -32601 (method unknown) and -32076 (host lacks the feature) both mean unavailable. */
+const UNAVAILABLE_CODES = new Set([-32601, -32076]);
+
 export function createRendererSessionImportClient(
   send: (method: string, params: unknown) => Promise<unknown>,
 ): RendererSessionImportClient {
@@ -35,7 +42,9 @@ export function createRendererSessionImportClient(
     } catch (error) {
       const code =
         typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-      if (code === -32601 || code === -32076) throw new RendererSessionImportUnavailableError();
+      if (typeof code === "number" && UNAVAILABLE_CODES.has(code)) {
+        throw new RendererSessionImportUnavailableError();
+      }
       throw error;
     }
   };
@@ -54,8 +63,8 @@ export function createRendererSessionImportClient(
     async importHarnessSession(input) {
       const params = harnessSessionImportParamsSchema.parse(input);
       const key = JSON.stringify([params.harnessId, params.nativeSessionId]);
-      const existing = pending.get(key);
-      if (existing) return existing;
+      const inFlight = pending.get(key);
+      if (inFlight) return inFlight;
       const operation = request("harnessmix/harness/session-import/import", params)
         .then((value) => harnessSessionImportResultSchema.parse(value))
         .finally(() => {

@@ -13,6 +13,7 @@ const MENU_ATTRIBUTE = "data-harnessmix-harness-command-menu";
 const MENU_WIDTH = 320;
 const VIEWPORT_MARGIN = 8;
 const MENU_GAP = 8;
+const CLOSE_GRACE_MS = 140;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COMMAND_ICON_PATHS = [
   "M409.6 377.6h204.8a32 32 0 0 1 32 32v204.8a32 32 0 0 1-32 32H409.6a32 32 0 0 1-32-32V409.6a32 32 0 0 1 32-32z m172.8 64h-140.8v140.8h140.8z",
@@ -27,10 +28,10 @@ function commandIcon(ownerDocument: Document): SVGSVGElement {
   svg.setAttribute("height", "15");
   svg.setAttribute("fill", "currentColor");
   svg.setAttribute("aria-hidden", "true");
-  for (const path of COMMAND_ICON_PATHS) {
-    const element = ownerDocument.createElementNS(SVG_NS, "path");
-    element.setAttribute("d", path);
-    svg.append(element);
+  for (const pathData of COMMAND_ICON_PATHS) {
+    const path = ownerDocument.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathData);
+    svg.append(path);
   }
   return svg;
 }
@@ -47,7 +48,7 @@ export interface RendererHarnessCommandControl {
   dispose(): void;
 }
 
-function menuItem(
+function buildMenuItem(
   ownerDocument: Document,
   command: HarnessCommandDescriptor,
   locale: RendererSettingsLocale,
@@ -79,13 +80,13 @@ function menuItem(
   item.style.textAlign = "left";
   item.style.cursor = "pointer";
 
-  const updateHighlight = (active: boolean): void => {
+  const paint = (active: boolean): void => {
     item.style.background = active ? "rgba(127, 127, 127, 0.12)" : "transparent";
   };
-  item.addEventListener("pointerenter", () => updateHighlight(true));
-  item.addEventListener("pointerleave", () => updateHighlight(false));
-  item.addEventListener("focus", () => updateHighlight(true));
-  item.addEventListener("blur", () => updateHighlight(false));
+  item.addEventListener("pointerenter", () => paint(true));
+  item.addEventListener("pointerleave", () => paint(false));
+  item.addEventListener("focus", () => paint(true));
+  item.addEventListener("blur", () => paint(false));
   item.addEventListener("click", onSelect);
 
   const copy = ownerDocument.createElement("span");
@@ -118,11 +119,11 @@ function menuItem(
   return item;
 }
 
-function clamp(value: number, minimum: number, maximum: number): number {
+function clampWithin(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(value, maximum));
 }
 
-function setButtonClass(button: HTMLButtonElement): void {
+function applyTriggerChrome(button: HTMLButtonElement): void {
   button.style.display = "inline-flex";
   button.style.alignItems = "center";
   button.style.justifyContent = "center";
@@ -147,6 +148,7 @@ export function mountRendererHarnessCommandControl(
   const ownerDocument = parent.ownerDocument;
   let locale = initialLocale;
   let messages = rendererHarnessMessages(locale);
+
   const root = ownerDocument.createElement("div");
   root.setAttribute(CONTROL_ATTRIBUTE, "true");
   root.style.display = "inline-flex";
@@ -159,7 +161,7 @@ export function mountRendererHarnessCommandControl(
   trigger.setAttribute("aria-expanded", "false");
   trigger.setAttribute("aria-label", messages.harnessCommands);
   trigger.title = messages.harnessCommands;
-  setButtonClass(trigger);
+  applyTriggerChrome(trigger);
   trigger.append(commandIcon(ownerDocument));
   root.append(trigger);
 
@@ -198,7 +200,7 @@ export function mountRendererHarnessCommandControl(
     const rect = trigger.getBoundingClientRect();
     const menuHeight = menu.getBoundingClientRect().height;
     const opensAbove = rect.top >= menuHeight + MENU_GAP + VIEWPORT_MARGIN;
-    const left = clamp(
+    const left = clampWithin(
       rect.left,
       VIEWPORT_MARGIN,
       window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN,
@@ -260,7 +262,7 @@ export function mountRendererHarnessCommandControl(
     closeTimer = window.setTimeout(() => {
       closeTimer = null;
       if (!trigger.matches(":hover") && !menu.matches(":hover")) close();
-    }, 140);
+    }, CLOSE_GRACE_MS);
   };
 
   const select = (command: HarnessCommandDescriptor): void => {
@@ -277,7 +279,7 @@ export function mountRendererHarnessCommandControl(
     header.style.font = "600 11px/16px system-ui, sans-serif";
     menu.append(header);
     items = commands.map((command) =>
-      menuItem(
+      buildMenuItem(
         ownerDocument,
         command,
         locale,

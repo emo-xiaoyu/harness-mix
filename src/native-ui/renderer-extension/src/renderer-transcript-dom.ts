@@ -3,29 +3,30 @@ export const TRANSCRIPT_ITEM_IDS_ATTRIBUTE = "data-local-conversation-item-targe
 export const TRANSCRIPT_TEXT_BODY_SELECTOR = '[data-testid="exec-shell-body"]';
 
 export interface RendererTranscriptContractInspection {
-  /** Rendered Turn containers, used to tell an empty Thread from a missing contract. */
+  /** Rendered Turn containers — separates an empty Thread from a vanished contract. */
   turnCount: number;
-  /** Transcript nodes that publish the Host Item ids they render. */
+  /** Transcript nodes that advertise which Host Item ids they render. */
   itemNodeCount: number;
-  /** Host Item ids referenced by those nodes. */
+  /** Host Item ids referenced by those nodes in total. */
   identifiedItemCount: number;
-  /** Command Execution text bodies, the only transcript surface that retains text. */
+  /** Command Execution text bodies — the one transcript surface keeping text. */
   textBodyCount: number;
-  /** Item nodes that own at least one text body. */
+  /** Item nodes that carry at least one such text body. */
   textBodyOwnerCount: number;
 }
 
-function itemIdCount(node: Element): number {
-  const value = node.getAttribute(TRANSCRIPT_ITEM_IDS_ATTRIBUTE);
-  if (!value) return 0;
-  return value.split(/\s+/).filter((entry) => entry.length > 0).length;
+function publishedIdCount(node: Element): number {
+  const raw = node.getAttribute(TRANSCRIPT_ITEM_IDS_ATTRIBUTE);
+  if (!raw) return 0;
+  return raw.split(/\s+/).filter(Boolean).length;
 }
 
 /**
- * Codex renders transcript text for the Command Execution lane only, and it is
- * the lane harnessmix projects external Harness Reasoning through. This records
- * bounded structural counts so a Desktop update that drops the lane, or stops
- * publishing Item ids, is detected instead of silently hiding projected text.
+ * Codex only renders transcript text on its Command Execution lane, and that
+ * is exactly the lane harnessmix projects external Harness Reasoning through.
+ * These bounded structural counters let a Desktop update that drops the lane,
+ * or stops publishing Item ids, get caught instead of silently erasing the
+ * projected text.
  */
 export function inspectRendererTranscriptContract(
   root: ParentNode = document,
@@ -34,7 +35,7 @@ export function inspectRendererTranscriptContract(
   let identifiedItemCount = 0;
   let textBodyOwnerCount = 0;
   for (const node of itemNodes) {
-    identifiedItemCount += itemIdCount(node);
+    identifiedItemCount += publishedIdCount(node);
     if (node.querySelector(TRANSCRIPT_TEXT_BODY_SELECTOR)) textBodyOwnerCount += 1;
   }
   return {

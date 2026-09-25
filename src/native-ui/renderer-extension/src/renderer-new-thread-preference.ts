@@ -34,7 +34,7 @@ interface PreferenceStorage {
   setItem(key: string, value: string): void;
 }
 
-function rendererStorage(): PreferenceStorage | null {
+function defaultStorage(): PreferenceStorage | null {
   try {
     return window.localStorage;
   } catch {
@@ -46,7 +46,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseExternalConfiguration(value: unknown): ExternalConfigurationPreference | undefined {
+/** Accepts an entry only when its model ref parses; thinking/mode stay absent unless valid. */
+function decodeExternalConfiguration(
+  value: unknown,
+): ExternalConfigurationPreference | undefined {
   if (!isRecord(value)) return undefined;
   const model = harnessModelRefSchema.safeParse(value.model);
   if (!model.success) return undefined;
@@ -59,49 +62,60 @@ function parseExternalConfiguration(value: unknown): ExternalConfigurationPrefer
   };
 }
 
-function readPreference(storage: PreferenceStorage | null): NewThreadPreference | undefined {
+/** Legacy saves may still carry the pre-rebrand "workbuddy" id. */
+function migrateRenamedAgent(stored: Record<string, unknown>): Record<string, unknown> {
+  if (stored.lastAgent === "workbuddy") stored.lastAgent = "codebuddy";
+  const external = isRecord(stored.externalByAgent) ? stored.externalByAgent : {};
+  if (!external.codebuddy && external.workbuddy) external.codebuddy = external.workbuddy;
+  return external;
+}
+
+function decodeStoredPreference(
+  storage: PreferenceStorage | null,
+): NewThreadPreference | undefined {
   if (!storage) return undefined;
   try {
     const raw = storage.getItem(RENDERER_NEW_THREAD_PREFERENCE_KEY);
     if (!raw) return undefined;
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed) || parsed.version !== 1) return undefined;
-    if (parsed.lastAgent === 'workbuddy') parsed.lastAgent = 'codebuddy';
-    if (!KNOWN_RENDERER_AGENTS.some((agent) => agent === parsed.lastAgent)) return undefined;
-    const externalByAgent = isRecord(parsed.externalByAgent) ? parsed.externalByAgent : {};
-    if (!externalByAgent.codebuddy && externalByAgent.workbuddy) externalByAgent.codebuddy = externalByAgent.workbuddy;
-    const parsedExternal = Object.fromEntries(
+    const stored: unknown = JSON.parse(raw);
+    if (!isRecord(stored) || stored.version !== 1) return undefined;
+    const externalRaw = migrateRenamedAgent(stored);
+    if (!KNOWN_RENDERER_AGENTS.some((agent) => agent === stored.lastAgent)) return undefined;
+    const externalByAgent = Object.fromEntries(
       KNOWN_RENDERER_AGENTS.filter(
         (agent): agent is ExternalRendererAgent => agent !== "codex",
       ).flatMap((agent) => {
-        const configuration = parseExternalConfiguration(externalByAgent[agent]);
+        const configuration = decodeExternalConfiguration(externalRaw[agent]);
         return configuration ? [[agent, configuration]] : [];
       }),
     ) as NewThreadPreference["externalByAgent"];
     return {
       version: 1,
-      lastAgent: parsed.lastAgent as RendererAgent,
-      externalByAgent: parsedExternal,
+      lastAgent: stored.lastAgent as RendererAgent,
+      externalByAgent,
     };
   } catch {
     return undefined;
   }
 }
 
-function writePreference(preference: NewThreadPreference, storage: PreferenceStorage | null): void {
+function persistPreference(
+  preference: NewThreadPreference,
+  storage: PreferenceStorage | null,
+): void {
   if (!storage) return;
   try {
     storage.setItem(RENDERER_NEW_THREAD_PREFERENCE_KEY, JSON.stringify(preference));
   } catch {
-    // Preference persistence must not prevent Composer configuration.
+    // Failing to remember a preference must never block composer configuration.
   }
 }
 
 export function readNewThreadAgentPreference(
   enabledAgents: ReadonlySet<RendererAgent>,
-  storage: PreferenceStorage | null = rendererStorage(),
+  storage: PreferenceStorage | null = defaultStorage(),
 ): RendererAgent | undefined {
-  const agent = readPreference(storage)?.lastAgent;
+  const agent = decodeStoredPreference(storage)?.lastAgent;
   return agent && enabledAgents.has(agent) ? agent : undefined;
 }
 
@@ -109,10 +123,12 @@ export function readNewThreadExternalConfigurationPreference(
   agent: ExternalRendererAgent,
   catalog: HarnessModelCatalog,
   permissionModes?: HarnessPermissionModeCatalog,
-  storage: PreferenceStorage | null = rendererStorage(),
+  storage: PreferenceStorage | null = defaultStorage(),
 ): ExternalConfigurationPreference | undefined {
-  const preference = readPreference(storage)?.externalByAgent[agent];
+  const preference = decodeStoredPreference(storage)?.externalByAgent[agent];
   if (!preference) return undefined;
+  // Re-check every remembered value against the live catalog: models, thinking
+  // options and permission modes may have changed between sessions.
   const catalogModel = catalog.models.find(({ ref }) => ref.id === preference.model.id);
   if (!catalogModel) return undefined;
   const thinkingOptionId =
@@ -134,10 +150,10 @@ export function readNewThreadExternalConfigurationPreference(
 
 export function writeNewThreadAgentPreference(
   agent: RendererAgent,
-  storage: PreferenceStorage | null = rendererStorage(),
+  storage: PreferenceStorage | null = defaultStorage(),
 ): void {
-  const current = readPreference(storage);
-  writePreference(
+  const current = decodeStoredPreference(storage);
+  persistPreference(
     {
       version: 1,
       lastAgent: agent,
@@ -152,10 +168,10 @@ export function writeNewThreadExternalConfigurationPreference(
   model: HarnessModelRef,
   thinkingOptionId?: HarnessThinkingOptionId,
   permissionModeId?: HarnessPermissionModeId,
-  storage: PreferenceStorage | null = rendererStorage(),
+  storage: PreferenceStorage | null = defaultStorage(),
 ): void {
-  const current = readPreference(storage);
-  writePreference(
+  const current = decodeStoredPreference(storage);
+  persistPreference(
     {
       version: 1,
       lastAgent: current?.lastAgent ?? "codex",

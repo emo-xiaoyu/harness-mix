@@ -1,4 +1,4 @@
-import { projectModelIcon } from './harness-mix-icons.js';
+import { projectModelIcon } from "./harness-mix-icons.js";
 import type {
   HarnessModelCatalog,
   HarnessModelRef,
@@ -192,7 +192,8 @@ function positionMenu(control: RendererModelPickerControl): void {
   control.menu.style.right = "auto";
   control.menu.style.top = "auto";
   control.menu.style.bottom = `${placement.bottom}px`;
-  // 列内部滚动：弹层本身不滚动，模型列表在给定最大高度内滚动
+  // Scrolling happens inside each column, never on the popover itself: both
+  // lists respect the computed maximum height instead.
   const listMaxHeight = placement.maxHeight ?? 320;
   for (const column of control.menu.querySelectorAll<HTMLElement>("[data-harnessmix-model-scrollable]")) {
     column.style.maxHeight = `${listMaxHeight}px`;
@@ -200,9 +201,9 @@ function positionMenu(control: RendererModelPickerControl): void {
 }
 
 export function syncRendererModelTriggerClass(control: RendererModelPickerControl): void {
-  // Keep harnessmix controls independent from Codex's private utility classes.
-  // Codex can rename or remove those between Desktop releases; our own
-  // `TRIGGER_CHIP_CLASS` chrome (see renderer-trigger-chip-style.ts) does not.
+  // Stay independent of Codex's private utility classes, which can be renamed
+  // or dropped in any Desktop release; the harnessmix chip chrome in
+  // renderer-trigger-chip-style.ts is the stable surface instead.
   control.trigger.className = TRIGGER_CHIP_CLASS;
   control.trigger.style.width = "fit-content";
   control.trigger.style.maxWidth = MODEL_TRIGGER_MAX_WIDTH;
@@ -287,14 +288,15 @@ export function mountRendererModelPicker(
 
   trigger.append(label, thinkingLabel);
 
-  // 单一弹层、双列主从布局：左列模型列表（带搜索），右列当前选中模型的思考强度。
-  // 之前是“Thinking 主弹层 + 悬停展开 Model 子弹层”的双浮层结构，层级倒置且错位。
+  // One popover, master-detail: models with search on the left, thinking
+  // levels for the current model on the right. (An earlier design stacked two
+  // floating layers the other way round and drifted out of alignment.)
   const menu = document.createElement("div");
   menu.id = `${composerId}-model-menu`;
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "Model and Thinking");
-  // Dismissal is handled manually (onDocumentPointerDown / onDocumentKeyDown) so
-  // search keystrokes and option clicks never trigger light-dismiss surprises.
+  // Dismissal stays manual (onDocumentPointerDown / onDocumentKeyDown) so
+  // typing in search or clicking an option never light-dismisses the menu.
   menu.setAttribute("popover", "manual");
   menu.className = MENU_CLASSES;
   ensureModelScrollbarStyle(document);
@@ -328,10 +330,10 @@ export function mountRendererModelPicker(
   searchEmpty.hidden = true;
   const onSearchInput = (): void => applyModelSearchFilter(control);
   searchInput.addEventListener("input", onSearchInput);
-  // The search box lives in an injected popover. The harness's global keydown
-  // and focus handling must never see keystrokes typed here, or it refocuses
-  // the composer and yanks the cursor out of the box. Silence these events at
-  // the input so they do not bubble to the harness (React event delegation).
+  // The search box sits inside an injected popover. Keystrokes typed here must
+  // never reach the harness's global keydown/focus handling, or it refocuses
+  // the composer and pulls the caret out of the box; stopping propagation at
+  // the input keeps them away from the harness's delegated listeners.
   const silencedEventTypes = [
     "keydown",
     "keypress",
@@ -349,9 +351,9 @@ export function mountRendererModelPicker(
   for (const type of silencedEventTypes) {
     searchInput.addEventListener(type, silenceForHarness);
   }
-  // Safety net: if the harness still manages to steal focus to the composer
-  // (e.g. via an earlier capture-phase listener), pull the cursor back into the
-  // search box as long as the menu remains open.
+  // Backstop: if the harness steals focus back to the composer anyway (an
+  // earlier capture-phase listener can do it), haul the caret into the search
+  // box again while the menu is still open.
   const onSearchBlur = (): void => {
     if (!popoverOpen(menu)) return;
     const active = document.activeElement;
@@ -403,8 +405,9 @@ export function mountRendererModelPicker(
       onSelectThinking(target.dataset.thinkingOptionId);
       return;
     }
-    // Keep the model list open until the selected model's native catalog arrives.
-    // The previous model's options cannot decide whether the next one supports thinking.
+    // Leave the model list standing until the newly selected model's catalog
+    // arrives: the outgoing model's options cannot say whether the next one
+    // supports thinking.
     if (target?.dataset.modelId) {
       const modelId = target.dataset.modelId;
       control.thinkingExpanded = true;
@@ -437,10 +440,9 @@ export function mountRendererModelPicker(
   document.addEventListener("keydown", onDocumentKeyDown, true);
   window.addEventListener("resize", onViewportChange);
   window.addEventListener("scroll", onViewportChange, true);
-  // Keep the popover in the document viewport's coordinate space. The native
-  // composer toolbar can be affected by browser zoom or a transformed ancestor;
-  // portaling the menu prevents fixed-position coordinates from being resolved
-  // in that local coordinate space.
+  // Portal the popover into <body> so it lives in the viewport's coordinate
+  // space; the composer toolbar can sit under browser zoom or a transformed
+  // ancestor that would otherwise skew fixed positioning.
   root.append(trigger);
   document.body.append(menu);
   searchHeader.append(searchInput);
@@ -487,7 +489,7 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   control.menu.dataset.twoColumn = String(presentation.showThinkingSection);
   control.menu.replaceChildren();
 
-  // 左列：模型（搜索 + 列表，列表内部滚动）
+  // Left column: models (search on top, list scrolls internally).
   const modelColumn = document.createElement("div");
   modelColumn.className = "flex min-w-0 flex-col";
   modelColumn.style.display = "flex";
@@ -527,7 +529,7 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   columns.style.alignItems = "stretch";
   columns.append(modelColumn);
 
-  // 右列：当前选中模型适用的思考强度档位
+  // Right column: thinking levels applicable to the selected model.
   if (presentation.showThinkingSection) {
     const thinkingColumn = document.createElement("div");
     thinkingColumn.dataset.harnessmixThinkingColumn = "true";
@@ -564,9 +566,8 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
 
   control.menu.append(columns);
   applyModelSearchFilter(control);
-  // rebuildOptions replaced the menu children above, which moves the focused
-  // search input out and back in and therefore drops focus; restore it while
-  // the menu stays open.
+  // The rebuild above re-parents the focused search input, and moving a
+  // focused element drops focus; put it back while the menu stays open.
   if (popoverOpen(control.menu)) control.searchInput.focus();
 }
 
@@ -593,9 +594,9 @@ export function renderRendererModelPicker(
     modelLabel: presentation.modelLabel,
   });
   // While the popover is open and the picker passes through a transient state
-  // (conversation target rebind or catalog reload during turn renders), keep the
-  // already-rendered menu stable: do not rebuild it to an empty list or
-  // force-close it under the pointer. It refreshes once a real catalog returns.
+  // (conversation rebind or a catalog reload mid-turn), keep the rendered menu
+  // as-is instead of collapsing it to an empty list or closing it under the
+  // pointer; it refreshes once a real catalog lands.
   const keepOpenMenu = popoverOpen(control.menu) && isTransientPickerState(view);
   if (control.root.dataset.catalogSignature !== catalogSignature && !keepOpenMenu) {
     rebuildOptions(control, view);
@@ -619,9 +620,9 @@ export function renderRendererModelPicker(
   );
   control.trigger.disabled = isRendererModelPickerDisabled(view);
   if (shouldCloseRendererModelPicker(view) && !keepOpenMenu) control.close();
-  // The search input must not mirror the trigger's disabled state: disabling a
-  // focused element blurs it, which would drop the cursor out of the box during
-  // transient states (e.g. "selecting"). Filtering is client-side and safe.
+  // The search input deliberately ignores the trigger's disabled state:
+  // disabling a focused element blurs it and would evict the caret during
+  // transient states like "selecting". Filtering is local and harmless.
 
   for (const [modelId, option] of control.options) {
     const selected = modelId === view.selected?.id;

@@ -1,10 +1,7 @@
-// Compatibility entrypoint for the live Harness Mix renderer binding.
-// Keeping this as a re-export prevents the injected UI and tests from drifting
-// into separate settings page registries.
-export {
-  installRendererSettingsLifecycle,
-} from './renderer-settings-lifecycle.js';
+/** Compatibility entrypoint for the live renderer binding: a single settings
+ * registry shared by the injected UI and the tests. */
+export { installRendererSettingsLifecycle } from "./renderer-settings-lifecycle.js";
 export type {
   RendererSettingsLifecycleControl,
   RendererSettingsLifecycleOptions,
-} from './renderer-settings-lifecycle.js';
+} from "./renderer-settings-lifecycle.js";

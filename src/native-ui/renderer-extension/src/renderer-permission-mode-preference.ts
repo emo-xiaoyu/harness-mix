@@ -1,3 +1,8 @@
+/**
+ * Remembers the user's Claude Code permission-mode choice in localStorage so
+ * new threads can preselect it. Persistence failures are swallowed — a broken
+ * storage must never block the native mode selection itself.
+ */
 import {
   harnessPermissionModeIdSchema,
   type HarnessPermissionModeCatalog,

@@ -16,44 +16,48 @@ export interface RendererHarnessMessages {
   readonly permissionModeFixedAtCreate: string;
 }
 
-const ENGLISH_HARNESS_MESSAGES: RendererHarnessMessages = Object.freeze({
-  commands: "Commands",
-  harnessCommands: "Harness commands",
-  commandsUnavailable: "No Harness commands available yet",
-  commandRequiresConversation: "Start a conversation before running this command",
-  textArgument: "Text",
-  permissionMode: "Permission mode",
-  permissions: "Permissions",
-  loadingPermissions: "Loading permissions...",
-  selecting: "Selecting...",
-  permissionsUnavailable: "Permissions unavailable",
-  permissionModeFixedAtCreate:
-    "Grok fixes its Permission Mode when the Session is created. Start a new Thread to change it.",
-});
+// One frozen catalogue per supported locale; lookups always return the same
+// instance so consumers can cache the pack without re-translating.
+const HARNESS_MESSAGE_PACKS: Record<RendererSettingsLocale, RendererHarnessMessages> = {
+  en: Object.freeze({
+    commands: "Commands",
+    harnessCommands: "Harness commands",
+    commandsUnavailable: "No Harness commands available yet",
+    commandRequiresConversation: "Start a conversation before running this command",
+    textArgument: "Text",
+    permissionMode: "Permission mode",
+    permissions: "Permissions",
+    loadingPermissions: "Loading permissions...",
+    selecting: "Selecting...",
+    permissionsUnavailable: "Permissions unavailable",
+    permissionModeFixedAtCreate:
+      "Grok fixes its Permission Mode when the Session is created. Start a new Thread to change it.",
+  }),
+  "zh-CN": Object.freeze({
+    commands: "命令",
+    harnessCommands: "Harness 命令",
+    commandsUnavailable: "暂无可用的 Harness 命令",
+    commandRequiresConversation: "请先开始对话，再执行此命令",
+    textArgument: "文本",
+    permissionMode: "权限模式",
+    permissions: "权限",
+    loadingPermissions: "正在加载权限...",
+    selecting: "正在选择...",
+    permissionsUnavailable: "权限不可用",
+    permissionModeFixedAtCreate: "Grok 的权限模式在会话创建时确定，如需更改请新建会话",
+  }),
+};
 
-const CHINESE_HARNESS_MESSAGES: RendererHarnessMessages = Object.freeze({
-  commands: "命令",
-  harnessCommands: "Harness 命令",
-  commandsUnavailable: "暂无可用的 Harness 命令",
-  commandRequiresConversation: "请先开始对话，再执行此命令",
-  textArgument: "文本",
-  permissionMode: "权限模式",
-  permissions: "权限",
-  loadingPermissions: "正在加载权限...",
-  selecting: "正在选择...",
-  permissionsUnavailable: "权限不可用",
-  permissionModeFixedAtCreate: "Grok 的权限模式在会话创建时确定，如需更改请新建会话",
-});
-
-// Some Harness catalogs expose preset IDs as labels. Keep IDs untouched and
-// normalize only these known display labels before applying the UI locale.
-const ENGLISH_PERMISSION_MODE_LABELS = new Map<string, string>([
+// Certain Harnesses hand back raw preset ids where a label belongs. Pass the
+// ids through unchanged and only tidy up these known display spellings before
+// the locale lookup runs.
+const PERMISSION_MODE_ID_LABELS = new Map<string, string>([
   ["read-only", "Read only"],
   ["workspace-write", "Workspace write"],
   ["danger-full-access", "Full access (dangerous)"],
 ]);
 
-const CHINESE_PERMISSION_MODE_LABELS = new Map<string, string>([
+const PERMISSION_MODE_LABELS_ZH = new Map<string, string>([
   ["Always ask", "始终询问"],
   ["Write", "写入"],
   ["Full access", "完全访问"],
@@ -73,7 +77,7 @@ const CHINESE_PERMISSION_MODE_LABELS = new Map<string, string>([
   ["Skip permissions", "跳过权限检查"],
 ]);
 
-const CHINESE_PERMISSION_MODE_DESCRIPTIONS = new Map<string, string>([
+const PERMISSION_MODE_DESCRIPTIONS_ZH = new Map<string, string>([
   [
     "Automatically allow reads and ask before write or execution actions.",
     "自动允许读取；写入或执行操作前询问。",
@@ -112,7 +116,7 @@ const CHINESE_PERMISSION_MODE_DESCRIPTIONS = new Map<string, string>([
 ]);
 
 export function rendererHarnessMessages(locale: RendererSettingsLocale): RendererHarnessMessages {
-  return locale === "zh-CN" ? CHINESE_HARNESS_MESSAGES : ENGLISH_HARNESS_MESSAGES;
+  return HARNESS_MESSAGE_PACKS[locale];
 }
 
 export function rendererHarnessCommandPresentation(
@@ -132,13 +136,13 @@ export function rendererPermissionModePresentation(
   mode: HarnessPermissionMode,
   locale: RendererSettingsLocale,
 ): { label: string; description: string | undefined } {
-  const label = ENGLISH_PERMISSION_MODE_LABELS.get(mode.label) ?? mode.label;
+  const label = PERMISSION_MODE_ID_LABELS.get(mode.label) ?? mode.label;
   if (locale !== "zh-CN") return { label, description: mode.description };
   return {
-    label: CHINESE_PERMISSION_MODE_LABELS.get(label) ?? label,
+    label: PERMISSION_MODE_LABELS_ZH.get(label) ?? label,
     description:
       mode.description === undefined
         ? undefined
-        : (CHINESE_PERMISSION_MODE_DESCRIPTIONS.get(mode.description) ?? mode.description),
+        : (PERMISSION_MODE_DESCRIPTIONS_ZH.get(mode.description) ?? mode.description),
   };
 }

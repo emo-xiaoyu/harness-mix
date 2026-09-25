@@ -47,24 +47,128 @@ export interface RendererSettingsLifecycleControl {
   dispose(): void;
 }
 
+/**
+ * Tracks the "update available" dot: checks each distinct update client once,
+ * and on failure retries with growing delays that DOM-driven refreshes can
+ * never short-circuit.
+ */
+function createUpdateIndicatorController(
+  ownerWindow: Window,
+  options: RendererSettingsLifecycleOptions,
+  isDisposed: () => boolean,
+  getTrigger: () => RendererSettingsHeaderTriggerControl | null,
+): {
+  isAvailable(): boolean;
+  refresh(): void;
+  dispose(): void;
+} {
+  let checkedClient: RendererUpdateClient | null = null;
+  let backoffClient: RendererUpdateClient | null = null;
+  let backoffTimer: number | null = null;
+  let backoffAttempt = 0;
+  let checkGeneration = 0;
+  let available = false;
+
+  const cancelBackoff = (): void => {
+    if (backoffTimer === null) return;
+    ownerWindow.clearTimeout(backoffTimer);
+    backoffTimer = null;
+  };
+
+  const scheduleBackoff = (client: RendererUpdateClient): void => {
+    if (isDisposed() || backoffTimer !== null) return;
+    const delay = UPDATE_RETRY_DELAYS_MS[backoffAttempt];
+    if (delay === undefined) return;
+    backoffAttempt += 1;
+    backoffTimer = ownerWindow.setTimeout(() => {
+      backoffTimer = null;
+      if (isDisposed() || options.getUpdateClient?.() !== client) return;
+      refresh();
+    }, delay);
+  };
+
+  const checkWithTimeout = (client: RendererUpdateClient) =>
+    new Promise<Awaited<ReturnType<RendererUpdateClient["checkUpdate"]>>>((resolve, reject) => {
+      const timer = ownerWindow.setTimeout(
+        () => reject(new Error("Update indicator check timed out")),
+        UPDATE_CHECK_TIMEOUT_MS,
+      );
+      void client.checkUpdate().then(
+        (result) => {
+          ownerWindow.clearTimeout(timer);
+          resolve(result);
+        },
+        (error: unknown) => {
+          ownerWindow.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+
+  const refresh = (): void => {
+    const client = options.getUpdateClient?.() ?? null;
+    if (!client || checkedClient === client) return;
+    if (backoffClient !== client) {
+      cancelBackoff();
+      backoffClient = client;
+      backoffAttempt = 0;
+    } else if (backoffTimer !== null) {
+      // Already waiting out the backoff for this client; stay quiet.
+      return;
+    }
+    checkedClient = client;
+    const generation = ++checkGeneration;
+    void checkWithTimeout(client)
+      .then((result) => {
+        if (isDisposed() || generation !== checkGeneration) return;
+        available = result.updateAvailable;
+        getTrigger()?.setUpdateAvailable(available);
+        if (result.error === null) {
+          backoffAttempt = 0;
+          cancelBackoff();
+          return;
+        }
+        checkedClient = null;
+        scheduleBackoff(client);
+      })
+      .catch(() => {
+        if (isDisposed() || generation !== checkGeneration || checkedClient !== client) {
+          return;
+        }
+        checkedClient = null;
+        scheduleBackoff(client);
+      });
+  };
+
+  return {
+    isAvailable: () => available,
+    refresh,
+    dispose() {
+      cancelBackoff();
+      checkGeneration += 1;
+    },
+  };
+}
+
 export function installRendererSettingsLifecycle(
   ownerWindow: Window = window,
   options: RendererSettingsLifecycleOptions = {},
 ): RendererSettingsLifecycleControl {
   restoreRendererSkin(ownerWindow);
-  const lifecycleController = new AbortController();
+  const localeRequests = new AbortController();
   let locale = resolveRendererSettingsLocale(ownerWindow.navigator.languages);
   let shell: RendererSettingsShell | null = null;
   let trigger: RendererSettingsHeaderTriggerControl | null = null;
-  let localeRequest: Promise<void> | null = null;
-  let checkedUpdateClient: RendererUpdateClient | null = null;
-  let retryUpdateClient: RendererUpdateClient | null = null;
-  let updateRetryTimer: number | null = null;
-  let updateRetryAttempt = 0;
-  let updateCheckGeneration = 0;
-  let updateAvailable = false;
+  let pendingLocaleRequest: Promise<void> | null = null;
   let openGeneration = 0;
   let disposed = false;
+
+  const updateIndicator = createUpdateIndicatorController(
+    ownerWindow,
+    options,
+    () => disposed,
+    () => trigger,
+  );
 
   const mount = (): {
     shell: RendererSettingsShell;
@@ -98,6 +202,8 @@ export function installRendererSettingsLifecycle(
       ownerDocument: ownerWindow.document,
       onOpen(opener, pageId) {
         const generation = ++openGeneration;
+        // Re-resolve the locale before showing the panel so a freshly
+        // switched language renders correctly on first open.
         void refreshLocale().then(() => {
           if (disposed || generation !== openGeneration) return;
           const currentOpener = opener.isConnected
@@ -107,15 +213,14 @@ export function installRendererSettingsLifecycle(
         });
       },
     });
-    nextTrigger.setUpdateAvailable(updateAvailable);
+    nextTrigger.setUpdateAvailable(updateIndicator.isAvailable());
     shell = nextShell;
     trigger = nextTrigger;
     return { shell: nextShell, trigger: nextTrigger };
   };
 
-  const applyLanguageState = (nextLocale: RendererSettingsLocale, preserveOpen: boolean): void => {
-    if (disposed) return;
-    if (locale === nextLocale) return;
+  const switchLocale = (nextLocale: RendererSettingsLocale, preserveOpen: boolean): void => {
+    if (disposed || locale === nextLocale) return;
 
     const reopen = preserveOpen && shell?.open === true;
     const activePageId = shell?.activePageId;
@@ -133,97 +238,23 @@ export function installRendererSettingsLifecycle(
     }
   };
 
-  const applyLocaleSettings = (settings: CodexLocaleSettings, preserveOpen: boolean): void => {
-    applyLanguageState(resolveRendererSettingsLocale([settings.preferredLocale]), preserveOpen);
-  };
-
   const refreshLocale = (): Promise<void> => {
-    if (localeRequest) return localeRequest;
+    if (pendingLocaleRequest) return pendingLocaleRequest;
     const request = readCodexLocaleSettings({
       ownerWindow,
-      signal: lifecycleController.signal,
+      signal: localeRequests.signal,
     })
-      .then((settings) => {
-        applyLocaleSettings(settings, false);
+      .then((settings: CodexLocaleSettings) => {
+        switchLocale(resolveRendererSettingsLocale([settings.preferredLocale]), false);
       })
       .catch(() => {
-        // The synchronously selected browser locale remains the safe fallback.
+        // The synchronous browser-locale pick stays as the safe fallback.
       })
       .finally(() => {
-        if (localeRequest === request) localeRequest = null;
+        if (pendingLocaleRequest === request) pendingLocaleRequest = null;
       });
-    localeRequest = request;
+    pendingLocaleRequest = request;
     return request;
-  };
-
-  const clearUpdateRetry = (): void => {
-    if (updateRetryTimer === null) return;
-    ownerWindow.clearTimeout(updateRetryTimer);
-    updateRetryTimer = null;
-  };
-
-  const scheduleUpdateRetry = (client: RendererUpdateClient): void => {
-    if (disposed || updateRetryTimer !== null) return;
-    const delay = UPDATE_RETRY_DELAYS_MS[updateRetryAttempt];
-    if (delay === undefined) return;
-    updateRetryAttempt += 1;
-    updateRetryTimer = ownerWindow.setTimeout(() => {
-      updateRetryTimer = null;
-      if (disposed || options.getUpdateClient?.() !== client) return;
-      refreshUpdateIndicator();
-    }, delay);
-  };
-
-  const checkUpdateWithTimeout = (client: RendererUpdateClient) =>
-    new Promise<Awaited<ReturnType<RendererUpdateClient["checkUpdate"]>>>((resolve, reject) => {
-      const timeout = ownerWindow.setTimeout(
-        () => reject(new Error("Update indicator check timed out")),
-        UPDATE_CHECK_TIMEOUT_MS,
-      );
-      void client.checkUpdate().then(
-        (result) => {
-          ownerWindow.clearTimeout(timeout);
-          resolve(result);
-        },
-        (error: unknown) => {
-          ownerWindow.clearTimeout(timeout);
-          reject(error);
-        },
-      );
-    });
-
-  const refreshUpdateIndicator = (): void => {
-    const client = options.getUpdateClient?.() ?? null;
-    if (!client || checkedUpdateClient === client) return;
-    if (retryUpdateClient !== client) {
-      clearUpdateRetry();
-      retryUpdateClient = client;
-      updateRetryAttempt = 0;
-    } else if (updateRetryTimer !== null) {
-      return;
-    }
-    checkedUpdateClient = client;
-    const generation = ++updateCheckGeneration;
-    void checkUpdateWithTimeout(client)
-      .then((result) => {
-        if (disposed || generation !== updateCheckGeneration) return;
-        updateAvailable = result.updateAvailable;
-        trigger?.setUpdateAvailable(updateAvailable);
-        if (result.error === null) {
-          updateRetryAttempt = 0;
-          clearUpdateRetry();
-          return;
-        }
-        checkedUpdateClient = null;
-        scheduleUpdateRetry(client);
-      })
-      .catch(() => {
-        if (disposed || generation !== updateCheckGeneration || checkedUpdateClient !== client) {
-          return;
-        }
-        checkedUpdateClient = null;
-        scheduleUpdateRetry(client);
-      });
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -236,7 +267,7 @@ export function installRendererSettingsLifecycle(
   mount();
   ownerWindow.addEventListener?.("keydown", onKeyDown);
   void refreshLocale();
-  refreshUpdateIndicator();
+  updateIndicator.refresh();
 
   return {
     get locale() {
@@ -244,7 +275,7 @@ export function installRendererSettingsLifecycle(
     },
     refresh() {
       const refreshed = trigger?.refresh() ?? false;
-      refreshUpdateIndicator();
+      updateIndicator.refresh();
       return refreshed;
     },
     dispose() {
@@ -252,9 +283,8 @@ export function installRendererSettingsLifecycle(
       disposed = true;
       ownerWindow.removeEventListener?.("keydown", onKeyDown);
       openGeneration += 1;
-      updateCheckGeneration += 1;
-      lifecycleController.abort();
-      clearUpdateRetry();
+      updateIndicator.dispose();
+      localeRequests.abort();
       trigger?.dispose();
       shell?.dispose();
       trigger = null;

@@ -1,5 +1,8 @@
 import { WORKSPACE_CONTRACT_VERSION } from "@harnessmix/shared-contracts/version";
 
+// Package facade: everything the Desktop integration and tests consume from
+// the renderer extension is re-exported here. Grouped by owning module.
+
 export { readCodexLocaleSettings, setCodexLocaleOverride } from "./codex-locale-adapter.js";
 export type {
   CodexLocaleMode,
@@ -26,6 +29,7 @@ export type {
   RendererAgent,
   RendererAgentAvailability,
 } from "./agent-selection-state.js";
+
 export {
   HARNESS_INSPECT_METHOD,
   THREAD_FORK_METHOD,
@@ -45,6 +49,7 @@ export {
   createRendererModelClient,
 } from "./renderer-model-client.js";
 export type { RendererModelClient } from "./renderer-model-client.js";
+
 export {
   HARNESS_HANDOFF_NOTE_MAX_LENGTH,
   mountRendererHarnessHandoff,
@@ -54,6 +59,7 @@ export type {
   RendererHarnessHandoffControl,
   RendererHarnessHandoffRequest,
 } from "./renderer-harness-handoff.js";
+
 export {
   CHATGPT_CONTEXT_MAX_LENGTH,
   CHATGPT_CONTEXT_MAX_MESSAGES,
@@ -73,6 +79,7 @@ export type {
   ChatGptContextMessage,
   ChatGptContextTarget,
 } from "./renderer-chatgpt-context.js";
+
 export {
   TRANSCRIPT_ITEM_IDS_ATTRIBUTE,
   TRANSCRIPT_ITEM_SELECTOR,
@@ -80,31 +87,42 @@ export {
   inspectRendererTranscriptContract,
 } from "./renderer-transcript-dom.js";
 export type { RendererTranscriptContractInspection } from "./renderer-transcript-dom.js";
+
 export {
   inspectRendererComposerContract,
   isNativeContextUsageControlCandidate,
   nativeContextUsageControlForComposer,
 } from "./renderer-composer-dom.js";
 export type { RendererComposerContractInspection } from "./renderer-composer-dom.js";
+export type {
+  ExternalModelControlView,
+  ExternalPermissionModeControlView,
+  PiModelControlView,
+} from "./renderer-composer-dom.js";
+
 export {
   rendererHarnessCommandPresentation,
   rendererHarnessMessages,
   rendererPermissionModePresentation,
 } from "./renderer-harness-localization.js";
 export type { RendererHarnessMessages } from "./renderer-harness-localization.js";
+
 export { mountRendererHarnessCommandControl } from "./renderer-harness-command-control.js";
 export type { RendererHarnessCommandControl } from "./renderer-harness-command-control.js";
+
 export {
   creditsPeriodLabel,
   formatRendererCreditsReset,
   rendererCreditsTone,
 } from "./renderer-credits-control.js";
+
 export {
   formatRendererCacheHitRate,
   formatRendererCost,
   formatRendererCreditsPercent,
   formatRendererTokenCount,
 } from "./renderer-usage-control.js";
+
 export {
   inspectRendererForkContract,
   installRendererForkControl,
@@ -116,6 +134,7 @@ export type {
   RendererForkDom,
   RendererForkTarget,
 } from "./renderer-fork-control.js";
+
 export {
   draftPermissionMode,
   installRendererBindingProbe,
@@ -132,6 +151,7 @@ export type {
   RendererBindingProbeStatus,
   RestoredThreadOwnership,
 } from "./renderer-binding-probe.js";
+
 export {
   ANTIGRAVITY_TRANSPORT_MODEL_ID,
   ANTIGRAVITY_TRANSPORT_MODEL_PREFIX,
@@ -181,6 +201,7 @@ export type {
   RendererAdapterStatus,
   RendererComposerModelContractState,
 } from "./versioned-renderer-adapter.js";
+
 export {
   inspectRendererSidebarContract,
   SIDEBAR_AGENT_ICON_ATTRIBUTE,
@@ -188,11 +209,7 @@ export {
   SIDEBAR_THREAD_ROW_SELECTOR,
 } from "./renderer-sidebar-agent-icons.js";
 export type { RendererSidebarContractInspection } from "./renderer-sidebar-agent-icons.js";
-export type {
-  ExternalModelControlView,
-  ExternalPermissionModeControlView,
-  PiModelControlView,
-} from "./renderer-composer-dom.js";
+
 export {
   RENDERER_CONTRACT_AUDIT_SCHEMA_VERSION,
   inspectRendererContracts,
@@ -201,12 +218,14 @@ export type {
   RendererContractAuditApi,
   RendererContractAuditInspection,
 } from "./contract-audit.js";
+
 export {
   CLAUDE_PERMISSION_MODE_PREFERENCE_KEY,
   readClaudePermissionModePreference,
   writeClaudePermissionModePreference,
 } from "./renderer-permission-mode-preference.js";
 export type { PermissionModePreferenceStorage } from "./renderer-permission-mode-preference.js";
+
 export {
   isPermissionModeControlReady,
   mountRendererPermissionModePicker,
@@ -217,6 +236,7 @@ export type {
   RendererPermissionModeControlView,
   RendererPermissionModePickerControl,
 } from "./renderer-permission-mode-picker.js";
+
 export {
   RendererSettingsNavigationState,
   RendererSettingsPageScope,
@@ -228,6 +248,7 @@ export type {
   RendererSettingsPageMountContext,
   RendererSettingsPageRegistry,
 } from "./settings/core.js";
+
 export {
   DEFAULT_RENDERER_SETTINGS_PAGE_IDS,
   createDefaultRendererSettingsPages,
@@ -242,6 +263,7 @@ export type {
   RendererCodexAccountClient,
   RendererUpdateClient,
 } from "./settings/pages.js";
+
 export {
   DEFAULT_RENDERER_SETTINGS_MESSAGES,
   RENDERER_SETTINGS_LANGUAGE_SELECTIONS,
@@ -258,6 +280,7 @@ export type {
   RendererSettingsMessages,
   RendererSettingsWritableLanguageSelection,
 } from "./settings/localization.js";
+
 export {
   SETTINGS_SHELL_ATTRIBUTE,
   installRendererSettingsShell,
@@ -265,6 +288,7 @@ export {
   mountRendererSettingsShell,
 } from "./settings/shell.js";
 export type { RendererSettingsShell } from "./settings/shell.js";
+
 export {
   SETTINGS_HEADER_SURFACE_SELECTOR,
   SETTINGS_TRIGGER_ATTRIBUTE,
@@ -280,12 +304,14 @@ export type {
   RendererSettingsHeaderTriggerControl,
   RendererSettingsTriggerControl,
 } from "./settings/trigger.js";
+
 export {
   RENDERER_SETTINGS_ICON_NAMES,
   createRendererSettingsIcon,
   isRendererSettingsIconName,
 } from "./settings/icons.js";
 export type { RendererSettingsIconName } from "./settings/icons.js";
+
 export {
   installCollabCards,
   formatDiffHtml,

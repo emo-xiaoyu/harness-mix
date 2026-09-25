@@ -24,6 +24,7 @@ interface SetLocaleOverrideResponse {
   success: true;
 }
 
+/** One fixed vscode:// request the Desktop shell knows how to proxy. */
 type FixedLocaleRequest =
   | {
       kind: "locale-override";
@@ -69,6 +70,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Canonical BCP-47 form, or undefined when the tag is unusable. */
 function canonicalLocale(value: unknown): string | undefined {
   if (typeof value !== "string" || value.trim().length === 0) return undefined;
   try {
@@ -100,7 +102,7 @@ function parseLocaleOverride(value: unknown): LocaleOverrideResponse {
   return { value: locale };
 }
 
-function optionalLocale(value: unknown, field: string): string | undefined {
+function requiredLocaleOrThrow(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   const locale = canonicalLocale(value);
   if (!locale) throw new Error(`Codex ${field} is invalid`);
@@ -110,8 +112,8 @@ function optionalLocale(value: unknown, field: string): string | undefined {
 function parseLocaleInfo(value: unknown): LocaleInfoResponse {
   if (!isRecord(value)) throw new Error("Codex locale info response is malformed");
   return {
-    ideLocale: optionalLocale(value.ideLocale, "IDE locale"),
-    systemLocale: optionalLocale(value.systemLocale, "system locale"),
+    ideLocale: requiredLocaleOrThrow(value.ideLocale, "IDE locale"),
+    systemLocale: requiredLocaleOrThrow(value.systemLocale, "system locale"),
   };
 }
 
@@ -122,6 +124,11 @@ function parseSetLocaleOverride(value: unknown): SetLocaleOverrideResponse {
   return { success: true };
 }
 
+/**
+ * Sends one fixed request through the Electron view bridge and awaits the
+ * matching "fetch-response" window message, bounded by `timeoutMs` and
+ * `signal`. Settles exactly once.
+ */
 function sendFixedLocaleRequest(
   request: FixedLocaleRequest,
   ownerWindow: Window,
@@ -142,11 +149,11 @@ function sendFixedLocaleRequest(
       ownerWindow.removeEventListener("message", onMessage);
       signal?.removeEventListener("abort", onAbort);
     };
-    const settle = (operation: () => void): void => {
+    const settle = (outcome: () => void): void => {
       if (settled) return;
       settled = true;
       cleanup();
-      operation();
+      outcome();
     };
     const onAbort = (): void => settle(() => reject(abortError()));
     const onMessage = (event: MessageEvent): void => {
@@ -177,7 +184,7 @@ function sendFixedLocaleRequest(
 
     ownerWindow.addEventListener("message", onMessage);
     signal?.addEventListener("abort", onAbort, { once: true });
-    const message = {
+    const outgoingMessage = {
       type: "fetch",
       requestId,
       method: "POST",
@@ -186,7 +193,7 @@ function sendFixedLocaleRequest(
       reportUploadProgress: false,
     };
     try {
-      Promise.resolve(bridge.sendMessageFromView(message)).catch((error: unknown) => {
+      Promise.resolve(bridge.sendMessageFromView(outgoingMessage)).catch((error: unknown) => {
         settle(() => reject(error));
       });
     } catch (error) {
@@ -269,6 +276,7 @@ export async function readCodexLocaleSettings(
   if (options.signal?.aborted) throw abortError();
 
   const navigatorLocale = firstNavigatorLocale(ownerWindow);
+  // An unreadable setting must read as "unknown", never as "automatic".
   const overrideKnown = overrideResult.status === "fulfilled";
   const localeOverride = overrideKnown ? overrideResult.value.value : undefined;
   const localeInfo: LocaleInfoResponse =

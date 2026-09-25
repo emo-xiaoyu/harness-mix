@@ -1,3 +1,9 @@
+/**
+ * Binding assembly: install the binding probe, then the versioned renderer
+ * adapter on top. An adapter installation failure must degrade to an explicit
+ * "unsupported" state instead of leaving the probe half-bound — the official
+ * Codex route keeps working either way.
+ */
 import { DEFAULT_RENDERER_AGENTS, type RendererAgent } from "./agent-selection-state.js";
 import {
   installRendererBindingProbe,

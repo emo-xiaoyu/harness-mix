@@ -1,4 +1,4 @@
-import { collaborationIcon } from './collaboration-icon.js';
+import { collaborationIcon } from "./collaboration-icon.js";
 
 export interface CollaborationAgent {
   id: string;
@@ -56,14 +56,11 @@ type MentionEntry =
   | ({ kind: 'template' } & CollaborationTeamTemplate)
   | ({ kind: 'codex' } & NativeCodexOption);
 
-const entryKey = (entry: MentionEntry): string => {
-  if (entry.kind === 'agent') return `agent:${entry.id}`;
-  if (entry.kind === 'session') return `session:${entry.id}`;
-  if (entry.kind === 'template') return `template:${entry.id}`;
-  return `codex:${entry.id}`;
-};
+type MentionKind = MentionEntry["kind"];
 
-// Encode an entry as the #agent literal the Host expects in the submitted text.
+const entryKey = (entry: MentionEntry): string => `${entry.kind}:${entry.id}`;
+
+// The literal injected into the submitted text on behalf of a selected entry.
 const entryLiteral = (entry: MentionEntry): string => {
   if (entry.kind === 'agent') return `#${entry.id} `;
   if (entry.kind === 'session') return `#[${entry.title.replace(/[\[\]()\r\n]/g, '')}](harness-mix://session/${entry.id}) `;
@@ -94,6 +91,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   cline: 'Cline 自主编程智能体',
 };
 
+// Order matters: the first id fragment contained in an Agent id wins.
 const AGENT_COLORS: Record<string, string> = {
   codex: '#3b82f6',
   'codex-cli': '#3b82f6',
@@ -120,8 +118,8 @@ const AGENT_COLORS: Record<string, string> = {
 
 function getAgentColor(agentId: string): string {
   const normalized = agentId.toLowerCase();
-  for (const [key, color] of Object.entries(AGENT_COLORS)) {
-    if (normalized.includes(key)) return color;
+  for (const [fragment, color] of Object.entries(AGENT_COLORS)) {
+    if (normalized.includes(fragment)) return color;
   }
   return '#6366f1';
 }
@@ -164,7 +162,7 @@ function getCodexNativeOptions(): NativeCodexOption[] {
   return scanned.length ? scanned : DEFAULT_CODEX_OPTIONS;
 }
 
-/** Adds native-Harness suggestions while preserving the original composer editor. */
+/** Installs the # mention picker on top of the stock composer editor. */
 export function installHarnessMentions(load: (editor: Element, query: string) => Promise<CollaborationMentionCatalog>) {
   const menu = document.createElement('div');
   menu.dataset.harnessMixMentions = 'true';
@@ -174,8 +172,9 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   menu.hidden = true;
   document.body.append(menu);
 
-  // Enable inline text-box layout so selected mentions appear inside the text box on the same line as the cursor.
-  // We NEVER suppress Codex native @ floating UI since Harness Mix is triggered by #.
+  // Flex layout on the text-box container puts selected mention chips inline
+  // with the caret on a single line. Codex's own @ overlay is never touched —
+  // Harness Mix is keyed off #.
   const style = document.createElement('style');
   style.textContent = `
     [data-harness-mix-has-mentions="true"] {
@@ -212,7 +211,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   let activeComposer: Element | null = null;
   let generation = 0, disposed = false, selected = 0;
   let editor: HTMLTextAreaElement | HTMLElement | null = null;
-  let range: Range | null = null, start = 0, end = 0;
+  let selStart = 0, selEnd = 0;
   let entries: MentionEntry[] = [];
   let matches: MentionEntry[] = [];
   let activeKind: 'agent' | 'codex' | 'session' | 'template' = 'agent';
@@ -220,8 +219,8 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   const catalogs = new Map<HTMLElement, CollaborationMentionCatalog>();
   const badges = new Map<HTMLElement, HTMLElement>();
 
-  // Per-session mention state keyed by conversation target, so mentions persist
-  // when switching between conversations and returning.
+  // Mention selections are keyed per conversation, so they survive switching
+  // to another conversation and back.
   const sessionSelections = new Map<string, Map<string, MentionEntry>>();
 
   const conversationKeyFor = (target: HTMLElement): string => {
@@ -245,109 +244,110 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
 
   const selectionsFor = (target: HTMLElement): Map<string, MentionEntry> => {
     const key = conversationKeyFor(target);
-    let perSession = sessionSelections.get(key);
-    if (!perSession) {
-      perSession = new Map();
-      sessionSelections.set(key, perSession);
+    let selections = sessionSelections.get(key);
+    if (!selections) {
+      selections = new Map();
+      sessionSelections.set(key, selections);
     }
-    return perSession;
+    return selections;
   };
 
-  const replaceSelectionWith = (target: HTMLElement, replacement: string): boolean => {
+  const isEntrySelectable = (entry: MentionEntry): boolean => {
+    if (entry.kind === 'agent') return entry.available && canDelegate;
+    if (entry.kind === 'session') return entry.running !== true;
+    if (entry.kind === 'template') return entry.members.some(member => member.available);
+    return true;
+  };
+
+  // Overwrites the #query span [selStart, selEnd) with `text` in whichever
+  // editor flavor is active.
+  const replaceSelectionWith = (target: HTMLElement, text: string): boolean => {
     if (target instanceof HTMLTextAreaElement) {
-      target.setSelectionRange(start, end);
-      target.setRangeText(replacement, start, end, 'end');
+      target.setSelectionRange(selStart, selEnd);
+      target.setRangeText(text, selStart, selEnd, 'end');
       target.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
     }
-    // ProseMirror may replace text nodes while its own suggestions render.
-    // Rebuild the saved text offsets instead of reusing a live, stale Range.
+    // ProseMirror may swap out text nodes while its own popups render, so the
+    // saved offsets are re-anchored onto the live tree instead of trusting a
+    // stale Range.
     const fresh = document.createRange();
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-    let offset = 0, foundStart = false, foundEnd = false;
+    let walked = 0, foundStart = false, foundEnd = false;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const length = node.textContent?.length ?? 0;
-      if (!foundStart && start <= offset + length) { fresh.setStart(node, start - offset); foundStart = true; }
-      if (foundStart && end <= offset + length) { fresh.setEnd(node, end - offset); foundEnd = true; break; }
-      offset += length;
+      if (!foundStart && selStart <= walked + length) { fresh.setStart(node, selStart - walked); foundStart = true; }
+      if (foundStart && selEnd <= walked + length) { fresh.setEnd(node, selEnd - walked); foundEnd = true; break; }
+      walked += length;
     }
     if (!foundEnd) return false;
     const selection = window.getSelection();
     selection?.removeAllRanges(); selection?.addRange(fresh);
     document.dispatchEvent(new Event('selectionchange'));
-    document.execCommand('insertText', false, replacement);
+    document.execCommand('insertText', false, text);
     return true;
   };
 
   const syncBadges = (target: HTMLElement) => {
-    for (const [old, strip] of badges) {
-      if (!old.isConnected) {
+    for (const [oldTarget, strip] of badges) {
+      if (!oldTarget.isConnected) {
         strip.remove();
-        badges.delete(old);
-        catalogs.delete(old);
+        badges.delete(oldTarget);
+        catalogs.delete(oldTarget);
       }
     }
-    const perEditor = selectionsFor(target);
-    const hasAny = !!perEditor && perEditor.size > 0;
+    const selections = selectionsFor(target);
+    const hasAny = selections.size > 0;
     let strip = badges.get(target);
 
-    // Toggle container flex layout so mentions strip and editor input share the exact same line inside the text box like Image 2.
+    // Toggle the flex layout so chips and the editor share one line.
     const container = target.parentElement;
-    if (hasAny) {
-      container?.setAttribute('data-harness-mix-has-mentions', 'true');
-    } else {
-      container?.removeAttribute('data-harness-mix-has-mentions');
-    }
+    if (hasAny) container?.setAttribute('data-harness-mix-has-mentions', 'true');
+    else container?.removeAttribute('data-harness-mix-has-mentions');
 
     if (!strip && !hasAny) return;
     if (!strip) {
       strip = document.createElement('div');
       strip.dataset.harnessMixSelectedMentions = 'true';
       strip.setAttribute('aria-label', '已提及的协作者');
-      // Place INLINE before target inside the input flow like Image 2, not as a block row below.
       strip.style.cssText = 'display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0;margin:0 4px 0 0;vertical-align:baseline;line-height:normal;';
       target.before(strip);
       badges.set(target, strip);
     }
 
-    const newKeys = perEditor ? [...perEditor.values()].map(e => e.kind === 'agent' ? `agent:${e.id}` : e.kind === 'session' ? `session:${e.id}` : e.kind === 'template' ? `template:${e.id}` : `codex:${e.id}`).join(',') : '';
-    const currentKeys = [...strip.querySelectorAll<HTMLElement>('[data-harness-mix-mention-badge]')].map(b => b.dataset.harnessMixMentionBadge).join(',');
-    if (strip.isConnected && currentKeys === newKeys && strip.style.display === (hasAny ? 'inline-flex' : 'none')) {
+    const wantedKeys = [...selections.values()].map(entryKey).join(',');
+    const shownKeys = [...strip.querySelectorAll<HTMLElement>('[data-harness-mix-mention-badge]')].map(b => b.dataset.harnessMixMentionBadge).join(',');
+    if (strip.isConnected && shownKeys === wantedKeys && strip.style.display === (hasAny ? 'inline-flex' : 'none')) {
       return;
     }
 
     strip.replaceChildren();
     strip.style.display = hasAny ? 'inline-flex' : 'none';
-    if (!perEditor) return;
 
-    for (const entry of perEditor.values()) {
+    for (const entry of selections.values()) {
       const badge = document.createElement('button');
       badge.type = 'button';
-      badge.dataset.harnessMixMentionBadge = entry.kind === 'agent'
-        ? `agent:${entry.id}`
-        : entry.kind === 'session'
-          ? `session:${entry.id}`
-          : entry.kind === 'template'
-            ? `template:${entry.id}`
-            : `codex:${entry.id}`;
+      badge.dataset.harnessMixMentionBadge = entryKey(entry);
 
-      const removeLabel = entry.kind === 'agent'
-        ? `移除协作 Agent ${entry.name}`
-        : entry.kind === 'session'
-          ? `移除历史会话 ${entry.title}`
-          : entry.kind === 'template'
-            ? `移除团队模板 ${entry.name}`
-            : `移除 Codex 选项 ${entry.title}`;
+      const removeLabel =
+        entry.kind === 'agent'
+          ? `移除协作 Agent ${entry.name}`
+          : entry.kind === 'session'
+            ? `移除历史会话 ${entry.title}`
+            : entry.kind === 'template'
+              ? `移除团队模板 ${entry.name}`
+              : `移除 Codex 选项 ${entry.title}`;
       badge.setAttribute('aria-label', removeLabel);
       badge.title = `${removeLabel}（点击移除）`;
 
-      const agentColor = entry.kind === 'agent'
-        ? getAgentColor(entry.id)
-        : entry.kind === 'template'
-          ? '#0d9488'
-          : entry.kind === 'codex'
-            ? '#0ea5e9'
-            : '#8b5cf6';
+      const agentColor =
+        entry.kind === 'agent'
+          ? getAgentColor(entry.id)
+          : entry.kind === 'template'
+            ? '#0d9488'
+            : entry.kind === 'codex'
+              ? '#0ea5e9'
+              : '#8b5cf6';
 
       badge.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:1px 5px;border:0;border-radius:4px;background:transparent;color:${agentColor};font:500 15px/1.4 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;user-select:none;cursor:pointer;transition:background 0.15s,opacity 0.15s;`;
       badge.addEventListener('mouseenter', () => { badge.style.background = 'rgba(128,128,128,0.12)'; });
@@ -355,8 +355,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       badge.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        const live = selectionsFor(target);
-        live.delete(entryKey(entry));
+        selectionsFor(target).delete(entryKey(entry));
         syncBadges(target);
         target.focus();
       });
@@ -374,10 +373,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         teamIcon.style.cssText = 'font-size:13px;line-height:1;';
         iconWrap.append(teamIcon, document.createTextNode(entry.name));
       } else {
-        const iconSpan = document.createElement('span');
-        iconSpan.textContent = entry.icon || '📌';
-        iconSpan.style.cssText = 'font-size:14px;line-height:1;';
-        iconWrap.append(iconSpan, document.createTextNode(entry.title));
+        const optionIcon = document.createElement('span');
+        optionIcon.textContent = entry.icon || '📌';
+        optionIcon.style.cssText = 'font-size:14px;line-height:1;';
+        iconWrap.append(optionIcon, document.createTextNode(entry.title));
       }
 
       badge.append(iconWrap);
@@ -395,15 +394,14 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
 
   const choose = (entry: MentionEntry) => {
     if (!editor) return;
-    if (entry.kind === 'agent' && (!entry.available || !canDelegate)) return;
-    if (entry.kind === 'session' && entry.running === true) return;
-    if (entry.kind === 'template' && entry.members.every(member => !member.available)) return;
+    if (!isEntrySelectable(entry)) return;
     const target = editor;
     close();
     target.focus();
     replaceSelectionWith(target, '');
 
     if (entry.kind === 'codex') {
+      // A native Codex option: prefer clicking the real overlay button.
       const nativeOverlay = document.querySelector('[data-composer-overlay-floating-ui="true"]');
       if (nativeOverlay) {
         const buttons = [...nativeOverlay.querySelectorAll<HTMLElement>('button, [role="option"]')];
@@ -420,10 +418,11 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       return;
     }
 
-    const perEditor = selectionsFor(target);
+    // Any other entry toggles its chip in this conversation's selection.
+    const selections = selectionsFor(target);
     const key = entryKey(entry);
-    if (perEditor.has(key)) perEditor.delete(key);
-    else perEditor.set(key, entry);
+    if (selections.has(key)) selections.delete(key);
+    else selections.set(key, entry);
     syncBadges(target);
   };
 
@@ -477,20 +476,14 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     menu.append(list);
 
     entries.forEach((entry, index) => {
+      const selectable = isEntrySelectable(entry);
       const row = document.createElement('button');
       row.type = 'button';
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(index === selected));
-      const available = entry.kind === 'agent'
-        ? entry.available && canDelegate
-        : entry.kind === 'session'
-          ? entry.running !== true
-          : entry.kind === 'template'
-            ? entry.members.some(member => member.available)
-            : true;
-      row.disabled = !available;
+      row.disabled = !selectable;
       row.id = `harness-mention-option-${index}`;
-      row.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:7px;padding:7px 8px;color:inherit;font:inherit;cursor:pointer;background:${index === selected ? '#8882' : 'transparent'};opacity:${available ? 1 : .45}`;
+      row.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:7px;padding:7px 8px;color:inherit;font:inherit;cursor:pointer;background:${index === selected ? '#8882' : 'transparent'};opacity:${selectable ? 1 : .45}`;
 
       const copy = document.createElement('span');
       copy.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex:1;min-width:0';
@@ -508,26 +501,21 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       }
 
       const detail = document.createElement('span');
-      detail.textContent = entry.kind === 'agent'
-        ? (AGENT_DESCRIPTIONS[entry.id] || entry.description || `#${entry.id}`)
-        : entry.kind === 'session'
-          ? entry.cwd
-          : entry.kind === 'template'
-            ? (entry.description || entry.members.map(member => member.name).join(' · '))
-            : (entry.description || entry.category);
+      if (entry.kind === 'agent') detail.textContent = AGENT_DESCRIPTIONS[entry.id] || entry.description || `#${entry.id}`;
+      else if (entry.kind === 'session') detail.textContent = entry.cwd;
+      else if (entry.kind === 'template') detail.textContent = entry.description || entry.members.map(member => member.name).join(' · ');
+      else detail.textContent = entry.description || entry.category;
       detail.style.cssText = 'font-size:11px;opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
       copy.append(name, detail);
 
       const status = document.createElement('span');
-      status.textContent = entry.kind === 'agent'
-        ? (entry.available ? '可协作' : '未就绪')
-        : entry.kind === 'session'
-          ? (entry.running ? '运行中' : '引用')
-          : entry.kind === 'template'
-            ? (entry.members.every(member => !member.agent)
-                ? '待指定 Harness'
-                : `拉起团队 · ${entry.members.length} 成员`)
-            : (entry.category || '原生');
+      if (entry.kind === 'agent') status.textContent = entry.available ? '可协作' : '未就绪';
+      else if (entry.kind === 'session') status.textContent = entry.running ? '运行中' : '引用';
+      else if (entry.kind === 'template') {
+        status.textContent = entry.members.every(member => !member.agent)
+          ? '待指定 Harness'
+          : `拉起团队 · ${entry.members.length} 成员`;
+      } else status.textContent = entry.category || '原生';
       status.style.cssText = 'font-size:11px;opacity:.6';
 
       let iconEl: HTMLElement;
@@ -540,10 +528,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
         teamIcon.title = entry.members.map(member => `${member.name} · ${member.agent || '待指定 Harness'}${member.agent && !member.available ? '（不可用）' : ''}`).join('\n');
         iconEl = teamIcon;
       } else {
-        const iconSpan = document.createElement('span');
-        iconSpan.textContent = entry.icon || '📎';
-        iconSpan.style.cssText = 'font-size:16px;line-height:1;width:18px;text-align:center;';
-        iconEl = iconSpan;
+        const optionIcon = document.createElement('span');
+        optionIcon.textContent = entry.icon || '📎';
+        optionIcon.style.cssText = 'font-size:16px;line-height:1;width:18px;text-align:center;';
+        iconEl = optionIcon;
       }
 
       row.append(iconEl, copy, status);
@@ -562,11 +550,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     syncBadges(editable);
 
     let prefix = '';
-    range = null;
     if (editable instanceof HTMLTextAreaElement) {
       if (editable.selectionStart !== editable.selectionEnd) { close(); return; }
-      end = editable.selectionStart;
-      prefix = editable.value.slice(0, end);
+      selEnd = editable.selectionStart;
+      prefix = editable.value.slice(0, selEnd);
     } else {
       const selection = window.getSelection();
       if (!selection?.rangeCount || !selection.isCollapsed) { close(); return; }
@@ -576,14 +563,12 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       before.selectNodeContents(editable);
       before.setEnd(caret.startContainer, caret.startOffset);
       prefix = before.toString();
-      end = prefix.length;
-      range = caret.cloneRange();
+      selEnd = prefix.length;
     }
 
     const match = /(?:^|[\s，。；：])#([\p{L}\p{N}_-]*)$/u.exec(prefix);
     if (!match) { close(); return; }
-    const length = match[1]!.length + 1;
-    start = end - length;
+    selStart = selEnd - (match[1]!.length + 1);
     const current = ++generation;
 
     try {
@@ -609,6 +594,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
 
       matches = [...matchingAgents, ...matchingSessions, ...matchingTemplates];
 
+      // Prefer the tab that actually has results for this query.
       if (query && !matchingAgents.length && !matchingSessions.length && matchingTemplates.length) {
         activeKind = 'template';
       } else if (query && !matchingAgents.length && matchingSessions.length) {
@@ -618,7 +604,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       }
 
       entries = matches.filter(entry => entry.kind === activeKind);
-      selected = Math.max(0, entries.findIndex(entry => entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : entry.kind === 'template' ? entry.members.some(member => member.available) : true));
+      selected = Math.max(0, entries.findIndex(isEntrySelectable));
 
       render();
       menu.hidden = !matches.length && catalog.canDelegate === undefined;
@@ -626,6 +612,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       activeComposer = !menu.hidden ? editable.closest('[data-codex-composer-root]') : null;
       activeComposer?.setAttribute('data-harness-mix-mention-active', 'true');
 
+      // Flip above the caret when there is room, else drop below.
       menu.scrollTop = 0;
       const rect = editable.getBoundingClientRect();
       menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 348))}px`;
@@ -641,6 +628,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     if (target instanceof HTMLElement && target.closest('[data-codex-composer-root]')) {
       const editable = target.closest('textarea,[contenteditable="true"]') as HTMLElement | null;
       if (editable && event.key === 'Backspace') {
+        // Backspace on an empty editor pops the most recent mention chip.
         let isAtStart = false;
         if (editable instanceof HTMLTextAreaElement) {
           isAtStart = editable.selectionStart === 0 && editable.selectionEnd === 0;
@@ -652,11 +640,10 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
           }
         }
         if (isAtStart) {
-          const perSession = selectionsFor(editable);
-          if (perSession && perSession.size > 0) {
-            const keys = [...perSession.keys()];
-            const lastKey = keys[keys.length - 1];
-            if (lastKey) perSession.delete(lastKey);
+          const selections = selectionsFor(editable);
+          if (selections.size > 0) {
+            const lastKey = [...selections.keys()].pop();
+            if (lastKey) selections.delete(lastKey);
             syncBadges(editable);
             event.preventDefault();
             return;
@@ -684,8 +671,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     } else {
       for (let i = 0; i < entries.length; i++) {
         selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length;
-        const entry = entries[selected];
-        if (entry && (entry.kind === 'agent' ? entry.available && canDelegate : entry.kind === 'session' ? entry.running !== true : entry.kind === 'template' ? entry.members.some(member => member.available) : true)) break;
+        if (isEntrySelectable(entries[selected]!)) break;
       }
       render();
       menu.querySelector('[role="option"][aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -702,10 +688,11 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     return root.querySelector<HTMLElement>('textarea,[contenteditable="true"]');
   };
 
+  // Prepends every pending mention literal to the editor contents.
   const injectMentionsInto = (target: HTMLElement): boolean => {
-    const perEditor = selectionsFor(target);
-    if (!perEditor || perEditor.size === 0) return false;
-    const text = [...perEditor.values()].map(entryLiteral).join('');
+    const selections = selectionsFor(target);
+    if (selections.size === 0) return false;
+    const text = [...selections.values()].map(entryLiteral).join('');
     if (!text) return false;
     target.focus();
     if (target instanceof HTMLTextAreaElement) {
@@ -722,7 +709,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       document.dispatchEvent(new Event('selectionchange'));
       document.execCommand('insertText', false, text);
     }
-    perEditor.clear();
+    selections.clear();
     syncBadges(target);
     return true;
   };
@@ -744,6 +731,8 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     }
   };
 
+  // Re-derive badge strips when Codex reshuffles composer DOM or conversation
+  // ids. Mutations inside our own UI are ignored.
   const observer = new MutationObserver((mutations) => {
     let shouldSync = false;
     for (const m of mutations) {
@@ -756,8 +745,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       break;
     }
     if (!shouldSync) return;
-    const composers = document.querySelectorAll('[data-codex-composer-root]');
-    for (const composer of composers) {
+    for (const composer of document.querySelectorAll('[data-codex-composer-root]')) {
       const el = findEditorIn(composer);
       if (el) syncBadges(el);
     }

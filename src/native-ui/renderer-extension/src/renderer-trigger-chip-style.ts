@@ -2,16 +2,11 @@
  * Shared, host-independent "chip" chrome for the small trailing-cluster
  * trigger buttons we own (Model, Permission mode, Credits, Usage).
  *
- * These used to borrow Codex's own generated Composer button class names
- * (copied at runtime from a native button, or a hardcoded snapshot of them
- * as a fallback) so they would visually blend in. Codex's private class
- * names — and the design tokens they resolve to — are not a stable contract
- * and can be renamed or removed between Desktop releases, which silently
- * strips all chrome (background, padding, hover/disabled states) from these
- * controls. Defining our own tiny stylesheet instead keeps their look
- * stable across host updates: the base chip class supplies the pseudo-class
- * behavior (`:hover`, `:disabled`, `[data-state="open"]`) that inline styles
- * cannot express, while each control still sets its own inline
+ * Codex's own composer button class names are private and can change between
+ * Desktop releases, which would silently strip all chrome from these
+ * controls. Our own stylesheet keeps the look stable: the base class carries
+ * the pseudo-class behavior (`:hover`, `:disabled`, `[data-state="open"]`)
+ * that inline styles cannot express; each control still sets inline
  * height/padding/font-size to size itself.
  */
 const STYLE_ATTRIBUTE = "data-harnessmix-trigger-chip-style";

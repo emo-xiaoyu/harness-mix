@@ -1,3 +1,9 @@
+/**
+ * Renderer-side contract audit: counts the DOM anchors every subsystem relies
+ * on (composer, model wiring, settings entry, sidebar, transcript, fork) and
+ * reports the presence/state of the production bindings. Read-only; driven by
+ * the Desktop contract inspector through window.__harnessmixContractAuditV1.
+ */
 import {
   CODEX_COMPOSER_SELECTOR,
   inspectRendererComposerContract,
@@ -78,7 +84,6 @@ export function inspectRendererContracts(
   const composers = [...ownerWindow.document.querySelectorAll<Element>(CODEX_COMPOSER_SELECTOR)];
   const binding = ownerWindow.__harnessmixRendererBindingProbeV1;
   const status = binding?.status();
-  const adapterState = status?.adapter.state ?? "absent";
   const titlePolicy = ownerWindow.__harnessmixMainProcessTitlePolicyV1;
   const draftPolicy = ownerWindow.__harnessmixDraftPrewarmPolicyV1;
   return {
@@ -91,7 +96,7 @@ export function inspectRendererContracts(
     fork: inspectRendererForkContract(ownerWindow.document),
     production: {
       bindingPresent: binding !== undefined,
-      adapterState,
+      adapterState: status?.adapter.state ?? "absent",
       adapterReason: status?.adapter.state ?? "absent",
       titlePolicyState:
         titlePolicy === undefined ? "absent" : titlePolicy.state === "ready" ? "ready" : "unknown",

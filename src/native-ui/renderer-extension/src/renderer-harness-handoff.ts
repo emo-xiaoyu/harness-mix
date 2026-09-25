@@ -5,6 +5,9 @@ import type { RendererSettingsLocale } from "./settings/localization.js";
 
 export const HARNESS_HANDOFF_NOTE_MAX_LENGTH = 2000;
 
+const INTENT_VALUES = ["continue", "execute-plan", "review", "reanalyze"] as const;
+const INCLUDE_KEYS = ["conversation", "plan", "evidence", "files", "unresolved"] as const;
+
 export interface RendererHarnessHandoffRequest {
   from: ExternalRendererAgent;
   to: ExternalRendererAgent;
@@ -62,7 +65,7 @@ export function rendererHarnessHandoffMessages(locale: RendererSettingsLocale) {
       };
 }
 
-function setButtonChrome(button: HTMLButtonElement, primary = false): void {
+function paintActionButton(button: HTMLButtonElement, primary = false): void {
   button.style.height = "34px";
   button.style.padding = "0 14px";
   button.style.border = primary ? "1px solid color-mix(in srgb, #5b8cff 70%, CanvasText 30%)" : "1px solid color-mix(in srgb, CanvasText 18%, transparent)";
@@ -141,7 +144,7 @@ export function mountRendererHarnessHandoff(
   intent.style.background = "Canvas";
   intent.style.color = "CanvasText";
   intent.style.font = "13px/1 system-ui, sans-serif";
-  for (const value of ["continue", "execute-plan", "review", "reanalyze"] as const) {
+  for (const value of INTENT_VALUES) {
     const option = document.createElement("option");
     option.value = value;
     intent.append(option);
@@ -163,7 +166,7 @@ export function mountRendererHarnessHandoff(
   includeGrid.style.gap = "8px 12px";
   const includeInputs = {} as Record<keyof HarnessHandoffIncludes, HTMLInputElement>;
   const includeLabels = {} as Record<keyof HarnessHandoffIncludes, Text>;
-  for (const key of ["conversation", "plan", "evidence", "files", "unresolved"] as const) {
+  for (const key of INCLUDE_KEYS) {
     const row = document.createElement("label");
     row.style.display = "flex";
     row.style.alignItems = "center";
@@ -171,20 +174,20 @@ export function mountRendererHarnessHandoff(
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = true;
-    const text = document.createTextNode("");
-    row.append(input, text);
+    const label = document.createTextNode("");
+    row.append(input, label);
     includeGrid.append(row);
     includeInputs[key] = input;
-    includeLabels[key] = text;
+    includeLabels[key] = label;
   }
   includeSection.append(includeGrid);
 
-  const label = document.createElement("label");
-  label.style.display = "flex";
-  label.style.flexDirection = "column";
-  label.style.gap = "7px";
-  const labelText = document.createElement("span");
-  labelText.style.fontWeight = "600";
+  const noteLabel = document.createElement("label");
+  noteLabel.style.display = "flex";
+  noteLabel.style.flexDirection = "column";
+  noteLabel.style.gap = "7px";
+  const noteLabelText = document.createElement("span");
+  noteLabelText.style.fontWeight = "600";
   const note = document.createElement("textarea");
   note.rows = 3;
   note.maxLength = HARNESS_HANDOFF_NOTE_MAX_LENGTH;
@@ -199,7 +202,7 @@ export function mountRendererHarnessHandoff(
   note.style.background = "color-mix(in srgb, Canvas 96%, CanvasText 4%)";
   note.style.color = "CanvasText";
   note.style.font = "13px/1.45 system-ui, sans-serif";
-  label.append(labelText, note);
+  noteLabel.append(noteLabelText, note);
 
   const context = document.createElement("p");
   context.style.margin = "0";
@@ -222,12 +225,12 @@ export function mountRendererHarnessHandoff(
   actions.style.gap = "8px";
   const cancel = document.createElement("button");
   cancel.type = "button";
-  setButtonChrome(cancel);
+  paintActionButton(cancel);
   const confirm = document.createElement("button");
   confirm.type = "button";
-  setButtonChrome(confirm, true);
+  paintActionButton(confirm, true);
   actions.append(cancel, confirm);
-  frame.append(title, description, route, intentLabel, includeSection, label, context, running, error, actions);
+  frame.append(title, description, route, intentLabel, includeSection, noteLabel, context, running, error, actions);
   dialog.append(frame);
   document.body.append(dialog);
 
@@ -235,18 +238,21 @@ export function mountRendererHarnessHandoff(
   let to: ExternalRendererAgent = "claude-code";
   let locale: RendererSettingsLocale = "en";
   let submitting = false;
+
   const render = (): void => {
     const messages = rendererHarnessHandoffMessages(locale);
     title.textContent = messages.title;
     description.textContent = messages.description;
-    labelText.textContent = messages.noteLabel;
+    noteLabelText.textContent = messages.noteLabel;
     intentLabelText.textContent = messages.intentLabel;
     includeLegend.textContent = messages.includeLabel;
-    for (const [value, text] of Object.entries(messages.intentOptions)) {
-      const option = [...intent.options].find(candidate => candidate.value === value);
-      if (option) option.textContent = text;
+    for (const [value, label] of Object.entries(messages.intentOptions)) {
+      const option = [...intent.options].find((candidate) => candidate.value === value);
+      if (option) option.textContent = label;
     }
-    for (const key of Object.keys(includeInputs) as Array<keyof HarnessHandoffIncludes>) includeLabels[key].data = messages.includeOptions[key];
+    for (const key of Object.keys(includeInputs) as Array<keyof HarnessHandoffIncludes>) {
+      includeLabels[key].data = messages.includeOptions[key];
+    }
     note.placeholder = messages.notePlaceholder;
     context.textContent = messages.context;
     running.textContent = messages.running;
@@ -263,6 +269,7 @@ export function mountRendererHarnessHandoff(
     confirm.style.cursor = submitting ? "wait" : "pointer";
     confirm.setAttribute("aria-busy", String(submitting));
   };
+
   const close = (): void => {
     if (submitting) return;
     if (dialog.open) dialog.close();
@@ -275,7 +282,9 @@ export function mountRendererHarnessHandoff(
       to,
       note: note.value.trim(),
       intent: intent.value as HarnessHandoffIntent,
-      includes: Object.fromEntries(Object.entries(includeInputs).map(([key, input]) => [key, input.checked])) as unknown as HarnessHandoffIncludes,
+      includes: Object.fromEntries(
+        Object.entries(includeInputs).map(([key, input]) => [key, input.checked]),
+      ) as unknown as HarnessHandoffIncludes,
     });
   });
   note.addEventListener("keydown", (event) => {

@@ -13,7 +13,7 @@ interface SteeringManager {
   getStreamRole?: RendererMethod;
 }
 
-function isManager(value: unknown): value is SteeringManager {
+function isSteeringManager(value: unknown): value is SteeringManager {
   return (
     isRecord(value) &&
     ["sendRequest", "steerTurn", "startTurn", "getTurnCoordinator"].every(
@@ -22,10 +22,12 @@ function isManager(value: unknown): value is SteeringManager {
   );
 }
 
-function submissionHost(manager: SteeringManager): {
+interface SubmissionHostBinding {
   getActiveTurnId(threadId: string): unknown;
   hasPendingTurnStart(threadId: string): unknown;
-} {
+}
+
+function resolveSubmissionHost(manager: SteeringManager): SubmissionHostBinding {
   const coordinator = manager.getTurnCoordinator();
   const options = isRecord(coordinator) ? coordinator.options : null;
   const host = isRecord(options) ? options.submissionHost : null;
@@ -43,51 +45,59 @@ function submissionHost(manager: SteeringManager): {
   };
 }
 
-type SteeringMethodName = "sendRequest" | "steerTurn";
+type PatchedMethodName = "sendRequest" | "steerTurn";
+const PATCHED_METHODS = ["sendRequest", "steerTurn"] as const;
 
-function installSteeringMethods(
+/**
+ * Swap `sendRequest`/`steerTurn` on the manager without ever touching its
+ * class prototype or creating forbidden own properties on RpcTarget-backed
+ * instances: inherited methods are shadowed through a private intermediate
+ * prototype inserted only while needed, and removed again on restore.
+ */
+function patchSteeringMethods(
   manager: SteeringManager,
-  replacements: Record<SteeringMethodName, RendererMethod>,
-): (name: SteeringMethodName) => void {
-  const originalPrototype: object | null = Object.getPrototypeOf(manager);
-  const overrides: object = Object.create(originalPrototype);
-  const names = ["sendRequest", "steerTurn"] as const;
-  const descriptors = new Map(
-    names.map((name) => [name, Object.getOwnPropertyDescriptor(manager, name)]),
+  replacements: Record<PatchedMethodName, RendererMethod>,
+): (name: PatchedMethodName) => void {
+  const basePrototype: object | null = Object.getPrototypeOf(manager);
+  const shadowPrototype: object = Object.create(basePrototype);
+  const ownDescriptors = new Map(
+    PATCHED_METHODS.map((name) => [name, Object.getOwnPropertyDescriptor(manager, name)]),
   );
-  for (const name of names) {
-    const own = descriptors.get(name);
-    // Desktop's RpcTarget forbids own properties over RPC, including functions.
-    // Override inherited methods on a private prototype, never on the instance
-    // or the shared class prototype. Plain-object targets retain their own shape.
-    Object.defineProperty(own ? manager : overrides, name, {
+  for (const name of PATCHED_METHODS) {
+    const own = ownDescriptors.get(name);
+    Object.defineProperty(own ? manager : shadowPrototype, name, {
       configurable: own?.configurable ?? true,
       enumerable: own?.enumerable ?? false,
       writable: true,
       value: replacements[name],
     });
   }
-  if (names.some((name) => !descriptors.get(name))) {
-    Object.setPrototypeOf(manager, overrides);
+  if (PATCHED_METHODS.some((name) => !ownDescriptors.get(name))) {
+    Object.setPrototypeOf(manager, shadowPrototype);
   }
   return (name) => {
-    const own = descriptors.get(name);
-    const holder = own ? manager : overrides;
+    const own = ownDescriptors.get(name);
+    const holder = own ? manager : shadowPrototype;
     if (Reflect.get(holder, name) === replacements[name]) {
       if (own) Object.defineProperty(manager, name, own);
-      else Reflect.deleteProperty(overrides, name);
+      else Reflect.deleteProperty(shadowPrototype, name);
     }
     if (
-      Object.getPrototypeOf(manager) === overrides &&
-      names.every((key) => !Object.hasOwn(overrides, key))
+      Object.getPrototypeOf(manager) === shadowPrototype &&
+      PATCHED_METHODS.every((key) => !Object.hasOwn(shadowPrototype, key))
     ) {
-      Object.setPrototypeOf(manager, originalPrototype);
+      Object.setPrototypeOf(manager, basePrototype);
     }
   };
 }
 
 const INTERRUPTED_QUEUE_REASON = "Interrupted before the steer was accepted.";
 
+/**
+ * Snapshot the follow-up queue before the old Turn is cancelled, and hand back
+ * a callback that unpauses exactly the entries the cancellation paused (any
+ * message that was already paused before us keeps its own reason).
+ */
 async function preserveQueuedFollowUps(
   manager: SteeringManager,
   threadId: string,
@@ -104,23 +114,22 @@ async function preserveQueuedFollowUps(
   await coordinator.loadMessages.call(coordinator, threadId);
   const messages: unknown = coordinator.readMessages.call(coordinator, threadId);
   if (!Array.isArray(messages)) throw new Error("Desktop follow-up queue is unavailable");
-  const alreadyPaused = new Set(
+  const pausedBeforeUs = new Set(
     messages
       .filter((message) => isRecord(message) && message.pausedReason != null)
       .map((message) => (message as Record<string, unknown>).id),
   );
   return () => {
-    // A real interrupted terminal pauses Desktop's queue. Resume only pauses introduced
-    // by this replacement, including messages queued while cancellation was pending.
     (coordinator.mutate as RendererMethod).call(coordinator, threadId, (current: unknown) => {
       if (!Array.isArray(current)) return current;
       return current.map((message) => {
         if (
           !isRecord(message) ||
-          alreadyPaused.has(message.id) ||
+          pausedBeforeUs.has(message.id) ||
           message.pausedReason !== INTERRUPTED_QUEUE_REASON
-        )
+        ) {
           return message;
+        }
         const resumed = { ...message };
         delete resumed.pausedReason;
         return resumed;
@@ -130,17 +139,18 @@ async function preserveQueuedFollowUps(
 }
 
 /**
- * Use Desktop's normal start presentation BEFORE it creates an old-Turn steering Item.
- * Only this operation's outgoing start RPC becomes steer; Host owns stop/wait/start.
- * Official Threads retain the original steer implementation and response semantics.
+ * Route external-Thread direction changes through Desktop's ordinary start
+ * presentation first; only the outgoing start RPC is rewritten into a steer.
+ * Stopping, waiting, and starting remain owned by the Host. Official Threads
+ * keep the untouched steer implementation and its response semantics.
  */
 export function installRendererExternalSteering(target: unknown): (() => void) | null {
-  if (!isManager(target)) return null;
+  if (!isSteeringManager(target)) return null;
   const manager = target;
   const originalSteer = manager.steerTurn;
   const originalSend = manager.sendRequest;
-  const routes = new Map<string, { threadId: string; expectedTurnId: string }>();
-  const pending = new Map<
+  const startRoutes = new Map<string, { threadId: string; expectedTurnId: string }>();
+  const pendingReplacements = new Map<
     string,
     { messageId: string; fingerprint: string; promise: Promise<unknown> }
   >();
@@ -150,7 +160,7 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
     const messageId = isRecord(params) ? params.clientUserMessageId : null;
     const route =
       typeof messageId === "string" && isRecord(params)
-        ? routes.get(`${params.threadId}\u0000${messageId}`)
+        ? startRoutes.get(`${params.threadId}\u0000${messageId}`)
         : undefined;
     if (
       method !== "turn/start" ||
@@ -207,16 +217,19 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
       onMessageAdded,
     ] = args;
     if (typeof threadId !== "string") return originalSteer.apply(manager, args);
-    const role = manager.getStreamRole?.(threadId);
-    // Let Desktop forward to the owning window; its manager performs the replacement.
-    if (isRecord(role) && role.role === "follower") return originalSteer.apply(manager, args);
-    let host: ReturnType<typeof submissionHost> | null = null;
+    const initialRole = manager.getStreamRole?.(threadId);
+    // A follower window forwards to its owner; the owner's own manager does
+    // the replacement, so stay out of the way here.
+    if (isRecord(initialRole) && initialRole.role === "follower") {
+      return originalSteer.apply(manager, args);
+    }
+    let host: ReturnType<typeof resolveSubmissionHost> | null = null;
     let expectedTurnId: unknown;
     try {
-      host = submissionHost(manager);
+      host = resolveSubmissionHost(manager);
       expectedTurnId = host.getActiveTurnId(threadId);
     } catch {
-      // Official steering must not depend on our additional presentation binding.
+      // Official steering must keep working even when this extra binding is missing.
     }
     const ownership = threadOwnershipListResultSchema.parse(
       await originalSend.call(manager, "harnessmix/thread/ownership/list", {
@@ -228,9 +241,8 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
     if (disposed) throw new Error("External steering binding was disposed");
     if (owner === "codex") return originalSteer.apply(manager, args);
     if (!host) throw new Error("Desktop turn submission binding is unavailable");
-    const currentRole = manager.getStreamRole?.(threadId);
-    if (isRecord(currentRole) && currentRole.role === "follower")
-      return originalSteer.apply(manager, args);
+    const roleNow = manager.getStreamRole?.(threadId);
+    if (isRecord(roleNow) && roleNow.role === "follower") return originalSteer.apply(manager, args);
     if (
       !Array.isArray(input) ||
       input.length === 0 ||
@@ -256,7 +268,7 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
           ? restoreMessage.id
           : crypto.randomUUID();
     const fingerprint = JSON.stringify(input);
-    const existing = pending.get(threadId);
+    const existing = pendingReplacements.get(threadId);
     if (existing) {
       if (existing.messageId === messageId && existing.fingerprint === fingerprint)
         return existing.promise;
@@ -270,7 +282,9 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
     }
     const context = restoreMessage.context;
     const routeKey = `${threadId}\u0000${messageId}`;
-    if (typeof expectedTurnId === "string") routes.set(routeKey, { threadId, expectedTurnId });
+    if (typeof expectedTurnId === "string") {
+      startRoutes.set(routeKey, { threadId, expectedTurnId });
+    }
     const promise = Promise.resolve()
       .then(async () => {
         if (disposed) throw new Error("External steering binding was disposed");
@@ -310,28 +324,30 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
         try {
           resumeQueue();
         } catch {
-          // Never turn an accepted input into a failed delivery (and invite a retry).
+          // The input was already accepted; a resume failure must not turn it
+          // into a failed delivery (which would invite a duplicate retry).
           console.error("harnessmix could not restore follow-up queue state after steering");
         }
         return { turnId: response.turn.id };
       })
       .finally(() => {
-        routes.delete(routeKey);
-        pending.delete(threadId);
+        startRoutes.delete(routeKey);
+        pendingReplacements.delete(threadId);
       });
-    pending.set(threadId, { messageId, fingerprint, promise });
+    pendingReplacements.set(threadId, { messageId, fingerprint, promise });
     return promise;
   };
 
-  const restoreMethod = installSteeringMethods(manager, { sendRequest: send, steerTurn: steer });
+  const restoreMethod = patchSteeringMethods(manager, { sendRequest: send, steerTurn: steer });
   return () => {
     disposed = true;
     restoreMethod("steerTurn");
-    // In-flight starts must fail closed, not accidentally become ordinary start RPCs.
-    if (pending.size === 0) {
+    // Starts still in flight must fail closed rather than silently becoming
+    // plain start RPCs, so sendRequest stays patched until they settle.
+    if (pendingReplacements.size === 0) {
       restoreMethod("sendRequest");
     } else {
-      void Promise.allSettled([...pending.values()].map(({ promise }) => promise)).then(() => {
+      void Promise.allSettled([...pendingReplacements.values()].map(({ promise }) => promise)).then(() => {
         restoreMethod("sendRequest");
       });
     }

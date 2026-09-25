@@ -1,5 +1,11 @@
-const MAIN_MENU_SIDE_OFFSET = 8;
-const COLLISION_PADDING = 8;
+/**
+ * Model-picker popup geometry: the menu opens upward from the trigger and
+ * clamps itself inside the viewport with a fixed collision margin. Constants
+ * are layout behavior; the helpers below are pure so tests can drive them
+ * with synthetic rects.
+ */
+const GAP_ABOVE_TRIGGER = 8;
+const COLLISION_MARGIN = 8;
 
 export const RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH = 260;
 export const RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH = 176;
@@ -24,23 +30,21 @@ export interface RendererMenuPlacement {
   maxHeight?: number;
 }
 
-function clampPosition(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(Math.max(value, low), Math.max(low, high));
 }
 
-function fitWidth(preferredWidth: number, viewportWidth: number): number {
-  return Math.max(
-    COLLISION_PADDING,
-    Math.min(preferredWidth, viewportWidth - COLLISION_PADDING * 2),
-  );
+/** Preferred width, shrunk to leave collision margins on both sides. */
+function fitWithin(preferred: number, viewportWidth: number): number {
+  return Math.max(COLLISION_MARGIN, Math.min(preferred, viewportWidth - COLLISION_MARGIN * 2));
 }
 
-// 模型列 +（可选）思考强度列的单弹层总宽度，随视口收缩
+/** 模型列 +（可选）思考强度列的单弹层总宽度，随视口收缩 */
 export function rendererModelPickerMenuWidth(twoColumn: boolean, viewportWidth: number): number {
   const preferred = twoColumn
     ? RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH + RENDERER_MODEL_PICKER_THINKING_COLUMN_WIDTH
     : RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH;
-  return fitWidth(preferred, viewportWidth);
+  return fitWithin(preferred, viewportWidth);
 }
 
 export function rendererModelPickerMainMenuPlacement(
@@ -48,17 +52,17 @@ export function rendererModelPickerMainMenuPlacement(
   viewport: RendererViewport,
   width = RENDERER_MODEL_PICKER_MAIN_MENU_WIDTH,
 ): RendererMenuPlacement {
-  const maxLeft = viewport.width - COLLISION_PADDING - width;
+  const rightMost = viewport.width - COLLISION_MARGIN - width;
   return {
-    left: clampPosition(triggerRect.right - width, COLLISION_PADDING, maxLeft),
+    left: clamp(triggerRect.right - width, COLLISION_MARGIN, rightMost),
     width,
-    bottom: Math.max(COLLISION_PADDING, viewport.height - triggerRect.top + MAIN_MENU_SIDE_OFFSET),
     // 弹层自触发器向上展开：可用高度 = 触发器顶部到视口顶部
+    bottom: Math.max(COLLISION_MARGIN, viewport.height - triggerRect.top + GAP_ABOVE_TRIGGER),
     maxHeight: Math.max(
-      COLLISION_PADDING * 2,
+      COLLISION_MARGIN * 2,
       Math.min(
         RENDERER_MODEL_PICKER_MODEL_MENU_MAX_HEIGHT,
-        triggerRect.top - MAIN_MENU_SIDE_OFFSET - COLLISION_PADDING,
+        triggerRect.top - GAP_ABOVE_TRIGGER - COLLISION_MARGIN,
       ),
     ),
   };

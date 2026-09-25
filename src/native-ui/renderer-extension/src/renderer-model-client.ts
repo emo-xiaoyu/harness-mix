@@ -136,7 +136,8 @@ export const THREAD_TEAM_MESSAGE_SEND_METHOD = "harnessmix/thread/team/message/s
 export const THREAD_TEAM_MESSAGE_ACK_METHOD = "harnessmix/thread/team/message/ack";
 export const THREAD_COLLABORATION_CONTINUE_METHOD = "harnessmix/thread/collaboration/continue";
 
-// 看板用户操作：principal 是用户；授权与语义统一在 Host 的 collaboration.userAction 裁决。
+// Board user intents: the principal is the end user; authorization and
+// semantics are decided by the Host's collaboration.userAction adjudication.
 export type CollaborationUserActionInput =
   | { action: "task/cancel"; threadId: string; teamId: string; taskId: string }
   | { action: "task/reassign"; threadId: string; teamId: string; taskId: string; memberId: string; note?: string }
@@ -162,10 +163,21 @@ export const CODEX_ACCOUNT_LOGIN_COMPLETED_METHOD = "harnessmix/account/login/co
 export const CODEX_ACCOUNT_RESET_CREDIT_CONSUME_METHOD =
   "harnessmix/account/rate-limit-reset/consume";
 
+const COLLABORATION_ACTION_METHODS: Readonly<Record<CollaborationUserActionInput["action"], string>> = {
+  "task/cancel": THREAD_TEAM_TASK_CANCEL_METHOD,
+  "task/reassign": THREAD_TEAM_TASK_REASSIGN_METHOD,
+  "task/insert": THREAD_TEAM_TASK_INSERT_METHOD,
+  interrupt: THREAD_TEAM_INTERRUPT_METHOD,
+  "message/send": THREAD_TEAM_MESSAGE_SEND_METHOD,
+  "message/ack": THREAD_TEAM_MESSAGE_ACK_METHOD,
+  continue: THREAD_COLLABORATION_CONTINUE_METHOD,
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Pulls a validated threadId out of a usage notification, or null. */
 function notifiedThreadId(notification: unknown): ThreadUsageInspectionParams["threadId"] | null {
   if (
     !isRecord(notification) ||
@@ -189,7 +201,10 @@ interface RequestManagerCandidate {
   requestClient?: RequestManagerCandidate;
 }
 
-function notificationTarget(manager: RequestManagerCandidate): RequestManagerCandidate | null {
+/** Notifications may live on the manager itself or on its nested client. */
+function resolveNotificationTarget(
+  manager: RequestManagerCandidate,
+): RequestManagerCandidate | null {
   if (typeof manager.addNotificationCallback === "function") return manager;
   const nested = manager.requestClient;
   return nested && typeof nested.addNotificationCallback === "function" ? nested : null;
@@ -199,7 +214,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   petsClient?: RendererPetsClient;
   inspectStorage?(): Promise<import('./settings/storage-page.js').RendererStorageInspection>;
   optimizeStorage?(): Promise<{ before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }>;
-  listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>>;
+  listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean; teamReady?: boolean }>>;
   getCollaborationPreferences?(): Promise<{ collaboration: boolean; agentTeam: boolean }>;
   saveCollaborationPreferences?(input: { collaboration?: boolean; agentTeam?: boolean }): Promise<{ collaboration: boolean; agentTeam: boolean }>;
   currentHostId?(): string | null;
@@ -224,7 +239,7 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   healthSnapshot?(): Promise<unknown>;
   healthRefresh?(): Promise<unknown>;
   listTeamTemplates?(input?: { threadId?: string }): Promise<unknown>;
-  saveTeamTemplate?(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string }> }): Promise<unknown>;
+  saveTeamTemplate?(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string; model?: { id: string; name: string; provider?: string }; thinking?: string }> }): Promise<unknown>;
   deleteTeamTemplate?(id: string): Promise<unknown>;
   restoreTeamTemplates?(): Promise<unknown>;
   subscribeThreadUsage?(listener: (update: ThreadUsageInspection) => void): () => void;
@@ -263,17 +278,19 @@ export function createThreadUsageSubscriptionRelay(): {
   dispose(): void;
 } {
   const listeners = new Set<(update: ThreadUsageInspection) => void>();
-  let removeNotificationCallback: (() => void) | null = null;
+  let detach: (() => void) | null = null;
   return {
     connect(client) {
-      if (removeNotificationCallback || listeners.size === 0) return;
+      // Stay deferred until somebody actually listens; a reconnect after a
+      // failed attempt is allowed, but never while a hookup exists.
+      if (detach || listeners.size === 0) return;
       try {
-        removeNotificationCallback =
+        detach =
           client.subscribeThreadUsage?.((update) => {
             for (const listener of listeners) listener(update);
           }) ?? null;
       } catch {
-        removeNotificationCallback = null;
+        detach = null;
       }
     },
     subscribe(listener) {
@@ -281,21 +298,21 @@ export function createThreadUsageSubscriptionRelay(): {
       return () => {
         listeners.delete(listener);
         if (listeners.size > 0) return;
-        removeNotificationCallback?.();
-        removeNotificationCallback = null;
+        detach?.();
+        detach = null;
       };
     },
     dispose() {
-      removeNotificationCallback?.();
-      removeNotificationCallback = null;
+      detach?.();
+      detach = null;
       listeners.clear();
     },
   };
 }
 
-/** Mutations that may legitimately outlive the default request timeout
- * (installs, forks, Harness handoffs, command execution, update downloads,
- * interactive Account login) keep the previous unbounded wait. */
+/** Mutations that legitimately outlive the default request timeout (installs,
+ * forks, Harness handoffs, command execution, update downloads, interactive
+ * Account login) keep the previous unbounded wait. */
 const REQUEST_TIMEOUT_EXEMPT_METHODS: ReadonlySet<string> = new Set([
   HARNESS_INSTALL_METHOD,
   THREAD_FORK_METHOD,
@@ -384,7 +401,7 @@ export function createRendererModelClient(
   return Object.freeze({
     async inspectStorage() { return await manager.sendRequest('harnessmix/storage/inspect', {}) as import('./settings/storage-page.js').RendererStorageInspection; },
     async optimizeStorage() { return await manager.sendRequest('harnessmix/storage/optimize', {}) as { before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }; },
-    async listCollaborationAgents(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean }>> {
+    async listCollaborationAgents(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean; teamReady?: boolean }>> {
       const result = await manager.sendRequest('harnessmix/collaboration/agents', {});
       if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');
       return result;
@@ -411,13 +428,15 @@ export function createRendererModelClient(
       const result = await manager.sendRequest(THREAD_FORK_METHOD, params);
       return externalThreadForkResultSchema.parse(result);
     },
-    // 原地切换 Harness：历史保留在 Host 线程上，切换后首轮由 Host 附带一次性上下文信封
+    // In-place Harness switch: history stays on the Host Thread; the first
+    // turn after the switch carries a one-shot context envelope.
     async switchHarness(input: ThreadHarnessSwitchParams): Promise<ThreadHarnessSwitchResult> {
       const params = threadHarnessSwitchParamsSchema.parse(input);
       const result = await manager.sendRequest(THREAD_HARNESS_SWITCH_METHOD, params);
       return threadHarnessSwitchResultSchema.parse(result);
     },
-    // 跨 Harness 协作：委派新子任务 / 跟进既有子任务；等待链由父线程协作 Turn 承载
+    // Cross-Harness collaboration: delegate a fresh subtask / follow up on an
+    // existing one; the wait chain rides on the parent thread's collaboration Turn.
     async delegateThread(input: ThreadDelegateParams): Promise<ThreadDelegationResult> {
       const params = threadDelegateParamsSchema.parse(input);
       const result = await manager.sendRequest(THREAD_DELEGATE_METHOD, params);
@@ -455,9 +474,10 @@ export function createRendererModelClient(
       } catch (error) {
         if (!(error instanceof RendererMethodUnavailableError)) throw error;
 
-        // Stock Codex has no Host inspection API. Verify its native Thread on
-        // this same connection; neither an RPC failure nor a missing Account
-        // establishes ownership. Match the external markers used by the Host.
+        // Stock Codex has no Host inspection API. Fall back to its native
+        // Thread on the same connection; neither an RPC failure nor a missing
+        // Account proves ownership. Only the external markers used by the
+        // Host count.
         const native = await manager.sendRequest("thread/read", {
           threadId: params.threadId,
           includeTurns: false,
@@ -503,19 +523,7 @@ export function createRendererModelClient(
     },
     async collaborationUserAction(input: CollaborationUserActionInput): Promise<unknown> {
       const threadId = hostThreadIdSchema.parse(input.threadId);
-      const method = input.action === "task/cancel"
-        ? THREAD_TEAM_TASK_CANCEL_METHOD
-        : input.action === "task/reassign"
-          ? THREAD_TEAM_TASK_REASSIGN_METHOD
-          : input.action === "task/insert"
-            ? THREAD_TEAM_TASK_INSERT_METHOD
-            : input.action === "interrupt"
-              ? THREAD_TEAM_INTERRUPT_METHOD
-          : input.action === "message/send"
-            ? THREAD_TEAM_MESSAGE_SEND_METHOD
-          : input.action === "message/ack"
-            ? THREAD_TEAM_MESSAGE_ACK_METHOD
-            : THREAD_COLLABORATION_CONTINUE_METHOD;
+      const method = COLLABORATION_ACTION_METHODS[input.action];
       const params: Record<string, unknown> = { threadId };
       for (const [key, value] of Object.entries(input)) {
         if (key !== "action" && key !== "threadId" && value !== undefined) params[key] = value;
@@ -535,10 +543,10 @@ export function createRendererModelClient(
       return await manager.sendRequest('harnessmix/health/refresh', {});
     },
     async listTeamTemplates(input?: { threadId?: string }): Promise<unknown> {
-      // threadId → Host 以该线程的 cwd 为项目作用域，合并 .harness-mix/teams/*.md
+      // threadId → Host scopes to that thread's cwd and merges .harness-mix/teams/*.md
       return await manager.sendRequest('harnessmix/collaboration/team-template/list', input ?? {});
     },
-    async saveTeamTemplate(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string }> }): Promise<unknown> {
+    async saveTeamTemplate(input: { id?: string; name: string; description?: string; members: Array<{ name: string; role: string; agent: string; model?: { id: string; name: string; provider?: string }; thinking?: string }> }): Promise<unknown> {
       return await manager.sendRequest('harnessmix/collaboration/team-template/save', input);
     },
     async deleteTeamTemplate(id: string): Promise<unknown> {
@@ -548,13 +556,15 @@ export function createRendererModelClient(
       return await manager.sendRequest('harnessmix/collaboration/team-template/restore-builtins', {});
     },
     subscribeThreadUsage(listener: (update: ThreadUsageInspection) => void): () => void {
-      const notifications = notificationTarget(source);
+      const notifications = resolveNotificationTarget(source);
       if (!notifications?.addNotificationCallback) {
         throw new Error("Renderer Usage notification callback is unavailable");
       }
-      let disposed = false;
+      let unsubscribed = false;
+      // Per-thread generations collapse notification bursts: only the newest
+      // refresh per thread may still deliver to the listener.
       const generations = new Map<ThreadUsageInspectionParams["threadId"], number>();
-      const removeNotificationCallback = notifications.addNotificationCallback(
+      const detach = notifications.addNotificationCallback(
         [THREAD_TOKEN_USAGE_UPDATED_METHOD, THREAD_USAGE_UPDATED_METHOD],
         (notification) => {
           const threadId = notifiedThreadId(notification);
@@ -563,16 +573,16 @@ export function createRendererModelClient(
           generations.set(threadId, generation);
           void inspectThreadUsage({ threadId })
             .then((update) => {
-              if (!disposed && generations.get(threadId) === generation) listener(update);
+              if (!unsubscribed && generations.get(threadId) === generation) listener(update);
             })
             .catch(() => undefined);
         },
       );
       return () => {
-        if (disposed) return;
-        disposed = true;
+        if (unsubscribed) return;
+        unsubscribed = true;
         generations.clear();
-        removeNotificationCallback();
+        detach();
       };
     },
     selectThreadModel,
@@ -683,7 +693,7 @@ export function createRendererModelClient(
       return codexAccountMutationResultSchema.parse(result);
     },
     subscribeCodexAccountLogin(listener: (result: CodexAccountLoginCompleted) => void): () => void {
-      const notifications = notificationTarget(source);
+      const notifications = resolveNotificationTarget(source);
       if (!notifications?.addNotificationCallback) {
         throw new Error("Renderer Account login notification callback is unavailable");
       }

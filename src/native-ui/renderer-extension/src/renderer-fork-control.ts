@@ -15,71 +15,78 @@ import {
 const RESPONSE_CONVERSATION_ATTRIBUTE = "data-response-annotation-conversation";
 const TURN_KEY_ATTRIBUTE = "data-content-search-turn-key";
 const OPEN_THREAD_TIMEOUT_MS = 5_000;
+const FIBER_ANCESTRY_LIMIT = 24;
+const FIBER_PROPERTY_PREFIX = "__reactFiber$";
 
-function abortError(): Error {
+function threadOpenAborted(): Error {
   return Object.assign(new Error("Thread opening was aborted"), { name: "AbortError" });
 }
 
+/**
+ * Click the sidebar row that owns `threadId` (optionally only rows registered
+ * under a specific host), waiting briefly for it to appear.
+ */
 export function openRendererThread(
   threadId: HostThreadId,
   options: { hostId?: string; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<void> {
-  const find = (): HTMLElement | null => {
+  const locateRow = (): HTMLElement | null => {
     for (const row of document.querySelectorAll<HTMLElement>(SIDEBAR_THREAD_ROW_SELECTOR)) {
-      if (
-        (options.hostId === undefined ||
-          row.getAttribute(SIDEBAR_THREAD_HOST_ID_ATTRIBUTE) === options.hostId) &&
-        threadIdFromSidebarRowElement(row) === threadId
-      ) {
+      const hostMatches =
+        options.hostId === undefined ||
+        row.getAttribute(SIDEBAR_THREAD_HOST_ID_ATTRIBUTE) === options.hostId;
+      if (hostMatches && threadIdFromSidebarRowElement(row) === threadId) {
         return row;
       }
     }
     return null;
   };
-  if (options.signal?.aborted) return Promise.reject(abortError());
-  const current = find();
-  if (current) {
-    current.click();
+
+  if (options.signal?.aborted) return Promise.reject(threadOpenAborted());
+  const immediate = locateRow();
+  if (immediate) {
+    immediate.click();
     return Promise.resolve();
   }
+
   return new Promise((resolve, reject) => {
     let settled = false;
-    const cleanup = (): void => {
-      window.clearTimeout(timeout);
-      observer.disconnect();
+    const teardown = (): void => {
+      window.clearTimeout(timeoutHandle);
+      sidebarObserver.disconnect();
       options.signal?.removeEventListener("abort", onAbort);
     };
-    const finish = (row: HTMLElement): void => {
+    const settleWith = (row: HTMLElement): void => {
       if (settled) return;
       settled = true;
-      cleanup();
+      teardown();
       row.click();
       resolve();
     };
-    const observer = new MutationObserver(() => {
-      const row = find();
-      if (row) finish(row);
+    const sidebarObserver = new MutationObserver(() => {
+      const row = locateRow();
+      if (row) settleWith(row);
     });
-    const timeout = window.setTimeout(() => {
+    const timeoutHandle = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      cleanup();
+      teardown();
       reject(new Error("Thread did not appear in the sidebar"));
     }, options.timeoutMs ?? OPEN_THREAD_TIMEOUT_MS);
     const onAbort = (): void => {
       if (settled) return;
       settled = true;
-      cleanup();
-      reject(abortError());
+      teardown();
+      reject(threadOpenAborted());
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    sidebarObserver.observe(document.documentElement, { childList: true, subtree: true });
     if (options.signal?.aborted) {
       onAbort();
       return;
     }
-    const row = find();
-    if (row) finish(row);
+    const row = locateRow();
+    if (row) settleWith(row);
   });
 }
 
@@ -110,16 +117,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function firstFiber(element: Element): Record<string, unknown> | null {
-  const names = Object.getOwnPropertyNames(element).filter((name) =>
-    name.startsWith("__reactFiber$"),
+function soleReactFiber(element: Element): Record<string, unknown> | null {
+  const keys = Object.getOwnPropertyNames(element).filter((key) =>
+    key.startsWith(FIBER_PROPERTY_PREFIX),
   );
-  const name = names[0];
-  if (names.length !== 1 || !name) return null;
-  const value = Object.getOwnPropertyDescriptor(element, name)?.value;
-  return isRecord(value) ? value : null;
+  const key = keys[0];
+  if (keys.length !== 1 || !key) return null;
+  const fiber = Object.getOwnPropertyDescriptor(element, key)?.value;
+  return isRecord(fiber) ? fiber : null;
 }
 
+/**
+ * Trust a Fork button only when its DOM ids and its React Fiber ancestry agree
+ * on thread, turn, and host, and a genuine onFork handler exists above it.
+ */
 export function rendererForkTargetFromButton(button: HTMLButtonElement): RendererForkTarget | null {
   const annotation = button.closest<HTMLElement>(`[${RESPONSE_CONVERSATION_ATTRIBUTE}]`);
   const turnElement = button.closest<HTMLElement>(`[${TURN_KEY_ATTRIBUTE}]`);
@@ -129,42 +140,42 @@ export function rendererForkTargetFromButton(button: HTMLButtonElement): Rendere
   const turnId = hostTurnIdSchema.safeParse(turnElement?.getAttribute(TURN_KEY_ATTRIBUTE));
   if (!threadId.success || !turnId.success) return null;
 
-  const conversationIds = new Set<string>();
-  const turnIds = new Set<string>();
-  const hostIds = new Set<string>();
-  const projectlessStates = new Set<boolean>();
-  let hasForkCallback = false;
-  let fiber = firstFiber(button);
+  const fiberThreadIds = new Set<string>();
+  const fiberTurnIds = new Set<string>();
+  const fiberHostIds = new Set<string>();
+  const projectlessFlags = new Set<boolean>();
+  let sawForkHandler = false;
+  let fiber = soleReactFiber(button);
   const buttonProps = fiber?.memoizedProps;
   if (!isRecord(buttonProps) || !Object.hasOwn(buttonProps, "aria-busy")) return null;
-  for (let depth = 0; fiber && depth < 24; depth += 1) {
+  for (let level = 0; fiber && level < FIBER_ANCESTRY_LIMIT; level += 1) {
     const props = fiber.memoizedProps;
     if (isRecord(props)) {
-      if (typeof props.conversationId === "string") conversationIds.add(props.conversationId);
-      if (typeof props.turnId === "string") turnIds.add(props.turnId);
-      if (typeof props.hostId === "string") hostIds.add(props.hostId);
+      if (typeof props.conversationId === "string") fiberThreadIds.add(props.conversationId);
+      if (typeof props.turnId === "string") fiberTurnIds.add(props.turnId);
+      if (typeof props.hostId === "string") fiberHostIds.add(props.hostId);
       if (typeof props.isProjectlessConversation === "boolean") {
-        projectlessStates.add(props.isProjectlessConversation);
+        projectlessFlags.add(props.isProjectlessConversation);
       }
-      if (typeof props.onFork === "function") hasForkCallback = true;
+      if (typeof props.onFork === "function") sawForkHandler = true;
     }
     fiber = isRecord(fiber.return) ? fiber.return : null;
   }
   if (
-    !hasForkCallback ||
-    conversationIds.size !== 1 ||
-    !conversationIds.has(threadId.data) ||
-    turnIds.size !== 1 ||
-    !turnIds.has(turnId.data) ||
-    hostIds.size !== 1 ||
-    !hostIds.has("local") ||
-    projectlessStates.size !== 1
+    !sawForkHandler ||
+    fiberThreadIds.size !== 1 ||
+    !fiberThreadIds.has(threadId.data) ||
+    fiberTurnIds.size !== 1 ||
+    !fiberTurnIds.has(turnId.data) ||
+    fiberHostIds.size !== 1 ||
+    !fiberHostIds.has("local") ||
+    projectlessFlags.size !== 1
   ) {
     return null;
   }
   return {
     control: button,
-    isProjectlessConversation: projectlessStates.has(true),
+    isProjectlessConversation: projectlessFlags.has(true),
     threadId: threadId.data,
     turnId: turnId.data,
   };
@@ -189,7 +200,7 @@ export function inspectRendererForkContract(
 }
 
 class BrowserRendererForkDom implements RendererForkDom {
-  readonly #replayed = new WeakSet<HTMLButtonElement>();
+  readonly #suppressedClicks = new WeakSet<HTMLButtonElement>();
 
   listen(onFork: (target: RendererForkTarget) => boolean): () => void {
     const listener = (event: MouseEvent): void => {
@@ -201,7 +212,7 @@ class BrowserRendererForkDom implements RendererForkDom {
             : null;
       const button = origin?.closest<HTMLButtonElement>("button");
       if (!button) return;
-      if (this.#replayed.delete(button)) return;
+      if (this.#suppressedClicks.delete(button)) return;
       const target = rendererForkTargetFromButton(button);
       if (!target || !onFork(target)) return;
       event.preventDefault();
@@ -213,7 +224,7 @@ class BrowserRendererForkDom implements RendererForkDom {
 
   replay(target: RendererForkTarget): void {
     if (!(target.control instanceof HTMLButtonElement) || !target.control.isConnected) return;
-    this.#replayed.add(target.control);
+    this.#suppressedClicks.add(target.control);
     target.control.click();
   }
 
@@ -228,21 +239,22 @@ export function installRendererForkControl(options: {
   reportError?(error: unknown): void;
 }): RendererForkControl {
   const dom = options.dom ?? new BrowserRendererForkDom();
-  const pending = new Set<string>();
+  const inFlight = new Set<string>();
   let disposed = false;
-  const stop = dom.listen((target) => {
+  const stopListening = dom.listen((target) => {
     if (disposed) return false;
     const client = options.getClient();
     if (!client) return false;
     const key = `${target.threadId}\u0000${target.turnId}`;
-    if (pending.has(key)) return true;
-    pending.add(key);
+    if (inFlight.has(key)) return true;
+    inFlight.add(key);
     void client
       .inspectThread({ threadId: target.threadId })
       .then(async (inspection) => {
         if (disposed) return;
-        // Project Threads must retain Desktop's native destination/worktree flow.
-        // forkAcrossCwd validates the chosen destination at Host; it must not bypass that UI.
+        // Project Threads keep Desktop's own destination/worktree picker: the
+        // Host validates chosen destinations inside forkAcrossCwd and that UI
+        // must stay in the loop.
         if (
           inspection.owner === "codex" ||
           !inspection.history.fork ||
@@ -251,14 +263,14 @@ export function installRendererForkControl(options: {
           dom.replay(target);
           return;
         }
-        const result = await client.forkThread({
+        const forked = await client.forkThread({
           threadId: target.threadId,
           lastTurnId: target.turnId,
         });
-        if (!disposed) await dom.openThread(result.threadId);
+        if (!disposed) await dom.openThread(forked.threadId);
       })
       .catch((error: unknown) => options.reportError?.(error))
-      .finally(() => pending.delete(key));
+      .finally(() => inFlight.delete(key));
     return true;
   });
 
@@ -266,8 +278,8 @@ export function installRendererForkControl(options: {
     dispose() {
       if (disposed) return;
       disposed = true;
-      stop();
-      pending.clear();
+      stopListening();
+      inFlight.clear();
     },
   };
 }

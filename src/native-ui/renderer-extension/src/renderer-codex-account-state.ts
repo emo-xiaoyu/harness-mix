@@ -1,3 +1,9 @@
+/**
+ * Codex account selection state for one Host connection. The override picks
+ * an isolated account; when it no longer exists the active account takes
+ * over. Only this Host's last snapshot is kept — a transient refresh failure
+ * must not blank the picker.
+ */
 import type { CodexAccountSummary } from "@harnessmix/shared-contracts";
 import type { RendererModelClient } from "./renderer-model-client.js";
 
@@ -36,10 +42,9 @@ export class RendererCodexAccountState {
   overrideAccountId: string | null = null;
   switching = false;
   #request: Promise<void> | null = null;
+  #loaded = false;
 
   constructor(readonly client: RendererModelClient) {}
-
-  #loaded = false;
 
   /** True once a refresh completed. Empty + not loaded means routing is still unknown. */
   get loaded(): boolean {
@@ -60,8 +65,8 @@ export class RendererCodexAccountState {
         this.#loaded = true;
       })
       .catch(() => {
-        // Keep only this Host's last known data on transient failures. A Host
-        // without the Account API starts empty and keeps the plain Codex option.
+        // Keep the last snapshot: a Host without the Account API stays empty
+        // and the plain Codex option remains available.
       })
       .finally(() => {
         this.#request = null;

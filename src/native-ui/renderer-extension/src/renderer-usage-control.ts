@@ -7,6 +7,14 @@ import {
   TRIGGER_CHIP_CLASS,
 } from "./renderer-trigger-chip-style.js";
 
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const CLOSE_GRACE_MS = 140;
+const RING_HOT_THRESHOLD = 90;
+const RING_WARN_THRESHOLD = 70;
+const RING_HOT_COLOR = "#c45c4a";
+const RING_WARN_COLOR = "#c9a227";
+const RING_OK_COLOR = "#3d9a64";
+
 export interface RendererUsageControl {
   root: HTMLDivElement;
   trigger: HTMLButtonElement;
@@ -80,12 +88,13 @@ export function rendererUsageMessages(locale: RendererSettingsLocale): RendererU
   return locale === "zh-CN" ? CHINESE_USAGE_MESSAGES : ENGLISH_USAGE_MESSAGES;
 }
 
-function decimal(value: number, fractionDigits: number): string {
+/** Fixed-precision decimal with meaningless trailing zeros (and a lone dot) removed. */
+function fixedDecimal(value: number, fractionDigits: number): string {
   return value.toFixed(fractionDigits).replace(/\.?0+$/u, "");
 }
 
 export function formatRendererCacheHitRate(value: number): string {
-  return `CH ${decimal(value, 1)}%`;
+  return `CH ${fixedDecimal(value, 1)}%`;
 }
 
 export function formatRendererCost(value: number): string {
@@ -93,31 +102,35 @@ export function formatRendererCost(value: number): string {
 }
 
 export function formatRendererCredits(value: number): string {
-  return `${value > 0 && value < 0.001 ? "<0.001" : decimal(value, 3)} credits`;
+  return `${value > 0 && value < 0.001 ? "<0.001" : fixedDecimal(value, 3)} credits`;
 }
 
 export function formatRendererTokenRate(
   value: number,
   locale: RendererSettingsLocale = "en",
 ): string {
-  return `${decimal(value, 1)} ${rendererUsageMessages(locale).tokensPerSecond}`;
+  return `${fixedDecimal(value, 1)} ${rendererUsageMessages(locale).tokensPerSecond}`;
 }
 
 export function formatRendererTokenCount(value: number): string {
-  const sign = value < 0 ? "-" : "";
-  const absolute = Math.abs(value);
-  if (absolute < 1_000) return `${sign}${Math.round(absolute)}`;
-  if (absolute < 1_000_000) return `${sign}${decimal(absolute / 1_000, 1)}k`;
-  if (absolute < 1_000_000_000) return `${sign}${decimal(absolute / 1_000_000, 1)}M`;
-  return `${sign}${decimal(absolute / 1_000_000_000, 1)}B`;
+  const magnitude = Math.abs(value);
+  const magnitudeLabel =
+    magnitude < 1_000
+      ? `${Math.round(magnitude)}`
+      : magnitude < 1_000_000
+        ? `${fixedDecimal(magnitude / 1_000, 1)}k`
+        : magnitude < 1_000_000_000
+          ? `${fixedDecimal(magnitude / 1_000_000, 1)}M`
+          : `${fixedDecimal(magnitude / 1_000_000_000, 1)}B`;
+  return `${value < 0 ? "-" : ""}${magnitudeLabel}`;
 }
 
 export function formatRendererContextSummary(usedTokens: number, windowTokens: number): string {
-  return `${decimal((usedTokens / windowTokens) * 100, 1)}% / ${formatRendererTokenCount(windowTokens)}`;
+  return `${fixedDecimal((usedTokens / windowTokens) * 100, 1)}% / ${formatRendererTokenCount(windowTokens)}`;
 }
 
 export function formatRendererCreditsPercent(value: number): string {
-  return `${decimal(value, 1)}%`;
+  return `${fixedDecimal(value, 1)}%`;
 }
 
 export interface RendererUsageRingOptions {
@@ -127,22 +140,21 @@ export interface RendererUsageRingOptions {
   trackColor?: string;
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-/** A small radial progress ring (0-100), used by the credits/plan-usage pills and popovers. */
+/** Radial 0-100 progress indicator reused by the Usage and Credits pills/popovers. */
 export function createRendererUsageRing(
   percent: number,
   options: RendererUsageRingOptions,
 ): SVGSVGElement {
-  const { size, strokeWidth, color } = options;
+  const size = options.size;
+  const strokeWidth = options.strokeWidth;
+  const ringColor = options.color;
   const trackColor = options.trackColor ?? "color-mix(in srgb, currentColor 18%, transparent)";
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.min(100, Math.max(0, percent));
-  const offset = circumference * (1 - clamped / 100);
-  const center = size / 2;
+  const dashOffset = circumference * (1 - Math.min(100, Math.max(0, percent)) / 100);
+  const mid = size / 2;
 
-  const svg = document.createElementNS(SVG_NS, "svg");
+  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
   svg.setAttribute("width", String(size));
   svg.setAttribute("height", String(size));
   svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
@@ -151,26 +163,26 @@ export function createRendererUsageRing(
   svg.style.flex = "0 0 auto";
   svg.style.transform = "rotate(-90deg)";
 
-  const track = document.createElementNS(SVG_NS, "circle");
-  track.setAttribute("cx", String(center));
-  track.setAttribute("cy", String(center));
-  track.setAttribute("r", String(radius));
-  track.setAttribute("fill", "none");
-  track.setAttribute("stroke", trackColor);
-  track.setAttribute("stroke-width", String(strokeWidth));
+  const circle = (stroke: string, extra: (node: SVGCircleElement) => void): SVGCircleElement => {
+    const node = document.createElementNS(SVG_NAMESPACE, "circle");
+    node.setAttribute("cx", String(mid));
+    node.setAttribute("cy", String(mid));
+    node.setAttribute("r", String(radius));
+    node.setAttribute("fill", "none");
+    node.setAttribute("stroke", stroke);
+    node.setAttribute("stroke-width", String(strokeWidth));
+    extra(node);
+    return node;
+  };
 
-  const fill = document.createElementNS(SVG_NS, "circle");
-  fill.setAttribute("cx", String(center));
-  fill.setAttribute("cy", String(center));
-  fill.setAttribute("r", String(radius));
-  fill.setAttribute("fill", "none");
-  fill.setAttribute("stroke", color);
-  fill.setAttribute("stroke-width", String(strokeWidth));
-  fill.setAttribute("stroke-linecap", "round");
-  fill.setAttribute("stroke-dasharray", String(circumference));
-  fill.setAttribute("stroke-dashoffset", String(offset));
-
-  svg.append(track, fill);
+  svg.append(
+    circle(trackColor, () => {}),
+    circle(ringColor, (node) => {
+      node.setAttribute("stroke-linecap", "round");
+      node.setAttribute("stroke-dasharray", String(circumference));
+      node.setAttribute("stroke-dashoffset", String(dashOffset));
+    }),
+  );
   return svg;
 }
 
@@ -203,38 +215,32 @@ export function rendererUsageTriggerMaxWidth(): string {
   return "min(180px, 30vw)";
 }
 
-/** Whether a snapshot contains anything useful for the left Usage popover. */
+/** True when the snapshot carries at least one field the Usage popover can display. */
 export function rendererUsageHasDisplayData(usage: ThreadUsageSnapshot | null): boolean {
+  if (!usage) return false;
   return (
-    usage?.cacheHitRatePercent !== undefined ||
-    usage?.outputTokensPerSecond !== undefined ||
-    usage?.totalCostUsd !== undefined ||
-    usage?.totalCredits !== undefined ||
-    usage?.contextUsagePercent !== undefined ||
-    (usage?.contextUsedTokens !== undefined && usage.contextWindowTokens !== undefined) ||
-    usage?.totalTokens !== undefined ||
-    usage?.inputTokens !== undefined ||
-    usage?.cachedInputTokens !== undefined ||
-    usage?.cacheWriteInputTokens !== undefined ||
-    usage?.outputTokens !== undefined ||
-    usage?.reasoningOutputTokens !== undefined
+    usage.cacheHitRatePercent !== undefined ||
+    usage.outputTokensPerSecond !== undefined ||
+    usage.totalCostUsd !== undefined ||
+    usage.totalCredits !== undefined ||
+    usage.contextUsagePercent !== undefined ||
+    (usage.contextUsedTokens !== undefined && usage.contextWindowTokens !== undefined) ||
+    usage.totalTokens !== undefined ||
+    usage.inputTokens !== undefined ||
+    usage.cachedInputTokens !== undefined ||
+    usage.cacheWriteInputTokens !== undefined ||
+    usage.outputTokens !== undefined ||
+    usage.reasoningOutputTokens !== undefined
   );
 }
 
 /**
- * Shared chrome for the Usage/Credits popovers: a raised card rather than a
- * flat system-color panel. `Canvas`/`CanvasText` still anchor the palette (so
- * this reads correctly regardless of the host page's own light/dark theme).
- *
- * Light and dark need different elevation recipes, not just inverted colors:
- * a light surface reads as clean when it stays near-white and lets a soft,
- * tight shadow carry the elevation; the same "tint the fill toward the
- * foreground colour" trick that lifts a dark surface off a near-black page
- * instead muddies a light one into flat grey, and the deep 45px/0.35-alpha
- * shadow tuned for a dark host smears into a dirty halo on a light one.
- * `light-dark()` switches on the same resolved `color-scheme` that already
- * drives `Canvas`/`CanvasText` here, so it tracks the host page's actual
- * theme rather than the OS preference.
+ * Common card look for the Usage/Credits popovers. `Canvas`/`CanvasText` keep the
+ * palette tied to the host page, and `light-dark()` picks per-theme elevation:
+ * light surfaces stay near-white with a soft tight shadow, dark surfaces are
+ * tinted toward the foreground with a deeper, softer shadow. Mixing the two
+ * recipes (tinting a light fill, or reusing the tight shadow on dark) produces
+ * flat grey or smudged halos, hence the split.
  */
 export function applyRendererPopoverChrome(popover: HTMLElement): void {
   popover.style.border =
@@ -246,28 +252,53 @@ export function applyRendererPopoverChrome(popover: HTMLElement): void {
     "light-dark(0 10px 24px rgba(15, 23, 42, 0.12), 0 20px 45px rgba(0, 0, 0, 0.42)), 0 2px 8px light-dark(rgba(15, 23, 42, 0.06), rgba(0, 0, 0, 0.28))";
 }
 
-function addDetailRow(parent: HTMLElement, label: string, value: string, wrap = false): void {
-  const row = document.createElement("div");
-  row.style.display = "grid";
-  row.style.gridTemplateColumns = wrap ? "auto minmax(0, 1fr)" : "minmax(0, 1fr) auto";
-  row.style.gap = "20px";
-  row.style.padding = "4px 0";
-  const labelElement = document.createElement("span");
-  labelElement.textContent = label;
-  labelElement.style.color = "color-mix(in srgb, currentColor 68%, transparent)";
-  const valueElement = document.createElement("span");
-  valueElement.textContent = value;
-  valueElement.style.fontVariantNumeric = "tabular-nums";
-  valueElement.style.textAlign = "right";
-  if (wrap) {
-    valueElement.style.overflowWrap = "anywhere";
-    valueElement.title = value;
-  }
-  row.append(labelElement, valueElement);
-  parent.append(row);
+function contextRingColor(contextPercent: number): string {
+  if (contextPercent >= RING_HOT_THRESHOLD) return RING_HOT_COLOR;
+  if (contextPercent >= RING_WARN_THRESHOLD) return RING_WARN_COLOR;
+  return RING_OK_COLOR;
 }
 
-function renderDetails(
+function appendDetailRow(
+  popover: HTMLDivElement,
+  label: string,
+  value: string,
+  allowWrap = false,
+): void {
+  const row = document.createElement("div");
+  row.style.display = "grid";
+  row.style.gridTemplateColumns = allowWrap ? "auto minmax(0, 1fr)" : "minmax(0, 1fr) auto";
+  row.style.gap = "20px";
+  row.style.padding = "4px 0";
+  const labelNode = document.createElement("span");
+  labelNode.textContent = label;
+  labelNode.style.color = "color-mix(in srgb, currentColor 68%, transparent)";
+  const valueNode = document.createElement("span");
+  valueNode.textContent = value;
+  valueNode.style.fontVariantNumeric = "tabular-nums";
+  valueNode.style.textAlign = "right";
+  if (allowWrap) {
+    valueNode.style.overflowWrap = "anywhere";
+    valueNode.title = value;
+  }
+  row.append(labelNode, valueNode);
+  popover.append(row);
+}
+
+function contextDetailText(usage: ThreadUsageSnapshot): string {
+  if (usage.contextUsagePercent !== undefined) {
+    return `${fixedDecimal(usage.contextUsagePercent, 1)}%`;
+  }
+  if (usage.contextUsedTokens === undefined || usage.contextWindowTokens === undefined) {
+    return "";
+  }
+  if (usage.contextWindowTokens <= 0) {
+    return `/${formatRendererTokenCount(usage.contextWindowTokens)}`;
+  }
+  const percent = (usage.contextUsedTokens / usage.contextWindowTokens) * 100;
+  return `${fixedDecimal(percent, 1)}% / ${formatRendererTokenCount(usage.contextWindowTokens)}`;
+}
+
+function rebuildDetails(
   popover: HTMLDivElement,
   usage: ThreadUsageSnapshot | null,
   messages: RendererUsageMessages,
@@ -281,73 +312,61 @@ function renderDetails(
   heading.style.marginBottom = "6px";
   popover.append(heading);
 
-  if (accountName) addDetailRow(popover, messages.account, accountName, true);
+  if (accountName) appendDetailRow(popover, messages.account, accountName, true);
 
-  if (usage?.contextUsagePercent !== undefined) {
-    addDetailRow(popover, messages.context, `${decimal(usage.contextUsagePercent, 1)}%`);
-  } else if (usage?.contextUsedTokens !== undefined && usage.contextWindowTokens !== undefined) {
-    const contextPercent =
-      usage.contextWindowTokens > 0
-        ? (usage.contextUsedTokens / usage.contextWindowTokens) * 100
-        : null;
-    addDetailRow(
-      popover,
-      messages.context,
-      contextPercent === null
-        ? `/${formatRendererTokenCount(usage.contextWindowTokens)}`
-        : `${decimal(contextPercent, 1)}% / ${formatRendererTokenCount(usage.contextWindowTokens)}`,
-    );
-  }
+  const contextText = usage ? contextDetailText(usage) : "";
+  if (contextText) appendDetailRow(popover, messages.context, contextText);
+
   if (usage?.cacheHitRatePercent !== undefined) {
-    addDetailRow(
+    appendDetailRow(
       popover,
       messages.latestCacheHit,
       formatRendererCacheHitRate(usage.cacheHitRatePercent),
     );
   }
   if (usage?.outputTokensPerSecond !== undefined) {
-    addDetailRow(
+    appendDetailRow(
       popover,
       messages.outputSpeed,
       formatRendererTokenRate(usage.outputTokensPerSecond, locale),
     );
   }
   if (usage?.cachedInputTokens !== undefined) {
-    addDetailRow(popover, messages.cacheRead, formatRendererTokenCount(usage.cachedInputTokens));
+    appendDetailRow(popover, messages.cacheRead, formatRendererTokenCount(usage.cachedInputTokens));
   }
   if (usage?.cacheWriteInputTokens !== undefined) {
-    addDetailRow(
+    appendDetailRow(
       popover,
       messages.cacheWrite,
       formatRendererTokenCount(usage.cacheWriteInputTokens),
     );
   }
   if (usage?.reasoningOutputTokens !== undefined) {
-    addDetailRow(
+    appendDetailRow(
       popover,
       messages.reasoning,
       formatRendererTokenCount(usage.reasoningOutputTokens),
     );
   }
   if (usage?.totalTokens !== undefined) {
-    addDetailRow(popover, messages.totalTokens, formatRendererTokenCount(usage.totalTokens));
+    appendDetailRow(popover, messages.totalTokens, formatRendererTokenCount(usage.totalTokens));
   }
   if (usage?.inputTokens !== undefined || usage?.outputTokens !== undefined) {
-    addDetailRow(
-      popover,
-      messages.inputOutput,
-      `${usage.inputTokens === undefined ? "-" : formatRendererTokenCount(usage.inputTokens)} / ${usage.outputTokens === undefined ? "-" : formatRendererTokenCount(usage.outputTokens)}`,
-    );
+    const inputPart =
+      usage.inputTokens === undefined ? "-" : formatRendererTokenCount(usage.inputTokens);
+    const outputPart =
+      usage.outputTokens === undefined ? "-" : formatRendererTokenCount(usage.outputTokens);
+    appendDetailRow(popover, messages.inputOutput, `${inputPart} / ${outputPart}`);
   }
   if (usage?.totalCostUsd !== undefined) {
-    addDetailRow(popover, messages.sessionCostEstimate, formatRendererCost(usage.totalCostUsd));
+    appendDetailRow(popover, messages.sessionCostEstimate, formatRendererCost(usage.totalCostUsd));
   }
   if (usage?.totalCredits !== undefined) {
-    addDetailRow(popover, messages.recordedCredits, formatRendererCredits(usage.totalCredits));
+    appendDetailRow(popover, messages.recordedCredits, formatRendererCredits(usage.totalCredits));
   }
 }
 
-function popoverIsOpen(popover: HTMLDivElement): boolean {
+function isPopoverVisible(popover: HTMLDivElement): boolean {
   try {
     return popover.matches(":popover-open");
   } catch {
@@ -355,60 +374,76 @@ function popoverIsOpen(popover: HTMLDivElement): boolean {
   }
 }
 
-function positionPopover(control: Pick<RendererUsageControl, "trigger" | "popover">): void {
-  const triggerRect = control.trigger.getBoundingClientRect();
+function alignAboveTrigger(trigger: HTMLButtonElement, popover: HTMLDivElement): void {
+  const triggerRect = trigger.getBoundingClientRect();
   const width = Math.min(320, Math.max(260, window.innerWidth - 24));
   const left = Math.max(12, Math.min(triggerRect.left, window.innerWidth - width - 12));
-  control.popover.style.width = `${width}px`;
-  control.popover.style.left = `${left}px`;
-  control.popover.style.right = "auto";
-  control.popover.style.top = "auto";
-  control.popover.style.bottom = `${Math.max(12, window.innerHeight - triggerRect.top + 8)}px`;
+  popover.style.width = `${width}px`;
+  popover.style.left = `${left}px`;
+  popover.style.right = "auto";
+  popover.style.top = "auto";
+  popover.style.bottom = `${Math.max(12, window.innerHeight - triggerRect.top + 8)}px`;
 }
 
-function closePopover(control: Pick<RendererUsageControl, "trigger" | "popover">): void {
-  if (popoverIsOpen(control.popover) && typeof control.popover.hidePopover === "function") {
-    control.popover.hidePopover();
+function hidePopoverNow(trigger: HTMLButtonElement, popover: HTMLDivElement): void {
+  if (isPopoverVisible(popover) && typeof popover.hidePopover === "function") {
+    popover.hidePopover();
   }
-  control.popover.hidden = true;
-  control.trigger.setAttribute("aria-expanded", "false");
+  popover.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
 }
 
-function openPopover(control: Pick<RendererUsageControl, "trigger" | "popover" | "onOpen">): void {
-  const wasOpen = control.trigger.getAttribute("aria-expanded") === "true";
-  positionPopover(control);
-  control.popover.hidden = false;
-  if (typeof control.popover.showPopover === "function" && !popoverIsOpen(control.popover)) {
-    control.popover.showPopover();
-  }
-  control.trigger.setAttribute("aria-expanded", "true");
-  if (!wasOpen) control.onOpen?.();
+/**
+ * Popover open/close state machine shared by the Usage and Credits pills.
+ * Wraps the native popover API when present and always mirrors state onto
+ * `aria-expanded`; the returned guard defers closing by a grace period so the
+ * pointer can travel between trigger and popover without collapsing it.
+ */
+function createPopoverSession(
+  trigger: HTMLButtonElement,
+  popover: HTMLDivElement,
+  onOpen?: () => void,
+) {
+  const isOpenFlag = (): boolean => trigger.getAttribute("aria-expanded") === "true";
+  const hide = (): void => hidePopoverNow(trigger, popover);
+
+  const show = (): void => {
+    const wasOpen = isOpenFlag();
+    alignAboveTrigger(trigger, popover);
+    popover.hidden = false;
+    if (typeof popover.showPopover === "function" && !isPopoverVisible(popover)) {
+      popover.showPopover();
+    }
+    trigger.setAttribute("aria-expanded", "true");
+    if (!wasOpen) onOpen?.();
+  };
+
+  const toggle = (): void => {
+    if (isOpenFlag()) hide();
+    else show();
+  };
+
+  let graceTimer: number | null = null;
+  const keepOpen = (): void => {
+    if (graceTimer === null) return;
+    window.clearTimeout(graceTimer);
+    graceTimer = null;
+  };
+  const requestClose = (): void => {
+    keepOpen();
+    graceTimer = window.setTimeout(() => {
+      graceTimer = null;
+      if (!trigger.matches(":hover") && !popover.matches(":hover")) hide();
+    }, CLOSE_GRACE_MS);
+  };
+
+  return { hide, show, toggle, keepOpen, requestClose };
 }
 
-function togglePopover(
-  control: Pick<RendererUsageControl, "trigger" | "popover" | "onOpen">,
-): void {
-  if (control.trigger.getAttribute("aria-expanded") === "true") closePopover(control);
-  else openPopover(control);
-}
-
-export function mountRendererUsageControl(
-  composerId: string,
-  locale: RendererSettingsLocale = "en",
-): RendererUsageControl {
-  ensureRendererTriggerChipStyle(document);
-  const messages = rendererUsageMessages(locale);
-
-  const root = document.createElement("div");
-  root.dataset.harnessmixUsageControl = composerId;
-  root.className = "relative min-w-0";
-  root.style.display = "none";
-  root.style.alignItems = "center";
-  root.style.alignSelf = "center";
-  root.style.height = "28px";
-  root.style.flex = "0 0 auto";
-  root.style.verticalAlign = "middle";
-
+function buildUsageTrigger(messages: RendererUsageMessages): {
+  trigger: HTMLButtonElement;
+  label: HTMLSpanElement;
+} {
   const trigger = document.createElement("button");
   trigger.className = TRIGGER_CHIP_CLASS;
   trigger.type = "button";
@@ -416,17 +451,14 @@ export function mountRendererUsageControl(
   trigger.setAttribute("aria-expanded", "false");
   trigger.setAttribute("aria-label", messages.threadUsage);
   trigger.title = messages.threadUsage;
-  // Usage is secondary metadata, not a primary composer action. Keep the
-  // compact, muted treatment used by the previous Composer integration while
-  // avoiding Codex's private trigger class names.
+  // Secondary metadata, so the pill keeps the muted look of the old Composer
+  // integration and never leans on Codex-internal chip class names.
   trigger.style.color = "var(--color-text-tertiary, #8f8f8f)";
   trigger.style.gap = "4px";
   trigger.style.width = "fit-content";
   trigger.style.maxWidth = rendererUsageTriggerMaxWidth();
-  // Match the 28px height shared by the Model/Permission-mode/Agent triggers
-  // it sits next to — a shorter box here previously threw off the row's
-  // vertical alignment (visible as Usage sitting a few px lower than its
-  // neighbors), whether the host lays this row out as flex or inline content.
+  // The neighboring Model/Permission-mode/Agent triggers are all 28px tall; a
+  // shorter box misaligns the row by a few px under both flex and inline layout.
   trigger.style.height = "28px";
   trigger.style.padding = "0 8px";
   trigger.style.verticalAlign = "middle";
@@ -448,7 +480,10 @@ export function mountRendererUsageControl(
   label.style.textOverflow = "ellipsis";
   label.style.whiteSpace = "nowrap";
   trigger.append(ringSlot, label);
+  return { trigger, label };
+}
 
+function buildUsagePopover(composerId: string, messages: RendererUsageMessages): HTMLDivElement {
   const popover = document.createElement("div");
   popover.id = `${composerId}-usage-popover`;
   popover.setAttribute("role", "dialog");
@@ -466,9 +501,31 @@ export function mountRendererUsageControl(
   popover.style.font = "13px/1.35 system-ui, sans-serif";
   popover.style.letterSpacing = "0";
   popover.style.zIndex = "2147483647";
+  return popover;
+}
+
+export function mountRendererUsageControl(
+  composerId: string,
+  locale: RendererSettingsLocale = "en",
+): RendererUsageControl {
+  ensureRendererTriggerChipStyle(document);
+  const messages = rendererUsageMessages(locale);
+
+  const root = document.createElement("div");
+  root.dataset.harnessmixUsageControl = composerId;
+  root.className = "relative min-w-0";
+  root.style.display = "none";
+  root.style.alignItems = "center";
+  root.style.alignSelf = "center";
+  root.style.height = "28px";
+  root.style.flex = "0 0 auto";
+  root.style.verticalAlign = "middle";
+
+  const { trigger, label } = buildUsageTrigger(messages);
+  const popover = buildUsagePopover(composerId, messages);
   trigger.setAttribute("aria-controls", popover.id);
 
-  let placementReference: Element | null = null;
+  let placedBefore: Element | null = null;
   const control: RendererUsageControl = {
     root,
     trigger,
@@ -478,65 +535,64 @@ export function mountRendererUsageControl(
     locale,
     onOpen: null,
     dispose() {
-      closePopover(control);
-      if (closeTimer !== null) window.clearTimeout(closeTimer);
+      session.hide();
+      session.keepOpen();
       root.remove();
       popover.remove();
-      placementReference = null;
+      placedBefore = null;
     },
     place(anchor) {
       if (!anchor?.parentElement) return false;
-      const container = anchor.parentElement;
+      const host = anchor.parentElement;
       if (
         control.anchor === anchor &&
-        placementReference === anchor &&
-        root.parentElement === container &&
+        placedBefore === anchor &&
+        root.parentElement === host &&
         root.nextElementSibling === anchor
       ) {
         return true;
       }
       control.anchor = anchor;
-      placementReference = anchor;
-      container.insertBefore(root, anchor);
+      placedBefore = anchor;
+      host.insertBefore(root, anchor);
       return true;
     },
   };
 
-  let closeTimer: number | null = null;
-  const cancelClose = (): void => {
-    if (closeTimer === null) return;
-    window.clearTimeout(closeTimer);
-    closeTimer = null;
-  };
-  const scheduleClose = (): void => {
-    cancelClose();
-    closeTimer = window.setTimeout(() => {
-      closeTimer = null;
-      if (!trigger.matches(":hover") && !popover.matches(":hover")) closePopover(control);
-    }, 140);
-  };
-
-  trigger.addEventListener("click", () => togglePopover(control));
+  const session = createPopoverSession(trigger, popover, () => control.onOpen?.());
+  trigger.addEventListener("click", () => session.toggle());
   trigger.addEventListener("pointerenter", () => {
-    cancelClose();
-    openPopover(control);
+    session.keepOpen();
+    session.show();
   });
-  trigger.addEventListener("pointerleave", scheduleClose);
+  trigger.addEventListener("pointerleave", () => session.requestClose());
   trigger.addEventListener("focus", () => {
-    cancelClose();
-    openPopover(control);
+    session.keepOpen();
+    session.show();
   });
-  trigger.addEventListener("blur", scheduleClose);
-  popover.addEventListener("pointerenter", cancelClose);
-  popover.addEventListener("pointerleave", scheduleClose);
+  trigger.addEventListener("blur", () => session.requestClose());
+  popover.addEventListener("pointerenter", () => session.keepOpen());
+  popover.addEventListener("pointerleave", () => session.requestClose());
   popover.addEventListener("toggle", () => {
-    const open = popoverIsOpen(popover);
-    trigger.setAttribute("aria-expanded", String(open));
+    trigger.setAttribute("aria-expanded", String(isPopoverVisible(popover)));
   });
   root.append(trigger);
   document.body.append(popover);
 
   return control;
+}
+
+function resolvedContextPercent(
+  usage: ThreadUsageSnapshot | null,
+  hasContext: boolean,
+): number | undefined {
+  if (usage?.contextUsagePercent !== undefined) return usage.contextUsagePercent;
+  if (!hasContext || usage?.contextWindowTokens === undefined || usage.contextWindowTokens <= 0) {
+    return undefined;
+  }
+  return (
+    Math.round((100 * (usage.contextUsedTokens ?? 0)) / usage.contextWindowTokens * 10) / 10
+  );
 }
 
 export function renderRendererUsageControl(
@@ -548,9 +604,7 @@ export function renderRendererUsageControl(
   control.locale = locale;
   const messages = rendererUsageMessages(locale);
   control.popover.setAttribute("aria-label", messages.threadUsageDetails);
-  const cacheHitRatePercent = usage?.cacheHitRatePercent;
-  const outputTokensPerSecond = usage?.outputTokensPerSecond;
-  const totalCostUsd = usage?.totalCostUsd;
+
   const hasContext =
     usage?.contextUsedTokens !== undefined && usage.contextWindowTokens !== undefined;
   const hasTokenUsage =
@@ -563,27 +617,19 @@ export function renderRendererUsageControl(
   const visible = rendererUsageHasDisplayData(usage) || Boolean(accountName);
   control.root.style.display = visible ? "inline-flex" : "none";
   if (!visible) {
-    closePopover(control);
+    hidePopoverNow(control.trigger, control.popover);
     return false;
   }
 
+  const contextPercent = resolvedContextPercent(usage, hasContext);
   const ringSlot = control.trigger.querySelector<HTMLElement>("[data-harnessmix-usage-ring]");
-  const contextPercent =
-    usage?.contextUsagePercent !== undefined
-      ? usage.contextUsagePercent
-      : (hasContext && usage?.contextWindowTokens !== undefined && usage.contextWindowTokens > 0
-          ? Math.round((100 * (usage.contextUsedTokens ?? 0) / usage.contextWindowTokens) * 10) / 10
-          : undefined);
-
   if (contextPercent !== undefined) {
-    const tone = contextPercent >= 90 ? "hot" : contextPercent >= 70 ? "warn" : "ok";
-    const color = tone === "hot" ? "#c45c4a" : tone === "warn" ? "#c9a227" : "#3d9a64";
     if (ringSlot) {
       ringSlot.replaceChildren(
         createRendererUsageRing(contextPercent, {
           size: 14,
           strokeWidth: 2.4,
-          color,
+          color: contextRingColor(contextPercent),
         }),
       );
     }
@@ -591,43 +637,47 @@ export function renderRendererUsageControl(
     ringSlot.replaceChildren();
   }
 
-  const percentLabel = contextPercent !== undefined ? `${decimal(contextPercent, 1)}%` : null;
-  const summary = [
+  const percentLabel =
+    contextPercent !== undefined ? `${fixedDecimal(contextPercent, 1)}%` : null;
+  const summaryParts = [
     percentLabel,
     usage?.totalCredits !== undefined ? formatRendererCredits(usage.totalCredits) : null,
-    cacheHitRatePercent !== undefined ? formatRendererCacheHitRate(cacheHitRatePercent) : null,
-    outputTokensPerSecond !== undefined
-      ? formatRendererTokenRate(outputTokensPerSecond, locale)
+    usage?.cacheHitRatePercent !== undefined
+      ? formatRendererCacheHitRate(usage.cacheHitRatePercent)
       : null,
-    totalCostUsd !== undefined ? formatRendererCost(totalCostUsd) : null,
-  ].filter((value): value is string => value !== null);
+    usage?.outputTokensPerSecond !== undefined
+      ? formatRendererTokenRate(usage.outputTokensPerSecond, locale)
+      : null,
+    usage?.totalCostUsd !== undefined ? formatRendererCost(usage.totalCostUsd) : null,
+  ].filter((part): part is string => part !== null);
 
   if (
-    summary.length === 0 &&
+    summaryParts.length === 0 &&
     hasContext &&
     usage?.contextWindowTokens !== undefined &&
     usage.contextWindowTokens > 0
   ) {
-    summary.push(
+    summaryParts.push(
       formatRendererContextSummary(usage.contextUsedTokens ?? 0, usage.contextWindowTokens),
     );
   }
-  if (summary.length === 0 && usage?.totalTokens !== undefined) {
-    summary.push(`${formatRendererTokenCount(usage.totalTokens)} ${messages.tokensSummary}`);
+  if (summaryParts.length === 0 && usage?.totalTokens !== undefined) {
+    summaryParts.push(`${formatRendererTokenCount(usage.totalTokens)} ${messages.tokensSummary}`);
   }
-  if (summary.length === 0 && hasTokenUsage) {
-    summary.push(
+  if (summaryParts.length === 0 && hasTokenUsage) {
+    summaryParts.push(
       `${formatRendererTokenCount((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0))} ${messages.tokensSummary}`,
     );
   }
-  const compactSummary = summary.join(" · ") || messages.usage;
+
+  const compactSummary = summaryParts.join(" · ") || messages.usage;
   const accessibleSummary = `${messages.threadUsage}: ${compactSummary}${
-    contextPercent !== undefined ? `; ${messages.context} ${decimal(contextPercent, 1)}%` : ""
+    contextPercent !== undefined ? `; ${messages.context} ${fixedDecimal(contextPercent, 1)}%` : ""
   }`;
   control.trigger.style.maxWidth = rendererUsageTriggerMaxWidth();
   control.trigger.setAttribute("aria-label", accessibleSummary);
   control.trigger.title = accessibleSummary;
   control.label.textContent = compactSummary;
-  renderDetails(control.popover, usage, messages, locale, accountName);
+  rebuildDetails(control.popover, usage, messages, locale, accountName);
   return true;
 }

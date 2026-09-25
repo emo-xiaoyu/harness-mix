@@ -12,6 +12,13 @@ import {
   TRIGGER_CHIP_CLASS,
 } from "./renderer-trigger-chip-style.js";
 
+const CLOSE_GRACE_MS = 140;
+const TONE_HOT_PERCENT = 90;
+const TONE_WARN_PERCENT = 70;
+const TONE_HOT_COLOR = "#c45c4a";
+const TONE_WARN_COLOR = "#c9a227";
+const TONE_OK_COLOR = "#3d9a64";
+
 export interface RendererCreditsControl {
   root: HTMLDivElement;
   trigger: HTMLButtonElement;
@@ -24,8 +31,8 @@ export interface RendererCreditsControl {
 export type RendererCreditsTone = "ok" | "warn" | "hot";
 
 export function rendererCreditsTone(usedPercent: number): RendererCreditsTone {
-  if (usedPercent >= 90) return "hot";
-  if (usedPercent >= 70) return "warn";
+  if (usedPercent >= TONE_HOT_PERCENT) return "hot";
+  if (usedPercent >= TONE_WARN_PERCENT) return "warn";
   return "ok";
 }
 
@@ -67,8 +74,8 @@ function rendererCreditsMessages(locale: RendererSettingsLocale): RendererCredit
 }
 
 /**
- * Keep the source's minute precision, while making same-day resets easier to
- * scan and formatting both English and Chinese popovers in one presentation layer.
+ * Render the source string's minute precision, but collapse same-day resets to
+ * a plain clock time; both locales flow through the same single formatter.
  */
 export function formatRendererCreditsReset(
   value: string,
@@ -77,16 +84,16 @@ export function formatRendererCreditsReset(
 ): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  const isToday =
+  const sameCalendarDay =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  if (isToday) {
-    const time = date.toLocaleTimeString(locale === "zh-CN" ? "zh-CN" : undefined, {
+  if (sameCalendarDay) {
+    const clock = date.toLocaleTimeString(locale === "zh-CN" ? "zh-CN" : undefined, {
       hour: "numeric",
       minute: "2-digit",
     });
-    return locale === "zh-CN" ? `今天 ${time}` : `${time} today`;
+    return locale === "zh-CN" ? `今天 ${clock}` : `${clock} today`;
   }
   return date.toLocaleString(locale === "zh-CN" ? "zh-CN" : undefined, {
     month: locale === "zh-CN" ? "long" : "short",
@@ -133,40 +140,96 @@ function productLabel(product: string, locale: RendererSettingsLocale): string {
 }
 
 function toneColor(tone: RendererCreditsTone): string {
-  if (tone === "hot") return "#c45c4a";
-  if (tone === "warn") return "#c9a227";
-  return "#3d9a64";
+  if (tone === "hot") return TONE_HOT_COLOR;
+  if (tone === "warn") return TONE_WARN_COLOR;
+  return TONE_OK_COLOR;
+}
+
+function percentColor(usedPercent: number): string {
+  return toneColor(rendererCreditsTone(usedPercent));
 }
 
 function remainingPercent(usedPercent: number): number {
   return Math.min(100, Math.max(0, 100 - usedPercent));
 }
 
-function renderCreditsBar(usagePercent: number, color: string): HTMLDivElement {
-  const track = document.createElement("div");
-  track.dataset.harnessmixCreditsBar = "";
-  track.style.height = "6px";
-  track.style.borderRadius = "9999px";
-  track.style.background = "color-mix(in srgb, currentColor 12%, transparent)";
-  track.style.overflow = "hidden";
+function buildProgressBar(fillPercent: number, color: string): HTMLDivElement {
+  const bar = document.createElement("div");
+  bar.dataset.harnessmixCreditsBar = "";
+  bar.style.height = "6px";
+  bar.style.borderRadius = "9999px";
+  bar.style.background = "color-mix(in srgb, currentColor 12%, transparent)";
+  bar.style.overflow = "hidden";
   const fill = document.createElement("span");
   fill.style.display = "block";
   fill.style.height = "100%";
   fill.style.borderRadius = "9999px";
-  fill.style.width = `${Math.min(100, Math.max(0, usagePercent))}%`;
+  fill.style.width = `${Math.min(100, Math.max(0, fillPercent))}%`;
   fill.style.background = color;
   fill.style.transition = "width 0.25s ease";
-  track.append(fill);
-  return track;
+  bar.append(fill);
+  return bar;
 }
 
-function resetLabel(
+function resetsLine(
   resetsAt: string,
   locale: RendererSettingsLocale,
   messages: RendererCreditsMessages,
 ): string {
   const formatted = formatRendererCreditsReset(resetsAt, new Date(), locale);
-  return locale === "zh-CN" ? `${formatted} ${messages.resets}` : `${messages.resets} ${formatted}`;
+  return locale === "zh-CN"
+    ? `${formatted} ${messages.resets}`
+    : `${messages.resets} ${formatted}`;
+}
+
+/** Shared skeleton for the header card and each product tile: label+reset left, remaining right, bar below. */
+function assembleLimitCard(options: {
+  headingTag: "div" | "span";
+  heading: string;
+  headingFontSize: string;
+  headingFontWeight: string;
+  resetFontSize: string;
+  resetsAt?: string | undefined;
+  valueNodes: HTMLElement[];
+  barPercent: number;
+  barColor: string;
+  topGap: string;
+  wrapperStyles: Partial<CSSStyleDeclaration>;
+  wrapperBorder: string;
+  wrapperBackground: string;
+  locale: RendererSettingsLocale;
+  messages: RendererCreditsMessages;
+}): HTMLDivElement {
+  const card = document.createElement("div");
+  Object.assign(card.style, options.wrapperStyles);
+  card.style.border = options.wrapperBorder;
+  card.style.background = options.wrapperBackground;
+
+  const top = document.createElement("div");
+  top.style.display = "flex";
+  top.style.alignItems = "flex-start";
+  top.style.justifyContent = "space-between";
+  top.style.gap = "12px";
+  top.style.marginBottom = options.topGap;
+
+  const leftColumn = document.createElement("div");
+  const heading = document.createElement(options.headingTag);
+  heading.textContent = options.heading;
+  heading.style.fontSize = options.headingFontSize;
+  heading.style.fontWeight = options.headingFontWeight;
+  leftColumn.append(heading);
+  if (options.resetsAt) {
+    const reset = document.createElement("div");
+    reset.textContent = resetsLine(options.resetsAt, options.locale, options.messages);
+    reset.style.fontSize = options.resetFontSize;
+    reset.style.color = "color-mix(in srgb, currentColor 62%, transparent)";
+    reset.style.marginTop = "2px";
+    leftColumn.append(reset);
+  }
+
+  top.append(leftColumn, ...options.valueNodes);
+  card.append(top, buildProgressBar(options.barPercent, options.barColor));
+  return card;
 }
 
 function renderCreditsHeader(
@@ -174,61 +237,48 @@ function renderCreditsHeader(
   locale: RendererSettingsLocale,
   messages: RendererCreditsMessages,
 ): HTMLDivElement {
-  const wrapper = document.createElement("div");
-  wrapper.style.marginBottom = "10px";
-  wrapper.style.padding = "8px 10px";
-  wrapper.style.borderRadius = "10px";
-  wrapper.style.background = "color-mix(in srgb, currentColor 5%, transparent)";
-  wrapper.style.border = "1px solid color-mix(in srgb, currentColor 7%, transparent)";
-
-  const top = document.createElement("div");
-  top.style.display = "flex";
-  top.style.alignItems = "flex-start";
-  top.style.justifyContent = "space-between";
-  top.style.gap = "12px";
-  top.style.marginBottom = "6px";
-
-  // Same left-label / right-percent column order as each tile below, so the
-  // reset line always lands under its own label instead of zig-zagging sides.
-  const left = document.createElement("div");
-  const label = document.createElement("div");
-  label.textContent = creditsPeriodLabel(credits.periodType, locale);
-  label.style.fontSize = "13px";
-  label.style.fontWeight = "600";
-  left.append(label);
-  if (credits.resetsAt) {
-    const reset = document.createElement("div");
-    reset.textContent = resetLabel(credits.resetsAt, locale, messages);
-    reset.style.fontSize = "11px";
-    reset.style.color = "color-mix(in srgb, currentColor 62%, transparent)";
-    reset.style.marginTop = "2px";
-    left.append(reset);
-  }
-
-  const color = toneColor(rendererCreditsTone(credits.usedPercent));
+  const color = percentColor(credits.usedPercent);
   const remaining = remainingPercent(credits.usedPercent);
-  const percent = document.createElement("span");
-  percent.style.display = "inline-flex";
-  percent.style.alignItems = "baseline";
-  percent.style.gap = "4px";
-  percent.style.whiteSpace = "nowrap";
-  percent.style.color = color;
-  const remainingLabel = document.createElement("span");
-  remainingLabel.textContent = `${messages.remaining} `;
-  remainingLabel.style.fontSize = "11px";
-  remainingLabel.style.fontWeight = "600";
-  remainingLabel.style.opacity = "0.8";
-  const remainingValue = document.createElement("span");
-  remainingValue.textContent = formatRendererCreditsPercent(remaining);
-  remainingValue.style.fontSize = "24px";
-  remainingValue.style.fontWeight = "700";
-  remainingValue.style.fontVariantNumeric = "tabular-nums";
-  percent.append(remainingLabel, remainingValue);
 
-  top.append(left, percent);
+  const bigValue = document.createElement("span");
+  bigValue.style.display = "inline-flex";
+  bigValue.style.alignItems = "baseline";
+  bigValue.style.gap = "4px";
+  bigValue.style.whiteSpace = "nowrap";
+  bigValue.style.color = color;
+  const valueCaption = document.createElement("span");
+  valueCaption.textContent = `${messages.remaining} `;
+  valueCaption.style.fontSize = "11px";
+  valueCaption.style.fontWeight = "600";
+  valueCaption.style.opacity = "0.8";
+  const valueNumber = document.createElement("span");
+  valueNumber.textContent = formatRendererCreditsPercent(remaining);
+  valueNumber.style.fontSize = "24px";
+  valueNumber.style.fontWeight = "700";
+  valueNumber.style.fontVariantNumeric = "tabular-nums";
+  bigValue.append(valueCaption, valueNumber);
 
-  wrapper.append(top, renderCreditsBar(remaining, color));
-  return wrapper;
+  return assembleLimitCard({
+    headingTag: "div",
+    heading: creditsPeriodLabel(credits.periodType, locale),
+    headingFontSize: "13px",
+    headingFontWeight: "600",
+    resetFontSize: "11px",
+    resetsAt: credits.resetsAt,
+    valueNodes: [bigValue],
+    barPercent: remaining,
+    barColor: color,
+    topGap: "6px",
+    wrapperStyles: {
+      marginBottom: "10px",
+      padding: "8px 10px",
+      borderRadius: "10px",
+    },
+    wrapperBorder: "1px solid color-mix(in srgb, currentColor 7%, transparent)",
+    wrapperBackground: "color-mix(in srgb, currentColor 5%, transparent)",
+    locale,
+    messages,
+  });
 }
 
 function renderCreditsTile(
@@ -238,58 +288,47 @@ function renderCreditsTile(
   messages: RendererCreditsMessages,
   resetsAt?: string,
 ): HTMLDivElement {
-  const color = toneColor(rendererCreditsTone(usagePercent));
+  const color = percentColor(usagePercent);
   const remaining = remainingPercent(usagePercent);
 
-  const tile = document.createElement("div");
-  tile.style.marginBottom = "7px";
-  tile.style.padding = "7px 9px";
-  tile.style.borderRadius = "8px";
-  tile.style.background = "color-mix(in srgb, currentColor 4%, transparent)";
-  tile.style.border = "1px solid color-mix(in srgb, currentColor 6%, transparent)";
+  const value = document.createElement("span");
+  value.textContent = `${messages.remaining} ${formatRendererCreditsPercent(remaining)}`;
+  value.style.fontSize = "12px";
+  value.style.fontWeight = "600";
+  value.style.fontVariantNumeric = "tabular-nums";
+  value.style.color = color;
 
-  const top = document.createElement("div");
-  top.style.display = "flex";
-  top.style.alignItems = "flex-start";
-  top.style.justifyContent = "space-between";
-  top.style.gap = "12px";
-  top.style.marginBottom = "5px";
-
-  const left = document.createElement("div");
-  const name = document.createElement("span");
-  name.textContent = label;
-  name.style.fontSize = "12px";
-  name.style.fontWeight = "500";
-  left.append(name);
-  if (resetsAt) {
-    const reset = document.createElement("div");
-    reset.textContent = resetLabel(resetsAt, locale, messages);
-    reset.style.fontSize = "10.5px";
-    reset.style.color = "color-mix(in srgb, currentColor 62%, transparent)";
-    reset.style.marginTop = "2px";
-    left.append(reset);
-  }
-
-  const percent = document.createElement("span");
-  percent.textContent = `${messages.remaining} ${formatRendererCreditsPercent(remaining)}`;
-  percent.style.fontSize = "12px";
-  percent.style.fontWeight = "600";
-  percent.style.fontVariantNumeric = "tabular-nums";
-  percent.style.color = color;
-  top.append(left, percent);
-
-  tile.append(top, renderCreditsBar(remaining, color));
-  return tile;
+  return assembleLimitCard({
+    headingTag: "span",
+    heading: label,
+    headingFontSize: "12px",
+    headingFontWeight: "500",
+    resetFontSize: "10.5px",
+    resetsAt,
+    valueNodes: [value],
+    barPercent: remaining,
+    barColor: color,
+    topGap: "5px",
+    wrapperStyles: {
+      marginBottom: "7px",
+      padding: "7px 9px",
+      borderRadius: "8px",
+    },
+    wrapperBorder: "1px solid color-mix(in srgb, currentColor 6%, transparent)",
+    wrapperBackground: "color-mix(in srgb, currentColor 4%, transparent)",
+    locale,
+    messages,
+  });
 }
 
-function renderDetails(
+function rebuildPopover(
   popover: HTMLDivElement,
   credits: AccountCreditsSnapshot,
   locale: RendererSettingsLocale,
 ): void {
   const messages = rendererCreditsMessages(locale);
-  const glowColor = toneColor(rendererCreditsTone(credits.usedPercent));
-  popover.style.backgroundImage = `radial-gradient(160px 100px at 18% -10%, color-mix(in srgb, ${glowColor} 20%, transparent), transparent 70%)`;
+  const glow = percentColor(credits.usedPercent);
+  popover.style.backgroundImage = `radial-gradient(160px 100px at 18% -10%, color-mix(in srgb, ${glow} 20%, transparent), transparent 70%)`;
   popover.setAttribute("aria-label", messages.details);
   popover.replaceChildren();
   popover.append(renderCreditsHeader(credits, locale, messages));
@@ -307,7 +346,7 @@ function renderDetails(
   popover.append(...tiles);
 }
 
-function popoverIsOpen(popover: HTMLDivElement): boolean {
+function isPopoverShown(popover: HTMLDivElement): boolean {
   try {
     return popover.matches(":popover-open");
   } catch {
@@ -315,37 +354,23 @@ function popoverIsOpen(popover: HTMLDivElement): boolean {
   }
 }
 
-function positionPopover(control: Pick<RendererCreditsControl, "trigger" | "popover">): void {
-  const triggerRect = control.trigger.getBoundingClientRect();
+function dismissPopover(trigger: HTMLButtonElement, popover: HTMLDivElement): void {
+  if (isPopoverShown(popover) && typeof popover.hidePopover === "function") {
+    popover.hidePopover();
+  }
+  popover.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+}
+
+function anchorAboveTrigger(trigger: HTMLButtonElement, popover: HTMLDivElement): void {
+  const triggerRect = trigger.getBoundingClientRect();
   const width = Math.min(280, Math.max(220, window.innerWidth - 24));
   const left = Math.max(12, Math.min(triggerRect.left, window.innerWidth - width - 12));
-  control.popover.style.width = `${width}px`;
-  control.popover.style.left = `${left}px`;
-  control.popover.style.right = "auto";
-  control.popover.style.top = "auto";
-  control.popover.style.bottom = `${Math.max(12, window.innerHeight - triggerRect.top + 8)}px`;
-}
-
-function closePopover(control: Pick<RendererCreditsControl, "trigger" | "popover">): void {
-  if (popoverIsOpen(control.popover) && typeof control.popover.hidePopover === "function") {
-    control.popover.hidePopover();
-  }
-  control.popover.hidden = true;
-  control.trigger.setAttribute("aria-expanded", "false");
-}
-
-function openPopover(control: Pick<RendererCreditsControl, "trigger" | "popover">): void {
-  positionPopover(control);
-  control.popover.hidden = false;
-  if (typeof control.popover.showPopover === "function" && !popoverIsOpen(control.popover)) {
-    control.popover.showPopover();
-  }
-  control.trigger.setAttribute("aria-expanded", "true");
-}
-
-function togglePopover(control: Pick<RendererCreditsControl, "trigger" | "popover">): void {
-  if (control.trigger.getAttribute("aria-expanded") === "true") closePopover(control);
-  else openPopover(control);
+  popover.style.width = `${width}px`;
+  popover.style.left = `${left}px`;
+  popover.style.right = "auto";
+  popover.style.top = "auto";
+  popover.style.bottom = `${Math.max(12, window.innerHeight - triggerRect.top + 8)}px`;
 }
 
 export function mountRendererCreditsControl(composerId: string): RendererCreditsControl {
@@ -371,10 +396,8 @@ export function mountRendererCreditsControl(composerId: string): RendererCredits
   trigger.style.gap = "5px";
   trigger.style.width = "fit-content";
   trigger.style.maxWidth = "min(72px, 18vw)";
-  // Match the 28px height shared by the Model/Permission-mode/Agent triggers
-  // it sits next to — a shorter box here previously threw off the row's
-  // vertical alignment (visible as Credits sitting a few px lower than its
-  // neighbors), whether the host lays this row out as flex or inline content.
+  // 28px matches the Model/Permission-mode/Agent chips in the same row so the
+  // pill never drops a few px below its neighbors under flex or inline layout.
   trigger.style.height = "28px";
   trigger.style.padding = "0 8px";
   trigger.style.verticalAlign = "middle";
@@ -414,72 +437,82 @@ export function mountRendererCreditsControl(composerId: string): RendererCredits
   popover.style.zIndex = "2147483647";
   trigger.setAttribute("aria-controls", popover.id);
 
-  let placementReference: Element | null = null;
+  let placedBefore: Element | null = null;
+  let closeTimer: number | null = null;
+  const cancelPendingClose = (): void => {
+    if (closeTimer === null) return;
+    window.clearTimeout(closeTimer);
+    closeTimer = null;
+  };
+  const closeNow = (): void => dismissPopover(trigger, popover);
+  const openNow = (): void => {
+    anchorAboveTrigger(trigger, popover);
+    popover.hidden = false;
+    if (typeof popover.showPopover === "function" && !isPopoverShown(popover)) {
+      popover.showPopover();
+    }
+    trigger.setAttribute("aria-expanded", "true");
+  };
+  const scheduleClose = (): void => {
+    cancelPendingClose();
+    closeTimer = window.setTimeout(() => {
+      closeTimer = null;
+      if (!trigger.matches(":hover") && !popover.matches(":hover")) closeNow();
+    }, CLOSE_GRACE_MS);
+  };
+
   const control: RendererCreditsControl = {
     root,
     trigger,
     popover,
     anchor: null,
     dispose() {
-      closePopover(control);
-      if (closeTimer !== null) window.clearTimeout(closeTimer);
+      closeNow();
+      cancelPendingClose();
       root.remove();
       popover.remove();
-      placementReference = null;
+      placedBefore = null;
     },
     place(anchor) {
-      // Credits sits immediately *before* its anchor (the permission-mode
-      // picker) rather than being derived by walking up from the Usage
-      // control's current DOM position. Anchoring directly to a
-      // renderer-owned, already-tracked element keeps this stable across
-      // reconciliation passes instead of re-deriving a different ancestor
-      // once the host page's own DOM settles a few seconds after mount.
+      // The pill is anchored to the renderer-owned permission-mode picker and
+      // inserted immediately before it. Deriving the spot from a stable,
+      // already-tracked element survives the host page's late DOM settling,
+      // unlike re-walking ancestors from the Usage control's position.
       if (!anchor?.parentElement) return false;
-      const parent = anchor.parentElement;
+      const host = anchor.parentElement;
       if (
         control.anchor === anchor &&
-        placementReference === anchor &&
-        root.parentElement === parent &&
+        placedBefore === anchor &&
+        root.parentElement === host &&
         root.nextElementSibling === anchor
       ) {
         return true;
       }
       control.anchor = anchor;
-      placementReference = anchor;
-      if (root !== anchor) parent.insertBefore(root, anchor);
+      placedBefore = anchor;
+      if (root !== anchor) host.insertBefore(root, anchor);
       return true;
     },
   };
 
-  let closeTimer: number | null = null;
-  const cancelClose = (): void => {
-    if (closeTimer === null) return;
-    window.clearTimeout(closeTimer);
-    closeTimer = null;
-  };
-  const scheduleClose = (): void => {
-    cancelClose();
-    closeTimer = window.setTimeout(() => {
-      closeTimer = null;
-      if (!trigger.matches(":hover") && !popover.matches(":hover")) closePopover(control);
-    }, 140);
-  };
-
-  trigger.addEventListener("click", () => togglePopover(control));
+  trigger.addEventListener("click", () => {
+    if (trigger.getAttribute("aria-expanded") === "true") closeNow();
+    else openNow();
+  });
   trigger.addEventListener("pointerenter", () => {
-    cancelClose();
-    openPopover(control);
+    cancelPendingClose();
+    openNow();
   });
   trigger.addEventListener("pointerleave", scheduleClose);
   trigger.addEventListener("focus", () => {
-    cancelClose();
-    openPopover(control);
+    cancelPendingClose();
+    openNow();
   });
   trigger.addEventListener("blur", scheduleClose);
-  popover.addEventListener("pointerenter", cancelClose);
+  popover.addEventListener("pointerenter", cancelPendingClose);
   popover.addEventListener("pointerleave", scheduleClose);
   popover.addEventListener("toggle", () => {
-    trigger.setAttribute("aria-expanded", String(popoverIsOpen(popover)));
+    trigger.setAttribute("aria-expanded", String(isPopoverShown(popover)));
   });
   root.append(trigger);
   document.body.append(popover);
@@ -493,7 +526,7 @@ export function renderRendererCreditsControl(
 ): boolean {
   if (accountCredits === null) {
     control.root.style.display = "none";
-    closePopover(control);
+    dismissPopover(control.trigger, control.popover);
     return false;
   }
   const remaining = remainingPercent(accountCredits.usedPercent);
@@ -515,6 +548,6 @@ export function renderRendererCreditsControl(
   control.root.style.display = "inline-flex";
   control.trigger.setAttribute("aria-label", title);
   control.trigger.title = title;
-  renderDetails(control.popover, accountCredits, locale);
+  rebuildPopover(control.popover, accountCredits, locale);
   return true;
 }

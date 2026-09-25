@@ -91,11 +91,128 @@ export interface DraftComposerState {
   permissionModeByAgent?: Partial<Record<ExternalRendererAgent, HarnessPermissionModeId>>;
 }
 
+/** Every external Agent, in catalog order. Used wherever Codex is excluded. */
+const EXTERNAL_AGENT_IDS: readonly ExternalRendererAgent[] = KNOWN_RENDERER_AGENTS.filter(
+  (agent): agent is ExternalRendererAgent => agent !== "codex",
+);
+
+/**
+ * Per-Agent field addresses on {@link DraftComposerState}. Each external Agent
+ * owns one model slot; most also own a thinking slot (DeepSeek Harness does
+ * not expose one). Keeping the mapping in one table lets the rest of the
+ * controller stay Agent-agnostic.
+ */
+type AgentModelSlot = {
+  readonly model: {
+    readonly [K in keyof DraftComposerState]-?: NonNullable<DraftComposerState[K]> extends HarnessModelRef
+      ? K
+      : never;
+  }[keyof DraftComposerState];
+  readonly thinking?: {
+    readonly [K in keyof DraftComposerState]-?: NonNullable<
+      DraftComposerState[K]
+    > extends HarnessThinkingOptionId
+      ? K
+      : never;
+  }[keyof DraftComposerState];
+};
+
+const AGENT_MODEL_SLOTS: Readonly<Record<ExternalRendererAgent, AgentModelSlot>> = {
+  pi: { model: "piModel", thinking: "piThinkingOptionId" },
+  "claude-code": { model: "claudeModel", thinking: "claudeThinkingOptionId" },
+  "deepseek-harness": { model: "deepSeekHarnessModel" },
+  opencode: { model: "openCodeModel", thinking: "openCodeThinkingOptionId" },
+  grok: { model: "grokModel", thinking: "grokThinkingOptionId" },
+  omp: { model: "ompModel", thinking: "ompThinkingOptionId" },
+  antigravity: { model: "antigravityModel", thinking: "antigravityThinkingOptionId" },
+  "kiro-cli": { model: "kiroCliModel", thinking: "kiroCliThinkingOptionId" },
+  openclaw: { model: "openclawModel", thinking: "openclawThinkingOptionId" },
+  hermes: { model: "hermesModel", thinking: "hermesThinkingOptionId" },
+  qoder: { model: "qoderModel", thinking: "qoderThinkingOptionId" },
+  codebuddy: { model: "codebuddyModel", thinking: "codebuddyThinkingOptionId" },
+  zcode: { model: "zcodeModel", thinking: "zcodeThinkingOptionId" },
+  trae: { model: "traeModel", thinking: "traeThinkingOptionId" },
+  "cursor-cli": { model: "cursorModel", thinking: "cursorThinkingOptionId" },
+  cline: { model: "clineModel", thinking: "clineThinkingOptionId" },
+  "codex-harness": { model: "codexHarnessModel", thinking: "codexHarnessThinkingOptionId" },
+};
+
+function writeAgentModel(
+  state: DraftComposerState,
+  agent: ExternalRendererAgent,
+  model: HarnessModelRef,
+): void {
+  state[AGENT_MODEL_SLOTS[agent].model] = model;
+}
+
+function writeAgentThinking(
+  state: DraftComposerState,
+  agent: ExternalRendererAgent,
+  thinkingOptionId: HarnessThinkingOptionId | undefined,
+): void {
+  const slot = AGENT_MODEL_SLOTS[agent].thinking;
+  if (slot === undefined) return;
+  if (thinkingOptionId) state[slot] = thinkingOptionId;
+  else delete state[slot];
+}
+
 type MutableComposerState = DraftComposerState;
 
-interface TargetState {
+/** One remembered (target → state) binding; targets are opaque composer keys. */
+interface TargetBinding {
   target: readonly unknown[];
   state: MutableComposerState;
+}
+
+/**
+ * Monotonic per-state generation counters. Every "begin" invalidates all
+ * earlier generations for that state, so stale async replies (model catalogs,
+ * ownership lookups) can be recognized and dropped by comparing numbers.
+ */
+class GenerationClock {
+  readonly #latest = new WeakMap<MutableComposerState, number>();
+  #issued = 0;
+
+  begin(state: MutableComposerState): number {
+    this.#issued += 1;
+    this.#latest.set(state, this.#issued);
+    return this.#issued;
+  }
+
+  current(state: MutableComposerState): number {
+    return this.#latest.get(state) ?? 0;
+  }
+}
+
+function defaultIdFactory(sequence: number): string {
+  return `harnessmix-composer-${Date.now().toString(36)}-${sequence.toString(36)}`;
+}
+
+/** "default" (new-Thread composer) vs "conversation" (existing Thread). */
+function targetKind(target: readonly unknown[] | null): "default" | "conversation" | null {
+  if (target === null) return null;
+  if (target[0] === "default") return "default";
+  if (target[0] === "conversation") return "conversation";
+  return null;
+}
+
+/**
+ * Only targets that actually identify something are worth remembering: any
+ * conversation target, plus default targets that carry a derived draft id
+ * (a bare ["default"] never becomes a stable identity).
+ */
+function isRememberedTarget(target: readonly unknown[] | null): target is readonly unknown[] {
+  if (target === null) return false;
+  return target[0] === "conversation" || (target[0] === "default" && target.length > 1);
+}
+
+function targetsIdentical(left: readonly unknown[], right: readonly unknown[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** Type guard companion of targetKind for the conversation-only branches. */
+function isConversationTarget(target: readonly unknown[] | null): target is readonly unknown[] {
+  return targetKind(target) === "conversation";
 }
 
 export interface DraftAgentControllerOptions {
@@ -109,64 +226,36 @@ export interface DraftAgentSwitchOperations {
   clearPrewarm(): Promise<void>;
 }
 
-function defaultIdFactory(sequence: number): string {
-  return `harnessmix-composer-${Date.now().toString(36)}-${sequence.toString(36)}`;
-}
-
-function isDefaultTarget(target: readonly unknown[] | null): target is readonly unknown[] {
-  return target?.[0] === "default";
-}
-
-function isConversationTarget(target: readonly unknown[] | null): target is readonly unknown[] {
-  return target?.[0] === "conversation";
-}
-
-function isComposerTarget(target: readonly unknown[] | null): target is readonly unknown[] {
-  return isDefaultTarget(target) || isConversationTarget(target);
-}
-
-function isRestorableTarget(target: readonly unknown[] | null): target is readonly unknown[] {
-  return (
-    target !== null &&
-    (target[0] === "conversation" || (target[0] === "default" && target.length > 1))
-  );
-}
-
-function sameTarget(left: readonly unknown[], right: readonly unknown[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 export class DraftAgentController<Composer extends object> {
   readonly #idFactory: (sequence: number) => string;
-  readonly #defaultAgent: RendererAgent;
-  readonly #enabledAgents: ReadonlySet<RendererAgent>;
-  readonly #targetStates: TargetState[] = [];
-  readonly #modelRequestGenerations = new WeakMap<MutableComposerState, number>();
-  readonly #ownershipRequestGenerations = new WeakMap<MutableComposerState, number>();
+  readonly #startupAgent: RendererAgent;
+  readonly #allowedAgents: ReadonlySet<RendererAgent>;
+  readonly #targetBindings: TargetBinding[] = [];
+  readonly #modelRequestClock = new GenerationClock();
+  readonly #ownershipRequestClock = new GenerationClock();
   readonly #states = new WeakMap<Composer, MutableComposerState>();
-  readonly #interactedDrafts = new WeakSet<MutableComposerState>();
-  readonly #switching = new Set<MutableComposerState>();
-  readonly #pendingSubmissions = new Set<MutableComposerState>();
-  #composerSequence = 0;
-  #modelRequestSequence = 0;
-  #ownershipRequestSequence = 0;
+  /** Drafts the user configured by hand; they survive draft-id rebinds. */
+  readonly #handTunedDrafts = new WeakSet<MutableComposerState>();
+  readonly #inFlightSwitches = new Set<MutableComposerState>();
+  readonly #queuedSubmissions = new Set<MutableComposerState>();
+  #issuedComposerIds = 0;
   #lastSubmittedAgent: RendererAgent;
 
   constructor(options: DraftAgentControllerOptions = {}) {
     this.#idFactory = options.idFactory ?? defaultIdFactory;
-    this.#enabledAgents = new Set(options.enabledAgents ?? DEFAULT_RENDERER_AGENTS);
-    if (!this.#enabledAgents.has("codex")) {
+    this.#allowedAgents = new Set(options.enabledAgents ?? DEFAULT_RENDERER_AGENTS);
+    if (!this.#allowedAgents.has("codex")) {
       throw new Error("Renderer enabled Agents must include Codex");
     }
-    this.#defaultAgent = options.defaultAgent ?? "codex";
-    if (!this.#enabledAgents.has(this.#defaultAgent)) {
+    this.#startupAgent = options.defaultAgent ?? "codex";
+    if (!this.#allowedAgents.has(this.#startupAgent)) {
       throw new Error("Renderer default Agent must be enabled");
     }
-    this.#lastSubmittedAgent = this.#defaultAgent;
+    this.#lastSubmittedAgent = this.#startupAgent;
   }
 
   get(composer: Composer): Readonly<DraftComposerState> {
-    return this.#state(composer);
+    return this.#stateFor(composer);
   }
 
   mount(
@@ -174,29 +263,22 @@ export class DraftAgentController<Composer extends object> {
     target: readonly unknown[] | null,
     preferredNewThreadAgent?: RendererAgent,
   ): Readonly<DraftComposerState> {
-    const bound = this.#targetState(target);
-    if (bound) {
-      this.#states.set(composer, bound);
-      return bound;
+    const remembered = this.#bindingFor(target);
+    if (remembered) {
+      this.#states.set(composer, remembered);
+      return remembered;
     }
-    const preferredAgent =
-      preferredNewThreadAgent && this.#enabledAgents.has(preferredNewThreadAgent)
-        ? preferredNewThreadAgent
-        : this.#lastSubmittedAgent;
-    const state = this.#state(composer, isDefaultTarget(target) ? preferredAgent : "codex");
-    if (isRestorableTarget(target)) this.#targetStates.push({ target, state });
-    return state;
+    const seeded = this.#stateFor(composer, this.#agentForFreshTarget(target, preferredNewThreadAgent));
+    if (isRememberedTarget(target)) this.#targetBindings.push({ target, state: seeded });
+    return seeded;
   }
 
   isSwitching(composer: Composer): boolean {
-    return this.#switching.has(this.#state(composer));
+    return this.#inFlightSwitches.has(this.#stateFor(composer));
   }
 
   beginModelRequest(composer: Composer): number {
-    const state = this.#state(composer);
-    const generation = ++this.#modelRequestSequence;
-    this.#modelRequestGenerations.set(state, generation);
-    return generation;
+    return this.#modelRequestClock.begin(this.#stateFor(composer));
   }
 
   invalidateModelRequests(composer: Composer): void {
@@ -204,25 +286,22 @@ export class DraftAgentController<Composer extends object> {
   }
 
   isCurrentModelRequest(composer: Composer, generation: number): boolean {
-    return (this.#modelRequestGenerations.get(this.#state(composer)) ?? 0) === generation;
+    return this.#modelRequestClock.current(this.#stateFor(composer)) === generation;
   }
 
   beginOwnershipRequest(composer: Composer): number {
-    const state = this.#state(composer);
-    const generation = ++this.#ownershipRequestSequence;
-    this.#ownershipRequestGenerations.set(state, generation);
-    return generation;
+    return this.#ownershipRequestClock.begin(this.#stateFor(composer));
   }
 
   isCurrentOwnershipRequest(composer: Composer, generation: number): boolean {
-    return (this.#ownershipRequestGenerations.get(this.#state(composer)) ?? 0) === generation;
+    return this.#ownershipRequestClock.current(this.#stateFor(composer)) === generation;
   }
 
   rebindConversation(
     composer: Composer,
     target: readonly unknown[] | null,
   ): Readonly<DraftComposerState> | null {
-    if (!isConversationTarget(target)) return null;
+    if (targetKind(target) !== "conversation") return null;
     return this.rebindTarget(composer, target);
   }
 
@@ -231,42 +310,37 @@ export class DraftAgentController<Composer extends object> {
     target: readonly unknown[] | null,
     preferredNewThreadAgent?: RendererAgent,
   ): Readonly<DraftComposerState> | null {
-    if (!isComposerTarget(target)) return null;
-    const previous = this.#state(composer);
-    const pendingSubmission = this.#pendingSubmissions.delete(previous);
-    this.#modelRequestGenerations.set(previous, ++this.#modelRequestSequence);
-    this.#ownershipRequestGenerations.set(previous, ++this.#ownershipRequestSequence);
+    if (targetKind(target) === null) return null;
+    const outgoing = this.#stateFor(composer);
+    const wasQueued = this.#queuedSubmissions.delete(outgoing);
+    this.#modelRequestClock.begin(outgoing);
+    this.#ownershipRequestClock.begin(outgoing);
 
-    let state = this.#targetState(target);
-    if (!state) {
-      if (isDefaultTarget(target) && previous.phase === "draft" && this.#interactedDrafts.has(previous)) {
-        // Codex can resolve or re-derive a draft's identity underneath the same
-        // Composer element. Carrying the live draft state keeps a manual Agent
-        // or Model choice; untouched drafts still follow the new-Thread
-        // preference, and genuinely fresh drafts fall back to it as well.
-        state = previous;
-        if (pendingSubmission) this.#pendingSubmissions.add(state);
+    let incoming = this.#bindingFor(target);
+    if (incoming === null) {
+      if (
+        targetKind(target) === "default" &&
+        outgoing.phase === "draft" &&
+        this.#handTunedDrafts.has(outgoing)
+      ) {
+        // The Desktop can re-derive a new-Thread draft's id while keeping the
+        // same composer element. A hand-tuned draft keeps its live selections
+        // (Agent/Model); untouched drafts keep following the new-Thread seed.
+        incoming = outgoing;
+        if (wasQueued) this.#queuedSubmissions.add(incoming);
       } else {
-        const preferredAgent =
-          isDefaultTarget(target) &&
-          preferredNewThreadAgent &&
-          this.#enabledAgents.has(preferredNewThreadAgent)
-            ? preferredNewThreadAgent
-            : isDefaultTarget(target)
-              ? this.#lastSubmittedAgent
-              : "codex";
-        state = {
-          agent: preferredAgent,
+        incoming = {
+          agent: this.#agentForFreshTarget(target, preferredNewThreadAgent),
           phase: "draft",
-          composerId: this.#idFactory(++this.#composerSequence),
+          composerId: this.#idFactory(++this.#issuedComposerIds),
         };
       }
-      if (isRestorableTarget(target)) this.#targetStates.push({ target, state });
+      if (isRememberedTarget(target)) this.#targetBindings.push({ target, state: incoming });
     }
-    this.#states.set(composer, state);
-    this.#modelRequestGenerations.set(state, ++this.#modelRequestSequence);
-    this.#ownershipRequestGenerations.set(state, ++this.#ownershipRequestSequence);
-    return state;
+    this.#states.set(composer, incoming);
+    this.#modelRequestClock.begin(incoming);
+    this.#ownershipRequestClock.begin(incoming);
+    return incoming;
   }
 
   restore(
@@ -277,159 +351,41 @@ export class DraftAgentController<Composer extends object> {
     permissionModeId?: HarnessPermissionModeId,
     codexAccountId?: string,
   ): Readonly<DraftComposerState> | null {
-    if (!this.#enabledAgents.has(agent)) return null;
-    const state = this.#state(composer);
-    this.#pendingSubmissions.delete(state);
+    if (!this.#allowedAgents.has(agent)) return null;
+    const state = this.#stateFor(composer);
+    this.#queuedSubmissions.delete(state);
     state.agent = agent;
     state.phase = "locked";
     if (agent === "codex" && codexAccountId) state.codexAccountId = codexAccountId;
     else delete state.codexAccountId;
-    if (agent === "pi" && model) state.piModel = model;
-    if (agent === "claude-code" && model) state.claudeModel = model;
-    if (agent === "deepseek-harness" && model) state.deepSeekHarnessModel = model;
-    if (agent === "opencode" && model) state.openCodeModel = model;
-    if (agent === "grok" && model) state.grokModel = model;
-    if (agent === "omp" && model) state.ompModel = model;
-    if (agent === "antigravity" && model) state.antigravityModel = model;
-    if (agent === "kiro-cli" && model) state.kiroCliModel = model;
-    if (agent === "openclaw" && model) state.openclawModel = model;
-    if (agent === "hermes" && model) state.hermesModel = model;
-    if (agent === "qoder" && model) state.qoderModel = model;
-    if (agent === "codebuddy" && model) state.codebuddyModel = model;
-    if (agent === "zcode" && model) state.zcodeModel = model;
-    if (agent === "trae" && model) state.traeModel = model;
-    if (agent === "cursor-cli" && model) state.cursorModel = model;
-    if (agent === "cline" && model) state.clineModel = model;
-    if (agent === "codex-harness" && model) state.codexHarnessModel = model;
-    if (agent === "pi" && thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
-    else if (agent === "pi") delete state.piThinkingOptionId;
-    if (agent === "claude-code" && thinkingOptionId) {
-      state.claudeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "claude-code") delete state.claudeThinkingOptionId;
-    if (agent === "grok" && thinkingOptionId) state.grokThinkingOptionId = thinkingOptionId;
-    else if (agent === "grok") delete state.grokThinkingOptionId;
-    if (agent === "opencode" && thinkingOptionId) {
-      state.openCodeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "opencode") delete state.openCodeThinkingOptionId;
-    if (agent === "omp" && thinkingOptionId) state.ompThinkingOptionId = thinkingOptionId;
-    else if (agent === "omp") delete state.ompThinkingOptionId;
-    if (agent === "antigravity" && thinkingOptionId) {
-      state.antigravityThinkingOptionId = thinkingOptionId;
-    } else if (agent === "antigravity") delete state.antigravityThinkingOptionId;
-    if (agent === "kiro-cli" && thinkingOptionId) {
-      state.kiroCliThinkingOptionId = thinkingOptionId;
-    } else if (agent === "kiro-cli") delete state.kiroCliThinkingOptionId;
-    if (agent === "openclaw" && thinkingOptionId) {
-      state.openclawThinkingOptionId = thinkingOptionId;
-    } else if (agent === "openclaw") delete state.openclawThinkingOptionId;
-    if (agent === "hermes" && thinkingOptionId) {
-      state.hermesThinkingOptionId = thinkingOptionId;
-    } else if (agent === "hermes") delete state.hermesThinkingOptionId;
-    if (agent === "qoder" && thinkingOptionId) {
-      state.qoderThinkingOptionId = thinkingOptionId;
-    } else if (agent === "qoder") delete state.qoderThinkingOptionId;
-    if (agent === "codebuddy" && thinkingOptionId) {
-      state.codebuddyThinkingOptionId = thinkingOptionId;
-    } else if (agent === "codebuddy") delete state.codebuddyThinkingOptionId;
-    if (agent === "zcode" && thinkingOptionId) {
-      state.zcodeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "zcode") delete state.zcodeThinkingOptionId;
-    if (agent === "trae" && thinkingOptionId) {
-      state.traeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "trae") delete state.traeThinkingOptionId;
-    if (agent === "cursor-cli" && thinkingOptionId) {
-      state.cursorThinkingOptionId = thinkingOptionId;
-    } else if (agent === "cursor-cli") delete state.cursorThinkingOptionId;
-    if (agent === "cline" && thinkingOptionId) {
-      state.clineThinkingOptionId = thinkingOptionId;
-    } else if (agent === "cline") delete state.clineThinkingOptionId;
-    if (agent === 'codex-harness' && thinkingOptionId) state.codexHarnessThinkingOptionId = thinkingOptionId;
-    else if (agent === 'codex-harness') delete state.codexHarnessThinkingOptionId;
     if (agent !== "codex") {
-      const permissionModeByAgent: NonNullable<DraftComposerState["permissionModeByAgent"]> = {};
-      for (const candidate of [
-        "pi",
-        "claude-code",
-        "deepseek-harness",
-        "opencode",
-        "grok",
-        "omp",
-        "antigravity",
-        "kiro-cli",
-        "openclaw",
-        "hermes",
-        "qoder",
-        "codebuddy",
-        "zcode",
-        "trae",
-        "cursor-cli",
-        "cline",
-        "codex-harness",
-      ] as const) {
-        const current = state.permissionModeByAgent?.[candidate];
-        if (candidate !== agent && current) permissionModeByAgent[candidate] = current;
-      }
-      if (permissionModeId) permissionModeByAgent[agent] = permissionModeId;
-      if (Object.keys(permissionModeByAgent).length > 0) {
-        state.permissionModeByAgent = permissionModeByAgent;
-      } else {
-        delete state.permissionModeByAgent;
-      }
+      if (model) writeAgentModel(state, agent, model);
+      writeAgentThinking(state, agent, thinkingOptionId);
+      this.#rebuildPermissionModes(state, agent, permissionModeId);
     }
     return state;
   }
 
   modelForAgent(composer: Composer, agent: RendererAgent): HarnessModelRef | undefined {
-    const state = this.#state(composer);
-    if (agent === "pi") return state.piModel;
-    if (agent === "claude-code") return state.claudeModel;
-    if (agent === "deepseek-harness") return state.deepSeekHarnessModel;
-    if (agent === "opencode") return state.openCodeModel;
-    if (agent === "grok") return state.grokModel;
-    if (agent === "omp") return state.ompModel;
-    if (agent === "antigravity") return state.antigravityModel;
-    if (agent === "kiro-cli") return state.kiroCliModel;
-    if (agent === "openclaw") return state.openclawModel;
-    if (agent === "hermes") return state.hermesModel;
-    if (agent === "qoder") return state.qoderModel;
-    if (agent === "codebuddy") return state.codebuddyModel;
-    if (agent === "zcode") return state.zcodeModel;
-    if (agent === "trae") return state.traeModel;
-    if (agent === "cursor-cli") return state.cursorModel;
-    if (agent === "cline") return state.clineModel;
-    if (agent === 'codex-harness') return state.codexHarnessModel;
-    return undefined;
+    const state = this.#stateFor(composer);
+    if (agent === "codex") return undefined;
+    return state[AGENT_MODEL_SLOTS[agent].model];
   }
 
   thinkingOptionForAgent(
     composer: Composer,
     agent: ExternalRendererAgent,
   ): HarnessThinkingOptionId | undefined {
-    const state = this.#state(composer);
-    if (agent === "pi") return state.piThinkingOptionId;
-    if (agent === "claude-code") return state.claudeThinkingOptionId;
-    if (agent === "grok") return state.grokThinkingOptionId;
-    if (agent === "opencode") return state.openCodeThinkingOptionId;
-    if (agent === "omp") return state.ompThinkingOptionId;
-    if (agent === "antigravity") return state.antigravityThinkingOptionId;
-    if (agent === "kiro-cli") return state.kiroCliThinkingOptionId;
-    if (agent === "openclaw") return state.openclawThinkingOptionId;
-    if (agent === "hermes") return state.hermesThinkingOptionId;
-    if (agent === "qoder") return state.qoderThinkingOptionId;
-    if (agent === "codebuddy") return state.codebuddyThinkingOptionId;
-    if (agent === "zcode") return state.zcodeThinkingOptionId;
-    if (agent === "trae") return state.traeThinkingOptionId;
-    if (agent === "cursor-cli") return state.cursorThinkingOptionId;
-    if (agent === "cline") return state.clineThinkingOptionId;
-    if (agent === 'codex-harness') return state.codexHarnessThinkingOptionId;
-    return undefined;
+    const slot = AGENT_MODEL_SLOTS[agent].thinking;
+    if (slot === undefined) return undefined;
+    return this.#stateFor(composer)[slot];
   }
 
   permissionModeForAgent(
     composer: Composer,
     agent: ExternalRendererAgent,
   ): HarnessPermissionModeId | undefined {
-    return this.#state(composer).permissionModeByAgent?.[agent];
+    return this.#stateFor(composer).permissionModeByAgent?.[agent];
   }
 
   setExternalPermissionMode(
@@ -437,12 +393,12 @@ export class DraftAgentController<Composer extends object> {
     agent: ExternalRendererAgent,
     permissionModeId: HarnessPermissionModeId,
   ): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
+    const state = this.#stateFor(composer);
     state.permissionModeByAgent = {
       ...state.permissionModeByAgent,
       [agent]: permissionModeId,
     };
-    if (state.phase === "draft") this.#interactedDrafts.add(state);
+    this.#noteHandTuned(state);
     return state;
   }
 
@@ -451,25 +407,9 @@ export class DraftAgentController<Composer extends object> {
     agent: ExternalRendererAgent,
     model: HarnessModelRef,
   ): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
-    if (agent === "pi") state.piModel = model;
-    else if (agent === "claude-code") state.claudeModel = model;
-    else if (agent === "deepseek-harness") state.deepSeekHarnessModel = model;
-    else if (agent === "opencode") state.openCodeModel = model;
-    else if (agent === "grok") state.grokModel = model;
-    else if (agent === "omp") state.ompModel = model;
-    else if (agent === "antigravity") state.antigravityModel = model;
-    else if (agent === "kiro-cli") state.kiroCliModel = model;
-    else if (agent === "openclaw") state.openclawModel = model;
-    else if (agent === "hermes") state.hermesModel = model;
-    else if (agent === "qoder") state.qoderModel = model;
-    else if (agent === "codebuddy") state.codebuddyModel = model;
-    else if (agent === "zcode") state.zcodeModel = model;
-    else if (agent === "trae") state.traeModel = model;
-    else if (agent === "cursor-cli") state.cursorModel = model;
-    else if (agent === "cline") state.clineModel = model;
-    else if (agent === 'codex-harness') state.codexHarnessModel = model;
-    if (state.phase === "draft") this.#interactedDrafts.add(state);
+    const state = this.#stateFor(composer);
+    writeAgentModel(state, agent, model);
+    this.#noteHandTuned(state);
     return state;
   }
 
@@ -478,11 +418,11 @@ export class DraftAgentController<Composer extends object> {
     model: HarnessModelRef,
     thinkingOptionId?: HarnessThinkingOptionId,
   ): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
+    const state = this.#stateFor(composer);
     state.piModel = model;
     if (thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
     else delete state.piThinkingOptionId;
-    if (state.phase === "draft") this.#interactedDrafts.add(state);
+    this.#noteHandTuned(state);
     return state;
   }
 
@@ -495,71 +435,9 @@ export class DraftAgentController<Composer extends object> {
     agent: ExternalRendererAgent,
     thinkingOptionId?: HarnessThinkingOptionId,
   ): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
-    if (agent === "pi" && thinkingOptionId) state.piThinkingOptionId = thinkingOptionId;
-    else if (agent === "pi") delete state.piThinkingOptionId;
-    else if (agent === "claude-code" && thinkingOptionId) {
-      state.claudeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "claude-code") {
-      delete state.claudeThinkingOptionId;
-    } else if (agent === "grok" && thinkingOptionId) {
-      state.grokThinkingOptionId = thinkingOptionId;
-    } else if (agent === "grok") {
-      delete state.grokThinkingOptionId;
-    } else if (agent === "opencode" && thinkingOptionId) {
-      state.openCodeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "opencode") {
-      delete state.openCodeThinkingOptionId;
-    } else if (agent === "omp" && thinkingOptionId) {
-      state.ompThinkingOptionId = thinkingOptionId;
-    } else if (agent === "omp") {
-      delete state.ompThinkingOptionId;
-    } else if (agent === "antigravity" && thinkingOptionId) {
-      state.antigravityThinkingOptionId = thinkingOptionId;
-    } else if (agent === "antigravity") {
-      delete state.antigravityThinkingOptionId;
-    } else if (agent === "kiro-cli" && thinkingOptionId) {
-      state.kiroCliThinkingOptionId = thinkingOptionId;
-    } else if (agent === "kiro-cli") {
-      delete state.kiroCliThinkingOptionId;
-    } else if (agent === "openclaw" && thinkingOptionId) {
-      state.openclawThinkingOptionId = thinkingOptionId;
-    } else if (agent === "openclaw") {
-      delete state.openclawThinkingOptionId;
-    } else if (agent === "hermes" && thinkingOptionId) {
-      state.hermesThinkingOptionId = thinkingOptionId;
-    } else if (agent === "hermes") {
-      delete state.hermesThinkingOptionId;
-    } else if (agent === "qoder" && thinkingOptionId) {
-      state.qoderThinkingOptionId = thinkingOptionId;
-    } else if (agent === "qoder") {
-      delete state.qoderThinkingOptionId;
-    } else if (agent === "codebuddy" && thinkingOptionId) {
-      state.codebuddyThinkingOptionId = thinkingOptionId;
-    } else if (agent === "codebuddy") {
-      delete state.codebuddyThinkingOptionId;
-    } else if (agent === "zcode" && thinkingOptionId) {
-      state.zcodeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "zcode") {
-      delete state.zcodeThinkingOptionId;
-    } else if (agent === "trae" && thinkingOptionId) {
-      state.traeThinkingOptionId = thinkingOptionId;
-    } else if (agent === "trae") {
-      delete state.traeThinkingOptionId;
-    } else if (agent === "cursor-cli" && thinkingOptionId) {
-      state.cursorThinkingOptionId = thinkingOptionId;
-    } else if (agent === "cursor-cli") {
-      delete state.cursorThinkingOptionId;
-    } else if (agent === "cline" && thinkingOptionId) {
-      state.clineThinkingOptionId = thinkingOptionId;
-    } else if (agent === "cline") {
-      delete state.clineThinkingOptionId;
-    } else if (agent === 'codex-harness' && thinkingOptionId) {
-      state.codexHarnessThinkingOptionId = thinkingOptionId;
-    } else if (agent === 'codex-harness') {
-      delete state.codexHarnessThinkingOptionId;
-    }
-    if (state.phase === "draft") this.#interactedDrafts.add(state);
+    const state = this.#stateFor(composer);
+    writeAgentThinking(state, agent, thinkingOptionId);
+    this.#noteHandTuned(state);
     return state;
   }
 
@@ -571,30 +449,30 @@ export class DraftAgentController<Composer extends object> {
   }
 
   lock(composer: Composer): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
-    this.#pendingSubmissions.delete(state);
+    const state = this.#stateFor(composer);
+    this.#queuedSubmissions.delete(state);
     state.phase = "locked";
     return state;
   }
 
   markSubmissionPending(composer: Composer): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
-    if (state.phase === "draft") this.#pendingSubmissions.add(state);
+    const state = this.#stateFor(composer);
+    if (state.phase === "draft") this.#queuedSubmissions.add(state);
     return state;
   }
 
   isSubmissionPending(composer: Composer): boolean {
-    return this.#pendingSubmissions.has(this.#state(composer));
+    return this.#queuedSubmissions.has(this.#stateFor(composer));
   }
 
   clearPendingSubmission(composer: Composer): void {
-    const state = this.#state(composer);
-    this.#pendingSubmissions.delete(state);
+    const state = this.#stateFor(composer);
+    this.#queuedSubmissions.delete(state);
     if (state.phase === "draft") delete state.codexAccountId;
   }
 
   recordSubmission(composer: Composer, codexAccountId?: string): Readonly<DraftComposerState> {
-    const state = this.#state(composer);
+    const state = this.#stateFor(composer);
     if (
       state.agent === "codex" &&
       state.phase === "draft" &&
@@ -614,21 +492,24 @@ export class DraftAgentController<Composer extends object> {
   ): boolean {
     const state = this.#states.get(source);
     if (!state) return false;
-    const bound = this.#targetState(target);
-    if (bound && bound !== state) return false;
+    const alreadyBound = this.#bindingFor(target);
+    if (alreadyBound && alreadyBound !== state) return false;
     if (source !== replacement) {
       if (this.#states.has(replacement)) return false;
       this.#states.set(replacement, state);
     }
-    if (isConversationTarget(target) && !bound) {
-      if (state.phase === "locked" || this.#pendingSubmissions.has(state)) {
-        for (let index = this.#targetStates.length - 1; index >= 0; index -= 1) {
-          if (this.#targetStates[index]?.state === state) this.#targetStates.splice(index, 1);
+    if (isConversationTarget(target) && !alreadyBound) {
+      if (state.phase === "locked" || this.#queuedSubmissions.has(state)) {
+        // Once a state belongs to a real Thread (or is about to), any stale
+        // remembered bindings pointing at it must go so the identity is not
+        // shared with an unrelated draft target.
+        for (let index = this.#targetBindings.length - 1; index >= 0; index -= 1) {
+          if (this.#targetBindings[index]?.state === state) this.#targetBindings.splice(index, 1);
         }
       }
-      this.#targetStates.push({ target, state });
+      this.#targetBindings.push({ target, state });
     }
-    if (isConversationTarget(target) && this.#pendingSubmissions.delete(state)) {
+    if (isConversationTarget(target) && this.#queuedSubmissions.delete(state)) {
       state.phase = "locked";
     }
     return true;
@@ -639,14 +520,14 @@ export class DraftAgentController<Composer extends object> {
     nextAgent: RendererAgent,
     operations: DraftAgentSwitchOperations,
   ): Promise<boolean> {
-    const state = this.#state(composer);
-    if (!this.#enabledAgents.has(nextAgent)) return false;
-    if (state.phase !== "draft" || this.#switching.has(state)) return false;
+    const state = this.#stateFor(composer);
+    if (!this.#allowedAgents.has(nextAgent)) return false;
+    if (state.phase !== "draft" || this.#inFlightSwitches.has(state)) return false;
     if (state.agent === nextAgent) return true;
 
-    this.#pendingSubmissions.delete(state);
+    this.#queuedSubmissions.delete(state);
 
-    this.#switching.add(state);
+    this.#inFlightSwitches.add(state);
     try {
       if (!operations.applyAgent(nextAgent)) return false;
       try {
@@ -660,28 +541,65 @@ export class DraftAgentController<Composer extends object> {
         return false;
       }
       state.agent = nextAgent;
-      this.#interactedDrafts.add(state);
+      this.#handTunedDrafts.add(state);
       return true;
     } finally {
-      this.#switching.delete(state);
+      this.#inFlightSwitches.delete(state);
     }
   }
 
-  #targetState(target: readonly unknown[] | null): MutableComposerState | null {
-    if (!isRestorableTarget(target)) return null;
+  /** Rebuilds the permission-mode map around one restored Agent. */
+  #rebuildPermissionModes(
+    state: MutableComposerState,
+    agent: ExternalRendererAgent,
+    permissionModeId: HarnessPermissionModeId | undefined,
+  ): void {
+    const retained: NonNullable<DraftComposerState["permissionModeByAgent"]> = {};
+    for (const otherAgent of EXTERNAL_AGENT_IDS) {
+      if (otherAgent === agent) continue;
+      const existing = state.permissionModeByAgent?.[otherAgent];
+      if (existing) retained[otherAgent] = existing;
+    }
+    if (permissionModeId) retained[agent] = permissionModeId;
+    if (Object.keys(retained).length > 0) state.permissionModeByAgent = retained;
+    else delete state.permissionModeByAgent;
+  }
+
+  #noteHandTuned(state: MutableComposerState): void {
+    if (state.phase === "draft") this.#handTunedDrafts.add(state);
+  }
+
+  /**
+   * Seed Agent for a target with no remembered state yet: new-Thread composers
+   * follow the caller's preference (or the last submission); conversation
+   * composers always start as Codex.
+   */
+  #agentForFreshTarget(
+    target: readonly unknown[] | null,
+    preferredNewThreadAgent?: RendererAgent,
+  ): RendererAgent {
+    if (targetKind(target) !== "default") return "codex";
+    if (preferredNewThreadAgent && this.#allowedAgents.has(preferredNewThreadAgent)) {
+      return preferredNewThreadAgent;
+    }
+    return this.#lastSubmittedAgent;
+  }
+
+  #bindingFor(target: readonly unknown[] | null): MutableComposerState | null {
+    if (!isRememberedTarget(target)) return null;
     return (
-      this.#targetStates.find((candidate) => sameTarget(candidate.target, target))?.state ??
+      this.#targetBindings.find((binding) => targetsIdentical(binding.target, target))?.state ??
       null
     );
   }
 
-  #state(composer: Composer, initialAgent?: RendererAgent): MutableComposerState {
+  #stateFor(composer: Composer, initialAgent?: RendererAgent): MutableComposerState {
     const existing = this.#states.get(composer);
     if (existing) return existing;
     const created: MutableComposerState = {
-      agent: initialAgent ?? this.#defaultAgent,
+      agent: initialAgent ?? this.#startupAgent,
       phase: "draft",
-      composerId: this.#idFactory(++this.#composerSequence),
+      composerId: this.#idFactory(++this.#issuedComposerIds),
     };
     this.#states.set(composer, created);
     return created;
