@@ -27,13 +27,12 @@ async function run() {
   assert.equal(deriveThreadTitle('', [{ name: 'screenshot.png' }]), '附件: screenshot.png');
   assert.equal(deriveThreadTitle('', [], { isWorktree: true }), '新任务 (隔离分支)');
   assert.equal(deriveThreadTitle('修复登录问题', [], { isWorktree: true }), '修复登录问题 (隔离分支)');
+  assert.equal(deriveThreadTitle('这个会话标题有的是大模型生成有的是取第一条任务的原话 这个可以优化一下吗'), '优化会话标题');
+  assert.equal(deriveThreadTitle('这个协作的页面ui可以优化一下每次都要滑到下面才能选harness'), '优化协作的页面ui');
+  assert.equal(deriveThreadTitle('请帮我修复登录超时的问题，顺便补测试并更新文档'), '修复登录超时');
 
-  // Claude Code 的 summary 消息（auto-compact 生成）投影为原生标题事件
-  // （projectEvent 统一附带 nativeRef 包装，标题分支不消费它）
-  const claudeTitle = projectEvent({ type: 'summary', summary: ' 修复登录流程的会话摘要 ', leafUuid: 'u1' });
-  assert.equal(claudeTitle.length, 1);
-  assert.equal(claudeTitle[0].kind, 'title');
-  assert.equal(claudeTitle[0].title, '修复登录流程的会话摘要');
+  // Claude 的 auto-compact summary 是长篇会话摘要，不是会话标题。
+  assert.deepEqual(projectEvent({ type: 'summary', summary: ' 修复登录流程的会话摘要 ', leafUuid: 'u1' }), []);
   assert.deepEqual(projectEvent({ type: 'summary', summary: '   ' }), [], '空白 Claude summary 忽略');
 
   console.log('--- Integration tests: HostRuntime & NativeProtocol ---');
@@ -83,8 +82,10 @@ async function run() {
   const customThread = await runtime.createThread({ harnessId: 'antigravity', cwd: root, title: '保留显式标题' });
   await runtime.send(customThread.id, '这是一条测试消息');
   assert.equal(customThread.title, '保留显式标题');
+  lastHooks.emit({ kind: 'title', title: '原生标题不应覆盖显式标题' });
+  assert.equal(customThread.title, '保留显式标题');
 
-  // 5.5 原生 harness 标题事件（DSH session/title / Claude summary → kind:'title'）：
+  // 5.5 原生 harness 明确的标题事件（例如 DSH session/title → kind:'title'）：
   // 未锁定时采纳为标题并通知 Desktop；用户/Desktop 已命名（titleLocked）则忽略
   const nativeTitled = await runtime.createThread({ harnessId: 'antigravity', cwd: root });
   await runtime.send(nativeTitled.id, '逐行输出数字');

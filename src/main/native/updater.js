@@ -496,8 +496,8 @@ async function runUpdateFlow({ root = REPO_ROOT, dataDir, log = console.log, sto
 }
 
 module.exports = {
-  autoUpdate, remoteState, applyUpdate, makeGit, asyncRun, defaultHooks,
-  runUpdateFlow, reexecLauncher, fetchLatestVersion, npmInstallGlobal,
-  resolveRegistry, isGlobalInstall, npmGlobalRoot, readJson,
-  REPO_ROOT, resolveRoot, gitFailureDetail,
+  autoUpdate, remoteState, makeGit, asyncRun, defaultHooks,
+  runUpdateFlow, reexecLauncher, fetchLatestVersion,
+  resolveRegistry,
+  REPO_ROOT,
 };

@@ -74,4 +74,4 @@ function composeHandoffEnvelope({ fromHarnessId, context, note, intent }) {
     + (note ? `\nUser note for this handoff: ${note}` : '');
 }
 
-module.exports = { CAP, INTENT_INSTRUCTIONS, buildHandoffContext, composeHandoffEnvelope, conversationTail };
+module.exports = { CAP, buildHandoffContext, composeHandoffEnvelope, conversationTail };

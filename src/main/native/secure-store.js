@@ -58,4 +58,4 @@ async function listSecrets() {
   return result.stdout.toString('utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
 
-module.exports = { setSecret, getSecret, deleteSecret, listSecrets, SecureStoreUnavailableError };
+module.exports = { setSecret, getSecret, listSecrets, SecureStoreUnavailableError };

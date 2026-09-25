@@ -144,7 +144,7 @@ class CodexAccountManager {
     const identity = accountIdentity(raw?.account);
     return {
       accountId: entry.accountId,
-      label: identity.email || entry.label,
+      label: entry.native && entry.accountId !== OFFICIAL_ACCOUNT_ID ? entry.label : (identity.email || entry.label),
       ...(identity.email ? { email: identity.email } : {}),
       ...(identity.planType ? { planType: identity.planType } : {}),
       codexHome: entry.codexHome,
@@ -277,4 +277,4 @@ class CodexAccountManager {
   }
 }
 
-module.exports = { CodexAccountManager, OFFICIAL_ACCOUNT_ID, rateLimitView };
+module.exports = { CodexAccountManager };

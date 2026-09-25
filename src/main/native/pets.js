@@ -608,4 +608,4 @@ function createPetMarket({ env = process.env } = {}) {
   };
 }
 
-module.exports = { createPetMarket, petsDirectory, petSelectionFile, resolveAsarPath, readAsarHeader, CURATED_COMMUNITY_PETS, isWebpBuffer, validatePetMetadata };
+module.exports = { createPetMarket, readAsarHeader, isWebpBuffer, validatePetMetadata };

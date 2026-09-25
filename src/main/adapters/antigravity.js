@@ -1420,9 +1420,7 @@ module.exports = {
   prepareImageAttachments,
   mergePendingStep,
   cloneDatabase,
-  fetchAntigravityQuota,
   parseAntigravityUsageCommand,
   ANTIGRAVITY_PERMISSION_MODES,
-  ANTIGRAVITY_WORKSPACE_FILE_INSTRUCTION,
 };
 

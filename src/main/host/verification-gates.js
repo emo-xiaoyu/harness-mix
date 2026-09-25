@@ -127,4 +127,4 @@ class VerificationGates {
   }
 }
 
-module.exports = { VerificationGates, normalizePolicy, DEFAULT_CHECKS };
+module.exports = { VerificationGates, normalizePolicy };

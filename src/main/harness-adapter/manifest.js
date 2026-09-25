@@ -62,4 +62,4 @@ function normalizeCapabilities(caps = {}) {
   });
 }
 
-module.exports = { MANIFEST_CAPABILITY_FLAGS, validateManifest, normalizeCapabilities, CAPABILITY_GROUPS };
+module.exports = { validateManifest, normalizeCapabilities };

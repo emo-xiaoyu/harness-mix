@@ -10,6 +10,10 @@ function normalizePath(cwd) {
       const lower = p.toLowerCase();
       if (!cwd || !lower.startsWith(cwd + '/')) return null;
       p = p.slice(cwd.length + 1);
+    } else if (p.startsWith('/')) {
+      // POSIX 绝对路径（Linux/macOS 的原生工具事件）：同样只接受 cwd 之下的路径
+      if (!cwd || !p.toLowerCase().startsWith(cwd + '/')) return null;
+      p = p.slice(cwd.length + 1);
     }
     p = p.replace(/^\.\//, '');
     return p ? p.toLowerCase() : null;

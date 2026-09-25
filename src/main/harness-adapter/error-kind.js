@@ -79,4 +79,4 @@ function errorActions(kind, { canLogin = false } = {}) {
   return actions.filter(action => action !== 'login' || canLogin);
 }
 
-module.exports = { ERROR_KINDS, ERROR_ACTIONS, classifyError, errorActions, mapCodexErrorInfo, codexErrorInfoKey };
+module.exports = { ERROR_KINDS, classifyError, errorActions, mapCodexErrorInfo, codexErrorInfoKey };

@@ -185,4 +185,4 @@ manifest.integrations = { mcp: true, skills: {
   project: ['.opencode/skills', '.claude/skills', '.agents/skills'],
   overrides: { '.config/opencode/skills': { env: 'XDG_CONFIG_HOME', suffix: 'opencode/skills' } },
 } };
-module.exports = { manifest, create, projectEvent, projectPart, describeSession };
+module.exports = { manifest, create, projectEvent, projectPart };

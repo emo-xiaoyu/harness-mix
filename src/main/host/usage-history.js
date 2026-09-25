@@ -194,4 +194,4 @@ class UsageHistory {
   }
 }
 
-module.exports = { UsageHistory, utcDay, normalizeUsage };
+module.exports = { UsageHistory, utcDay };

@@ -208,4 +208,4 @@ class OpenClawGatewayHost {
   }
 }
 
-module.exports = { OpenClawGatewayHost, readGatewayConfig, OPENCLAW_CONFIG, DEFAULT_PORT };
+module.exports = { OpenClawGatewayHost, readGatewayConfig, OPENCLAW_CONFIG };

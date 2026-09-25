@@ -489,6 +489,10 @@ function create() {
         }
         const model = { id: result.model, name: result.model, provider: result.modelProvider ?? 'openai' };
         const session = attachSession(host, result.thread.id, { emit, diagnostic, model, effort: result.reasoningEffort, cwd: thread.cwd });
+        if (thread.options?.thinking && thread.options.thinking !== session.state.effort) {
+          await host.request('thread/settings/update', { threadId: result.thread.id, effort: thread.options.thinking });
+          session.state.effort = thread.options.thinking;
+        }
         session.turnPermissions = thread.options?.turnPermissions ?? null;
         session.collaborationEnabled = !!collaboration;
         emit({ kind: 'session', nativeSessionId: result.thread.id, model });

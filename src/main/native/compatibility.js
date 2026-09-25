@@ -49,7 +49,6 @@ function enforceDesktopCompatibility(result, environment = process.env) {
 }
 
 module.exports = {
-  MANIFEST_PATH,
   loadCompatibilityManifest,
   evaluateDesktopCompatibility,
   enforceDesktopCompatibility,

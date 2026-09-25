@@ -42,10 +42,6 @@ function projectEvent(event) {
     out.push({ kind: "status", text: `Claude 模型限流（${event.error_status ?? ""}），重试 ${event.attempt}/${event.max_retries}…` });
   } else if (event.type === 'system' && event.subtype === 'compact_boundary') {
     out.push({ kind: 'compaction', state: 'completed', outcome: 'succeeded', summary: '上下文已由 Claude Code 压缩。' });
-  } else if (event.type === 'summary' && typeof event.summary === 'string' && event.summary.trim()) {
-    // Claude Code 会话摘要（auto-compact 生成，resume/长会话时出现在流里）：
-    // 转发给 Host 采纳为线程标题
-    out.push({ kind: 'title', title: event.summary.trim() });
   } else if (event.type === "assistant" && Array.isArray(event.message?.content)) {
     for (const block of event.message.content) {
       if (block.type === "thinking" && block.thinking) out.push({ kind: "thinking-delta", text: block.thinking, nativeRef: { sessionId: event.session_id, itemId: event.message.id } });
@@ -568,8 +564,4 @@ module.exports = {
   manifest,
   create,
   projectEvent,
-  CLAUDE_PERMISSION_MODES,
-  parseClaudePlanLimitEvent,
-  projectClaudePlanLimitToCredits,
-  applyClaudePlanLimitToUsage,
 };

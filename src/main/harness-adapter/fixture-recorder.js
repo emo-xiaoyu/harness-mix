@@ -53,4 +53,4 @@ function isRecording() {
   return Boolean(active);
 }
 
-module.exports = { startRecording, recordNative, recordControl, stopRecording, isRecording };
+module.exports = { startRecording, recordNative, recordControl, stopRecording };

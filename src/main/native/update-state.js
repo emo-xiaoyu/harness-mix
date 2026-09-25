@@ -117,7 +117,6 @@ function detectChannel(root) {
 }
 
 module.exports = {
-  STATE_FILE, LOCK_FILE, LOCK_STALE_MS,
-  defaultState, readState, writeState, updateState, markBootOk,
+  readState, writeState, updateState, markBootOk,
   acquireLock, pidAlive, compareVersions, detectChannel,
 };

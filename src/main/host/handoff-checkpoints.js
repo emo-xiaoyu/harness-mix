@@ -217,4 +217,4 @@ class HandoffCheckpoints {
   async close() { await this.save(); }
 }
 
-module.exports = { HandoffCheckpoints, INTENTS, CHECKPOINT_STATES, INCLUDE_KEYS, LIMITS, digest, safeText, summaryOf, gitSnapshot };
+module.exports = { HandoffCheckpoints, digest };

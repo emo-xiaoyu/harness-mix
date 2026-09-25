@@ -73,4 +73,4 @@ async function snapshot(root, previousFiles = null) {
   await walk('');
   return { names, files, skipped };
 }
-module.exports = { resolveFile, readText, list, snapshot, hash };
+module.exports = { resolveFile, readText, snapshot, hash };

@@ -98,9 +98,6 @@ function getAllIconsDictionary() {
 
 module.exports = {
   MODEL_FAMILIES,
-  HARNESS_ICONS,
-  matchModelFamily,
-  getModelSvg,
   getHarnessSvg,
   getAllIconsDictionary,
 };

@@ -155,4 +155,4 @@ class ThreadStore {
   }
 }
 
-module.exports = { ThreadStore, summarize, SCHEMA_VERSION };
+module.exports = { ThreadStore };

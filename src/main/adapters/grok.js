@@ -118,12 +118,15 @@ function grokAdapter() {
           if (thread.options?.model) await adapter.setModel(session, thread.options.model);
           if (thread.options?.thinking) await adapter.setThinkingLevel(session, thread.options.thinking);
           if (thread.options?.permissionMode) await adapter.setPermissionMode(session, thread.options.permissionMode);
-          else if (thread.options?.workerPermissions === 'full') {
+          else if (['full', 'full-required'].includes(thread.options?.workerPermissions)) {
             // 协作 worker 免询问：从本会话声明的档位里挑“完全访问”档；没有或失败
-            // 时保持默认并记诊断，不阻断会话建立（审批仍走 Desktop 权限卡）
+            // 时仅团队的 full-required 拒绝启动，避免成员等待 Desktop 权限卡。
             const mode = pickFullAccessPermissionMode(catalog(session).permissionModes);
-            if (mode) await adapter.setPermissionMode(session, mode).catch(error => diagnostic(`${name}: full-access permission mode ${mode} failed: ${error.message}`));
-            else diagnostic(`${name}: no native full-access permission mode; keeping default`);
+            if (!mode) {
+              if (thread.options.workerPermissions === 'full-required') throw new Error(`${name}: no native full-access permission mode`);
+              diagnostic(`${name}: no native full-access permission mode; keeping default`);
+            } else if (thread.options.workerPermissions === 'full-required') await adapter.setPermissionMode(session, mode);
+            else await adapter.setPermissionMode(session, mode).catch(error => diagnostic(`${name}: full-access permission mode ${mode} failed: ${error.message}`));
           }
           emit({ kind: 'session', nativeSessionId: session.nativeSessionId, model: session.model });
           return session;
@@ -173,7 +176,11 @@ function grokAdapter() {
         if (config) {
           const result = await session.process.request('session/set_config_option', { sessionId: session.nativeSessionId, configId: config.id, value: mode });
           session.state.configOptions = result.configOptions || session.state.configOptions;
-        } else await session.process.request('session/set_mode', { sessionId: session.nativeSessionId, modeId: mode });
+          if (!result.configOptions) config.currentValue = mode;
+        } else {
+          await session.process.request('session/set_mode', { sessionId: session.nativeSessionId, modeId: mode });
+          if (session.state.modes) session.state.modes.currentModeId = mode;
+        }
       },
       async listCommands(session) {
         const nativeCommands = (session?.state.commands || []).map(c => ({ id: c.name, label: '/' + c.name, description: c.description, action: 'insert' }));
@@ -282,7 +289,7 @@ async function doGrokCompact(session, userContext, hooks) {
   });
   hooks?.emit?.({ kind: 'completed', finalAnswer: outcome !== 'cancelled' });
 }
-module.exports = { ...grokAdapter(), projectUsage, parseGrokCompactionUpdate, doGrokCompact };
+module.exports = { ...grokAdapter(), projectUsage, parseGrokCompactionUpdate };
 module.exports.manifest.integrations = { mcp: true, skills: {
   global: ['.grok/skills', '.agents/skills', '.claude/skills'],
   project: ['.grok/skills', '.claude/skills'],

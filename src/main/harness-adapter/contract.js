@@ -31,4 +31,4 @@ function validateAdapterContract(adapter) {
   return errors;
 }
 
-module.exports = { CONTRACT_METHODS, validateAdapterContract };
+module.exports = { validateAdapterContract };

@@ -76,4 +76,4 @@ async function readNative(harnessId, candidate) {
   return [];
 }
 
-module.exports = { listNative, readNative, piRows };
+module.exports = { listNative, readNative };
