@@ -209,7 +209,7 @@ npm start
 - Cursor CLI：安装 `cursor-agent` 并完成 CLI 登录。
 - Cline：安装 `cline`（`npm i -g cline`）并通过 `cline auth` 完成登录；Harness Mix 以官方 `cline --acp` 接入。
 - Qoder：安装 `qodercli`（或 `qoder`）并完成 CLI 登录；ACP 入口由本机版本决定。
-- ZCode：安装 ZCode 桌面版并完成登录（自带无头 `glm/zcode.cjs`），内核直接以 `zcode.cjs app-server --stdio`（ZCode Protocol v1）接入；共享凭据、模型目录与账号声明均由 ZCode 自治。可用 `HARNESS_MIX_ZCODE_EXECUTABLE` 覆盖 CLI 路径。多 Agent 协作中 ZCode 可作为派活目标、Agent Team 成员与 `/delegate` 对象；`#` 主控角色待协议提供运行时 MCP 注册后开放。
+- ZCode：安装 ZCode 桌面版并完成登录（自带无头 `glm/zcode.cjs`），内核直接以 `zcode.cjs app-server --stdio`（ZCode Protocol v1）接入；共享凭据、模型目录与账号声明均由 ZCode 自治。可用 `HARNESS_MIX_ZCODE_EXECUTABLE` 覆盖 CLI 路径。多 Agent 协作中 ZCode 可作为派活目标、Agent Team 成员与 `/delegate` 对象；`#` 主控角色通过协作 CLI 前端（`collaboration-cli.cjs`，长文本走 stdin）开放——任意能执行 shell 命令的 Harness 都能当 Lead，见 docs/cli-collaboration-design.md。
 - Trae：只有在拥有已验证的 ACP 兼容桥接程序时才配置 `HARNESS_MIX_TRAE_EXECUTABLE`，项目不会猜测官方入口。
 
 原生接入方式、数据目录和验证说明见 [原生 Codex 接入](docs/native-codex.md)。
@@ -429,6 +429,10 @@ npm update --global @harness-mix/cli
 
 The first run restarts an already-open Codex Desktop. The npm package distributes Harness Mix itself only; each Harness's CLI, login state, model quota and permissions still need to be installed and configured locally as listed below.
 
+### Install from Release Installers
+
+Prefer double-click setup? GitHub Releases carry per-platform installers (`harness-mix-<version>-windows-x64.exe`, `harness-mix-<version>-macos-arm64.dmg`, …). They bundle a private Node runtime — no Node.js or npm prerequisite — install per-user, and update by running the newer installer over the old one. See the [Installer Guide](docs/installers.md) for contents, signing caveats and local builds.
+
 ### How to Run
 
 Native mode (default): Desktop uses the stock Codex CLI, while the Renderer extension routes explicitly selected Harnesses to a separate Host. The first launch restarts an already-open Codex Desktop:
@@ -449,7 +453,7 @@ Common native dependencies:
 - Cursor CLI: install `cursor-agent` and sign in.
 - Cline: install `cline` (`npm i -g cline`) and sign in via `cline auth`; Harness Mix connects through the official `cline --acp`.
 - Qoder: install `qodercli` (or `qoder`) and sign in; the ACP entry depends on the installed version.
-- ZCode: install the ZCode desktop app and sign in (it bundles the headless `glm/zcode.cjs`); Harness Mix connects via `zcode.cjs app-server --stdio` (ZCode Protocol v1) while credentials, models and account state stay ZCode-owned. Override the CLI path with `HARNESS_MIX_ZCODE_EXECUTABLE`. In multi-agent work ZCode serves as a dispatch target, Agent-Team member and `/delegate` peer; the `#` lead role waits for a runtime MCP registration API upstream.
+- ZCode: install the ZCode desktop app and sign in (it bundles the headless `glm/zcode.cjs`); Harness Mix connects via `zcode.cjs app-server --stdio` (ZCode Protocol v1) while credentials, models and account state stay ZCode-owned. Override the CLI path with `HARNESS_MIX_ZCODE_EXECUTABLE`. In multi-agent work ZCode serves as a dispatch target, Agent-Team member, `/delegate` peer and a `#` lead via the collaboration CLI frontend (`collaboration-cli.cjs`, long texts over stdin) — any harness that can run a shell command can lead; see docs/cli-collaboration-design.md.
 - Trae: only set `HARNESS_MIX_TRAE_EXECUTABLE` when you have a verified ACP-compatible bridge; the project never guesses official entry points.
 
 See [Native Codex Integration](docs/native-codex.md) for wiring, data directories and verification notes.

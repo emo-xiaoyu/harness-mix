@@ -1,0 +1,97 @@
+name: "Bug report / 问题报告"
+description: "报告一个可复现的问题 / Report a reproducible problem"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先搜索已有的 issue，避免重复提交。
+
+        提示：设置 → 健康中心可以查看宿主运行时状态、各 Harness 握手结果与崩溃报告；
+        Host 日志已自动脱敏，可以放心粘贴。填写越完整，我们越容易复现和定位。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: "发生了什么？"
+      description: "描述问题现象和完整复现步骤，越具体越好"
+      placeholder: "例如：在 Pi 会话中通过 # 菜单接力到 Claude Code 后……"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期望的行为是什么？"
+      description: "描述你原本预期的正常结果"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: harness
+    attributes:
+      label: "涉及的 Harness"
+      description: "问题出现在哪个原生 Coding Harness 上？"
+      options:
+        - "不涉及特定 Harness（通用问题）"
+        - "Codex（官方原生线程）"
+        - "Codex（协作）"
+        - "Pi"
+        - "Oh My Pi (OMP)"
+        - "Claude Code"
+        - "DeepSeek Harness (DSH)"
+        - "Antigravity"
+        - "OpenCode"
+        - "Grok"
+        - "OpenClaw"
+        - "Hermes"
+        - "Qoder"
+        - "CodeBuddy"
+        - "Kiro CLI"
+        - "Cursor CLI"
+        - "ZCode"
+        - "Trae"
+        - "Cline"
+        - "其他（请在上方描述中说明）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: "操作系统"
+      options:
+        - "Windows"
+        - "macOS"
+        - "Linux"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: "安装方式"
+      options:
+        - "npm 全局安装（@harness-mix/cli）"
+        - "安装包（Inno Setup / dmg）"
+        - "源码运行（npm start / npm run build:native）"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: "Harness Mix 版本"
+      description: "package.json 中的 version，或安装包文件名里的版本号"
+      placeholder: "0.3.3"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "日志与截图"
+      description: "健康中心的崩溃报告、脱敏后的 Host 日志、界面截图等。日志虽已脱敏，提交前请再自行确认一次。"
+      render: shell
+    validations:
+      required: false
