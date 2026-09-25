@@ -1,3 +1,10 @@
+/**
+ * Renderer control over the direct page-level CDP endpoint: waits for the
+ * primary `app://-/index.html` target, installs the renderer bundle
+ * (`Page.addScriptToEvaluateOnNewDocument` + immediate evaluation), wires the
+ * sidecar frame bridge and re-installs wholesale whenever the target is
+ * replaced (window reload / recreation).
+ */
 import {
   CdpClient,
   listCdpTargets,
@@ -26,17 +33,17 @@ export interface RendererCdpControlSnapshot {
   binding: ProductionRendererStatus;
 }
 
-interface RendererCdpClient {
+interface RendererConnection {
   command(method: string, params?: Record<string, unknown>): Promise<unknown>;
   evaluate<T>(expression: string): Promise<T>;
   on?(method: string, listener: (params: unknown) => void): () => void;
   close(): void;
 }
 
-interface RendererCdpControlOperations {
+interface CdpOperations {
   listTargets(endpoint: string): Promise<CdpTarget[]>;
-  connect(webSocketDebuggerUrl: string): Promise<RendererCdpClient>;
-  installDraftPrewarmPolicy(renderer: RendererCdpClient): Promise<RendererDraftPrewarmPolicyStatus>;
+  connect(webSocketDebuggerUrl: string): Promise<RendererConnection>;
+  installDraftPrewarmPolicy(renderer: RendererConnection): Promise<RendererDraftPrewarmPolicyStatus>;
 }
 
 export interface RendererCdpControlSession {
@@ -56,21 +63,19 @@ export interface InstallRendererCdpControlOptions {
   timeoutMs?: number;
 }
 
-interface CreateRendererCdpControlOptions extends InstallRendererCdpControlOptions {
-  operations?: RendererCdpControlOperations;
+interface CreateSessionOptions extends InstallRendererCdpControlOptions {
+  operations?: CdpOperations;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
-function sameAgents(actual: readonly string[], expected: readonly string[]): boolean {
-  // The renderer bundle and the controller keep independently ordered agent
-  // catalogs; only the enabled set is contractual.
+/** The renderer bundle and the controller keep independently ordered catalogs. */
+function sameAgentSet(actual: readonly string[], expected: readonly string[]): boolean {
   return actual.length === expected.length && expected.every((agent) => actual.includes(agent));
 }
 
@@ -93,10 +98,10 @@ export function selectPrimaryRendererTarget(
   targets: readonly CdpTarget[],
   preferredTargetId?: string,
 ): CdpTarget | null {
-  const candidates = targets.filter(
+  const pages = targets.filter(
     (target) => target.type === "page" && isPrimaryRendererUrl(target.url),
   );
-  return candidates.find((target) => target.id === preferredTargetId) ?? candidates.at(0) ?? null;
+  return pages.find((target) => target.id === preferredTargetId) ?? pages.at(0) ?? null;
 }
 
 class RendererAdapterReadinessError extends Error {
@@ -118,28 +123,29 @@ function validateBindingStatus(
     value.version !== 2 ||
     !Array.isArray(value.enabledAgents) ||
     value.enabledAgents.some((agent) => typeof agent !== "string") ||
-    !sameAgents(value.enabledAgents as string[], expectedAgents) ||
+    !sameAgentSet(value.enabledAgents as string[], expectedAgents) ||
     !isRecord(value.adapter)
   ) {
     throw new Error("Production Renderer binding returned an invalid status");
   }
   if (value.adapter.state !== "ready" || typeof value.adapter.reason !== "string") {
-    const state = typeof value.adapter.state === "string" ? value.adapter.state : "invalid";
-    const reason = typeof value.adapter.reason === "string" ? value.adapter.reason : "unknown";
-    throw new RendererAdapterReadinessError(state, reason);
+    throw new RendererAdapterReadinessError(
+      typeof value.adapter.state === "string" ? value.adapter.state : "invalid",
+      typeof value.adapter.reason === "string" ? value.adapter.reason : "unknown",
+    );
   }
   return value as unknown as ProductionRendererStatus;
 }
 
 async function waitForPrimaryTarget(
   endpoint: string,
-  operations: RendererCdpControlOperations,
+  operations: CdpOperations,
   timeoutMs: number,
   pollIntervalMs: number,
   preferredTargetId?: string,
 ): Promise<CdpTarget> {
   const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
+  let lastFailure: unknown;
   while (Date.now() < deadline) {
     try {
       const target = selectPrimaryRendererTarget(
@@ -147,57 +153,65 @@ async function waitForPrimaryTarget(
         preferredTargetId,
       );
       if (target) return target;
-      lastError = new Error("Renderer CDP has no primary app://-/index.html page target");
+      lastFailure = new Error("Renderer CDP has no primary app://-/index.html page target");
     } catch (error) {
-      lastError = error;
+      lastFailure = error;
     }
-    await sleep(pollIntervalMs);
+    await wait(pollIntervalMs);
   }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  const detail = lastFailure instanceof Error ? `: ${lastFailure.message}` : "";
   throw new Error(`Primary Codex Renderer CDP target did not become ready${detail}`);
 }
 
-async function evaluateSource(renderer: RendererCdpClient, source: string): Promise<void> {
+async function evaluateSource(renderer: RendererConnection, source: string): Promise<void> {
   const response = await renderer.command("Runtime.evaluate", {
     expression: source,
     awaitPromise: true,
   });
-  if (!isRecord(response)) throw new Error("Renderer source evaluation returned an invalid result");
+  if (!isRecord(response)) {
+    throw new Error("Renderer source evaluation returned an invalid result");
+  }
   if (isRecord(response.exceptionDetails)) {
-    const text =
+    throw new Error(
       typeof response.exceptionDetails.text === "string"
         ? response.exceptionDetails.text
-        : "Renderer source evaluation failed";
-    throw new Error(text);
+        : "Renderer source evaluation failed",
+    );
   }
 }
 
-async function readBinding(renderer: RendererCdpClient): Promise<unknown> {
-  return renderer.evaluate<unknown>("window.__harnessmixRendererBindingProbeV1?.status() ?? null");
-}
+const readBinding = (renderer: RendererConnection): Promise<unknown> =>
+  renderer.evaluate<unknown>("window.__harnessmixRendererBindingProbeV1?.status() ?? null");
 
 async function waitForBinding(
-  renderer: RendererCdpClient,
+  renderer: RendererConnection,
   enabledAgents: readonly string[],
   timeoutMs: number,
   pollIntervalMs: number,
 ): Promise<ProductionRendererStatus> {
   const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
+  let lastFailure: unknown;
   while (Date.now() < deadline) {
     try {
       const value = await readBinding(renderer);
       if (value !== null) return validateBindingStatus(value, enabledAgents);
     } catch (error) {
-      lastError = error;
+      lastFailure = error;
+      // "installing" is the only transient adapter state; anything else is fatal.
       if (error instanceof RendererAdapterReadinessError && error.state !== "installing") {
         throw error;
       }
     }
-    await sleep(pollIntervalMs);
+    await wait(pollIntervalMs);
   }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  const detail = lastFailure instanceof Error ? `: ${lastFailure.message}` : "";
   throw new Error(`Production Renderer binding did not become ready${detail}`);
+}
+
+interface InstalledTarget {
+  renderer: RendererConnection;
+  snapshot: RendererCdpControlSnapshot;
+  detachSidecar?: () => void;
 }
 
 async function installTarget(
@@ -207,159 +221,173 @@ async function installTarget(
   enabledAgents: readonly string[],
   timeoutMs: number,
   pollIntervalMs: number,
-  operations: RendererCdpControlOperations,
-): Promise<{ renderer: RendererCdpClient; snapshot: RendererCdpControlSnapshot; unsubscribeSidecar?: () => void }> {
+  operations: CdpOperations,
+): Promise<InstalledTarget> {
   const renderer = await operations.connect(target.webSocketDebuggerUrl);
-  let unsubscribeSidecar: (() => void) | undefined;
+  let detachSidecar: (() => void) | undefined;
+  // 帧中继与桥安装存在竞态：CDP attach 早于请求管理器 patch，
+  // __harnessmixSidecarReceiveV1 尚未定义，optional-chain 会把这段窗口里
+  // （含 sidecar 帧缓冲重放的 Host 启动补发）整批帧静默丢弃。先停进页面级
+  // 停机坪，桥安装时统一按序放行。
+  const deliverSidecarFrame = (frame: string): void => {
+    const payload = JSON.stringify(frame);
+    void renderer
+      .command("Runtime.evaluate", {
+        expression: `(() => { const frame = ${payload}; if (typeof window.__harnessmixSidecarReceiveV1 === "function") window.__harnessmixSidecarReceiveV1(frame); else (window.__harnessmixPendingSidecarFramesV1 ??= []).push(frame); })()`,
+      })
+      .catch(() => undefined);
+  };
   try {
     await renderer.command("Runtime.enable");
     await renderer.command("Page.enable");
     if (sidecar) {
       if (!renderer.on) throw new Error("Renderer CDP binding events are unavailable");
-      await renderer.command("Runtime.removeBinding", { name: "__harnessmixSidecarSendV1" }).catch(() => undefined);
+      await renderer
+        .command("Runtime.removeBinding", { name: "__harnessmixSidecarSendV1" })
+        .catch(() => undefined);
       await renderer.command("Runtime.addBinding", { name: "__harnessmixSidecarSendV1" });
       renderer.on("Runtime.bindingCalled", (params) => {
-        if (!isRecord(params) || params.name !== "__harnessmixSidecarSendV1" ||
-          typeof params.payload !== "string") return;
-        try { sidecar.send(params.payload); }
-        catch (error) {
-          const failure = JSON.stringify({ harnessmixSidecarFailure: String(error) });
-          void renderer.command("Runtime.evaluate", {
-            expression: `window.__harnessmixSidecarReceiveV1?.(${JSON.stringify(failure)})`,
-          }).catch(() => undefined);
+        if (
+          !isRecord(params) ||
+          params.name !== "__harnessmixSidecarSendV1" ||
+          typeof params.payload !== "string"
+        ) {
+          return;
+        }
+        try {
+          sidecar.send(params.payload);
+        } catch (error) {
+          deliverSidecarFrame(JSON.stringify({ harnessmixSidecarFailure: String(error) }));
         }
       });
-      unsubscribeSidecar = sidecar.onFrame((frame) => {
-        void renderer.command("Runtime.evaluate", {
-          expression: `window.__harnessmixSidecarReceiveV1?.(${JSON.stringify(frame)})`,
-        }).catch(() => undefined);
+      detachSidecar = sidecar.onFrame((frame) => {
+        deliverSidecarFrame(frame);
       });
     }
     await renderer.command("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
     await evaluateSource(renderer, rendererSource);
     const draftPrewarmPolicy = await operations.installDraftPrewarmPolicy(renderer);
     const binding = await waitForBinding(renderer, enabledAgents, timeoutMs, pollIntervalMs);
-    return { renderer, snapshot: { target, draftPrewarmPolicy, binding },
-      ...(unsubscribeSidecar ? { unsubscribeSidecar } : {}) };
+    return {
+      renderer,
+      snapshot: { target, draftPrewarmPolicy, binding },
+      ...(detachSidecar ? { detachSidecar } : {}),
+    };
   } catch (error) {
-    unsubscribeSidecar?.();
+    detachSidecar?.();
     renderer.close();
     throw error;
   }
 }
 
-class InstalledRendererCdpControlSession implements RendererCdpControlSession {
+class ActiveRendererCdpControlSession implements RendererCdpControlSession {
   #closed = false;
+  #renderer: RendererConnection;
+  #snapshot: RendererCdpControlSnapshot;
+  #detachSidecar: (() => void) | undefined;
 
   constructor(
-    private renderer: RendererCdpClient,
-    private readonly rendererCdpEndpoint: string,
+    private readonly endpoint: string,
     private readonly rendererSource: string,
     private readonly sidecar: LocalSidecar | undefined,
     private readonly enabledAgents: readonly string[],
     private readonly timeoutMs: number,
     private readonly pollIntervalMs: number,
-    private readonly operations: RendererCdpControlOperations,
-    private currentSnapshot: RendererCdpControlSnapshot,
-    private unsubscribeSidecar: (() => void) | undefined,
-  ) {}
-
+    private readonly operations: CdpOperations,
+    installed: InstalledTarget,
+  ) {
+    this.#renderer = installed.renderer;
+    this.#snapshot = installed.snapshot;
+    this.#detachSidecar = installed.detachSidecar;
+  }
 
   get snapshot(): RendererCdpControlSnapshot {
-    return this.currentSnapshot;
+    return this.#snapshot;
   }
 
   async ensureInstalled(): Promise<RendererCdpControlSnapshot> {
     if (this.#closed) throw new Error("Renderer CDP Control Session is closed");
     const target = await waitForPrimaryTarget(
-      this.rendererCdpEndpoint,
+      this.endpoint,
       this.operations,
       this.timeoutMs,
       this.pollIntervalMs,
-      this.currentSnapshot.target.id,
+      this.#snapshot.target.id,
     );
-    if (target.id !== this.currentSnapshot.target.id) {
-      const replacement = await installTarget(
-        target,
-        this.rendererSource,
-        this.sidecar,
-        this.enabledAgents,
-        this.timeoutMs,
-        this.pollIntervalMs,
-        this.operations,
-      );
-      this.unsubscribeSidecar?.();
-      this.renderer.close();
-      this.renderer = replacement.renderer;
-      this.unsubscribeSidecar = replacement.unsubscribeSidecar;
-      this.currentSnapshot = replacement.snapshot;
-      return this.currentSnapshot;
+    if (target.id !== this.#snapshot.target.id) {
+      await this.#reinstall(target);
+      return this.#snapshot;
     }
-
     try {
-      const existing = await readBinding(this.renderer);
-      if (existing === null) await evaluateSource(this.renderer, this.rendererSource);
+      const existing = await readBinding(this.#renderer);
+      if (existing === null) await evaluateSource(this.#renderer, this.rendererSource);
       else validateBindingStatus(existing, this.enabledAgents);
-      const draftPrewarmPolicy = await this.operations.installDraftPrewarmPolicy(this.renderer);
+      const draftPrewarmPolicy = await this.operations.installDraftPrewarmPolicy(this.#renderer);
       const binding = await waitForBinding(
-        this.renderer,
+        this.#renderer,
         this.enabledAgents,
         this.timeoutMs,
         this.pollIntervalMs,
       );
-      this.currentSnapshot = { target, draftPrewarmPolicy, binding };
-      return this.currentSnapshot;
+      this.#snapshot = { target, draftPrewarmPolicy, binding };
+      return this.#snapshot;
     } catch {
-      const replacement = await installTarget(
-        target,
-        this.rendererSource,
-        this.sidecar,
-        this.enabledAgents,
-        this.timeoutMs,
-        this.pollIntervalMs,
-        this.operations,
-      );
-      this.unsubscribeSidecar?.();
-      this.renderer.close();
-      this.renderer = replacement.renderer;
-      this.unsubscribeSidecar = replacement.unsubscribeSidecar;
-      this.currentSnapshot = replacement.snapshot;
-      return this.currentSnapshot;
+      await this.#reinstall(target);
+      return this.#snapshot;
     }
   }
 
   async activateDesktop(): Promise<number> {
     if (this.#closed) throw new Error("Renderer CDP Control Session is closed");
-    await this.renderer.command("Page.bringToFront");
+    await this.#renderer.command("Page.bringToFront");
     return 1;
   }
 
   executeRenderer<T>(expression: string): Promise<T> {
-    if (this.#closed) return Promise.reject(new Error("Renderer CDP Control Session is closed"));
-    return this.renderer.evaluate<T>(expression);
+    if (this.#closed) {
+      return Promise.reject(new Error("Renderer CDP Control Session is closed"));
+    }
+    return this.#renderer.evaluate<T>(expression);
   }
 
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.unsubscribeSidecar?.();
-    this.renderer.close();
+    this.#detachSidecar?.();
+    this.#renderer.close();
+  }
+
+  async #reinstall(target: CdpTarget): Promise<void> {
+    const replacement = await installTarget(
+      target,
+      this.rendererSource,
+      this.sidecar,
+      this.enabledAgents,
+      this.timeoutMs,
+      this.pollIntervalMs,
+      this.operations,
+    );
+    this.#detachSidecar?.();
+    this.#renderer.close();
+    this.#renderer = replacement.renderer;
+    this.#detachSidecar = replacement.detachSidecar;
+    this.#snapshot = replacement.snapshot;
   }
 }
 
-const defaultOperations: RendererCdpControlOperations = {
+const liveOperations: CdpOperations = {
   listTargets: (endpoint) => listCdpTargets(endpoint),
   connect: (webSocketDebuggerUrl) => CdpClient.connect(webSocketDebuggerUrl),
   installDraftPrewarmPolicy: installRendererDraftPrewarmPolicyDirect,
 };
 
 export async function createRendererCdpControlSession(
-  options: CreateRendererCdpControlOptions,
+  options: CreateSessionOptions,
 ): Promise<RendererCdpControlSession> {
   const enabledAgents = options.enabledAgents ?? ["codex", "pi"];
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
-  const operations = options.operations ?? defaultOperations;
+  const operations = options.operations ?? liveOperations;
   const target = await waitForPrimaryTarget(
     options.rendererCdpEndpoint,
     operations,
@@ -375,8 +403,7 @@ export async function createRendererCdpControlSession(
     pollIntervalMs,
     operations,
   );
-  return new InstalledRendererCdpControlSession(
-    installed.renderer,
+  return new ActiveRendererCdpControlSession(
     options.rendererCdpEndpoint,
     options.rendererSource,
     options.sidecar,
@@ -384,8 +411,7 @@ export async function createRendererCdpControlSession(
     timeoutMs,
     pollIntervalMs,
     operations,
-    installed.snapshot,
-    installed.unsubscribeSidecar,
+    installed,
   );
 }
 

@@ -1,3 +1,10 @@
+/**
+ * WIRE PROTOCOL MODULE (see SPEC.md): installDraftPrewarmPolicyBridge and
+ * installDraftPrewarmPolicyInRenderer are serialized via .toString() and
+ * executed inside the live Codex Desktop processes. Their text is protocol,
+ * not implementation — restructuring them is a breaking protocol change that
+ * requires live-Desktop e2e validation, not just unit tests.
+ */
 export interface RendererDebugger {
   isAttached(): boolean;
   attach(version: string): void;
@@ -36,6 +43,9 @@ export interface RendererHostRequestManager {
   onRequest(request: Record<string, unknown>): void;
   dispatchAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
   sendAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
+  threadStore?: {
+    observeCatalogThreads?: (threads: unknown[]) => void;
+  };
 }
 
 export interface RendererPrewarmedThreadManager {
@@ -91,6 +101,18 @@ export function installDraftPrewarmPolicyBridge(
   }
   const knownExternalThreadIds = new Set<string>();
   const knownOfficialThreadIds = new Set<string>();
+  const catalogStore = isLocalSidecarHost ? manager.threadStore : undefined;
+  const originalObserveCatalogThreads = catalogStore?.observeCatalogThreads;
+  let externalCatalogThreads: unknown[] = [];
+  // Current Desktop sidebars read the in-memory catalog. Their initial load
+  // can finish before this bridge is installed, so thread/list merging alone
+  // cannot restore external sessions after a restart.
+  const catalogObserver = catalogStore && typeof originalObserveCatalogThreads === "function"
+    ? function (this: typeof catalogStore, threads: unknown[]): void {
+        originalObserveCatalogThreads.call(this, [...threads, ...externalCatalogThreads]);
+      }
+    : null;
+  if (catalogStore && catalogObserver) catalogStore.observeCatalogThreads = catalogObserver;
   const threadOwnershipResolutions = new Map<string, Promise<"external" | "codex">>();
   const createBridgeProcessHandle = (): string =>
     `harnessmix-${
@@ -456,6 +478,17 @@ export function installDraftPrewarmPolicyBridge(
       .then(() => writeBridgeFrame({ method: "initialized", params: {} }));
     return bridgeInitialization;
   };
+  if (catalogStore && typeof originalObserveCatalogThreads === "function") {
+    void initializeBridge()
+      .then(() => enqueueBridgeRequest("harnessmix/thread/list", { archived: false }))
+      .then((page) => {
+        if (bridgeState === "disposed" || !isRecord(page) || !Array.isArray(page.data)) return;
+        externalCatalogThreads = page.data;
+        for (const thread of externalCatalogThreads) rememberExternalThread(thread);
+        catalogStore.observeCatalogThreads?.([]);
+      })
+      .catch(() => undefined);
+  }
   const threadIdFromParameters = (parameters: unknown): string | null => {
     if (!isRecord(parameters)) return null;
     const value = parameters.threadId ?? parameters.conversationId;
@@ -697,10 +730,19 @@ export function installDraftPrewarmPolicyBridge(
   if (!observesWindowNotifications) manager.onNotification = routedOnNotification;
   if (responseMethod) manager[responseMethod] = routedDispatchAppServerResponse;
   if (isLocalSidecarHost) {
-    target.__harnessmixSidecarReceiveV1 = (frame: string): void => {
+    const receiveSidecarFrame = (frame: string): void => {
       try { handleBridgeFrame(JSON.parse(frame)); }
       catch (error) { failBridge(error, false); }
     };
+    target.__harnessmixSidecarReceiveV1 = receiveSidecarFrame;
+    // 帧中继在桥安装前到达的帧停放在页面级停机坪（__harnessmixPendingSidecar
+    // FramesV1）：先清空再放行，放行路径与后续直达帧一致，中继发现 receive
+    // 已装好后不会再停新帧，不会重复投递。
+    const parkedFrames = target.__harnessmixPendingSidecarFramesV1;
+    target.__harnessmixPendingSidecarFramesV1 = undefined;
+    if (Array.isArray(parkedFrames)) {
+      for (const frame of parkedFrames.splice(0)) receiveSidecarFrame(String(frame));
+    }
   }
 
   const policy = Object.freeze({
@@ -744,6 +786,10 @@ export function installDraftPrewarmPolicyBridge(
     },
     dispose(): void {
       if (bridge.sendRequest === routedSend) bridge.sendRequest = originalSend;
+      if (catalogStore && catalogObserver && catalogStore.observeCatalogThreads === catalogObserver) {
+        catalogStore.observeCatalogThreads = originalObserveCatalogThreads!;
+      }
+      externalCatalogThreads = [];
       if (bridge.prewarmThreadStart === routedPrewarm) {
         bridge.prewarmThreadStart = originalPrewarm;
       }

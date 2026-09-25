@@ -1,3 +1,8 @@
+/**
+ * Self-update protocol: check / start / status RPC shapes plus the update
+ * state machine. Release notes must point at this repository's GitHub
+ * releases; progress fields are bounded and mutually consistent.
+ */
 import { z } from "zod";
 
 export const UPDATE_ERROR_MAX_LENGTH = 500;
@@ -26,13 +31,13 @@ export const updateStatusSchema = z
     totalBytes: z.number().int().positive().optional(),
     error: z.string().min(1).max(UPDATE_ERROR_MAX_LENGTH).nullable(),
   })
-  .superRefine((status, context) => {
+  .superRefine((status, ctx) => {
     if (
       status.downloadedBytes !== undefined &&
       status.totalBytes !== undefined &&
       status.downloadedBytes > status.totalBytes
     ) {
-      context.addIssue({
+      ctx.addIssue({
         code: "custom",
         path: ["downloadedBytes"],
         message: "downloadedBytes must not exceed totalBytes",
@@ -42,7 +47,7 @@ export const updateStatusSchema = z
 
 export const updateEmptyParamsSchema = z.strictObject({});
 
-const githubReleaseNotesUrlSchema = z
+const harnessMixReleaseUrlSchema = z
   .string()
   .max(300)
   .regex(
@@ -57,7 +62,7 @@ export const updateCheckResultSchema = z.strictObject({
   updateAvailable: z.boolean(),
   installationAvailable: z.boolean(),
   releaseNotes: z.string().min(1).max(20_000).nullable(),
-  releaseNotesUrl: githubReleaseNotesUrlSchema.nullable(),
+  releaseNotesUrl: harnessMixReleaseUrlSchema.nullable(),
   status: updateStatusSchema.nullable(),
   error: z.string().min(1).max(UPDATE_ERROR_MAX_LENGTH).nullable(),
 });

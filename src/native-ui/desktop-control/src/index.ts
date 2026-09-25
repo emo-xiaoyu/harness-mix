@@ -1,3 +1,7 @@
+/**
+ * Package facade. Every name below is the public surface (see SPEC.md); the
+ * runtime entrypoint is `release-main.ts`, bundled to `desktop-controller.mjs`.
+ */
 import { WORKSPACE_CONTRACT_VERSION } from "@harnessmix/shared-contracts";
 
 export {

@@ -1,5 +1,12 @@
+/**
+ * Importing pre-existing native sessions (created outside harnessmix) into
+ * host threads. Candidates carry browser-safe metadata only; list bounds are
+ * per-response wire limits, not storage limits. Text fields additionally
+ * reject NUL so paths and titles stay safe to render.
+ */
 import { z } from "zod";
 
+import { nonBlankText } from "./constraints.js";
 import { harnessPluginIdSchema } from "./harness-plugins.js";
 import { hostThreadIdSchema } from "./ids.js";
 
@@ -11,22 +18,22 @@ export const HARNESS_SESSION_IMPORT_LIST_MAX_LENGTH = 1_000;
 export const HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE = 20;
 export const HARNESS_SESSION_IMPORT_UPDATED_AT_MAX = 8_640_000_000_000_000;
 
-const nonBlankTextSchema = z
-  .string()
-  .refine((value) => value.trim().length > 0, "Value must not be empty or whitespace")
-  .refine((value) => !value.includes("\0"), "Value must not contain NUL");
+const NUL = String.fromCharCode(0);
 
-export const harnessSessionImportIdSchema = nonBlankTextSchema.max(
-  HARNESS_SESSION_IMPORT_ID_MAX_LENGTH,
+/** Non-blank and NUL-free; used for ids, titles and working directories. */
+const wireText = nonBlankText().refine(
+  (value) => !value.includes(NUL),
+  "Value must not contain NUL",
 );
 
-/** Browser-safe metadata required to map an existing Native Session into harnessmix. */
+export const harnessSessionImportIdSchema = wireText.max(HARNESS_SESSION_IMPORT_ID_MAX_LENGTH);
+
 export const harnessSessionImportCandidateSchema = z
   .object({
     nativeSessionId: harnessSessionImportIdSchema,
-    title: nonBlankTextSchema.max(HARNESS_SESSION_IMPORT_TITLE_MAX_LENGTH).nullable(),
+    title: wireText.max(HARNESS_SESSION_IMPORT_TITLE_MAX_LENGTH).nullable(),
     updatedAt: z.number().int().nonnegative().max(HARNESS_SESSION_IMPORT_UPDATED_AT_MAX),
-    cwd: nonBlankTextSchema.max(HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH),
+    cwd: wireText.max(HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH),
     // Native file discovery cannot reliably observe another process's activity.
     running: z.boolean().nullable(),
   })
@@ -42,13 +49,14 @@ export const harnessSessionImportSourcesResultSchema = z
         z
           .object({
             harnessId: harnessPluginIdSchema,
-            name: nonBlankTextSchema.max(128),
+            name: wireText.max(128),
           })
           .strict(),
       )
       .max(128),
   })
   .strict();
+
 export const harnessSessionListParamsSchema = z
   .object({
     harnessId: harnessPluginIdSchema,
@@ -56,12 +64,13 @@ export const harnessSessionListParamsSchema = z
       .string()
       .trim()
       .max(4_096)
-      .refine((value) => !value.includes("\0"))
+      .refine((value) => !value.includes(NUL))
       .optional(),
     offset: z.number().int().nonnegative().safe().optional(),
     limit: z.number().int().min(1).max(HARNESS_SESSION_IMPORT_LIST_MAX_LENGTH).optional(),
   })
   .strict();
+
 export const harnessSessionListResultSchema = z
   .object({
     candidates: z
@@ -70,17 +79,20 @@ export const harnessSessionListResultSchema = z
     total: z.number().int().nonnegative().safe(),
   })
   .strict();
+
 export const harnessSessionImportParamsSchema = z
   .object({
     harnessId: harnessPluginIdSchema,
     nativeSessionId: harnessSessionImportIdSchema,
   })
   .strict();
+
 export const harnessSessionImportResultSchema = z
   .object({
-    threadId: nonBlankTextSchema.max(1_024).pipe(hostThreadIdSchema),
+    threadId: wireText.max(1_024).pipe(hostThreadIdSchema),
   })
   .strict();
+
 export type HarnessSessionImportSourcesResult = z.infer<
   typeof harnessSessionImportSourcesResultSchema
 >;

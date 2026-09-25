@@ -1,3 +1,7 @@
+/**
+ * Bundled entrypoint (`desktop-controller.mjs`): parse launcher arguments,
+ * run until SIGINT/SIGTERM, exit non-zero on failure.
+ */
 import { parseDesktopControllerArguments, runDesktopController } from "./production-controller.js";
 
 const abort = new AbortController();

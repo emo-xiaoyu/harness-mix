@@ -1,3 +1,7 @@
+/**
+ * Fork requested from outside a harnessmix-owned thread (the Codex Desktop
+ * fork button): pin the source thread and the turn to fork after.
+ */
 import { z } from "zod";
 
 import { hostThreadIdSchema, hostTurnIdSchema } from "./ids.js";

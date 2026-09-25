@@ -1,5 +1,12 @@
+/**
+ * Package facade. Every name below is the public contract surface (see
+ * SPEC.md); nothing else may leak. Consumers import only this module or the
+ * `./version` subpath.
+ */
 import { z } from "zod";
 import { WORKSPACE_CONTRACT_VERSION } from "./version.js";
+
+// Accounts -------------------------------------------------------------------
 
 export {
   harnessAccountSnapshotSchema,
@@ -8,33 +15,6 @@ export {
 } from "./harness-accounts.js";
 export type { HarnessAccountSnapshot, HarnessAccountListResult } from "./harness-accounts.js";
 
-export {
-  HARNESS_PLUGIN_ROUTE_PREFIX,
-  decodeHarnessPluginRoute,
-  encodeHarnessPluginRoute,
-  harnessPluginRouteSchema,
-} from "./harness-route.js";
-export type { HarnessPluginRoute } from "./harness-route.js";
-export {
-  HARNESS_PLUGIN_API_VERSION,
-  HARNESS_PLUGIN_ICON_MAX_BYTES,
-  HARNESS_PLUGIN_LIMIT,
-  HARNESS_PLUGIN_MANIFEST_MAX_BYTES,
-  harnessPluginConfigurationSchema,
-  harnessPluginDescriptorSchema,
-  harnessPluginIconSchema,
-  harnessPluginIdSchema,
-  harnessPluginListParamsSchema,
-  harnessPluginListResultSchema,
-  harnessPluginManifestSchema,
-} from "./harness-plugins.js";
-export type {
-  HarnessPluginConfiguration,
-  HarnessPluginDescriptor,
-  HarnessPluginListResult,
-  HarnessPluginManifest,
-} from "./harness-plugins.js";
-export { harnessmixErrorSchema } from "./errors.js";
 export {
   codexAccountUsageParamsSchema,
   codexAccountUsageResultSchema,
@@ -75,85 +55,39 @@ export type {
   CodexAccountPlanType,
   CodexAccountSummary,
 } from "./codex-accounts.js";
-export { REASONING_TRANSCRIPT_COMMAND } from "./reasoning-transcript.js";
-export type { HarnessMixError } from "./errors.js";
+
+// Plugins and routes ---------------------------------------------------------
+
 export {
-  HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH,
-  HARNESS_SESSION_IMPORT_ID_MAX_LENGTH,
-  HARNESS_SESSION_IMPORT_LIST_MAX_LENGTH,
-  HARNESS_SESSION_IMPORT_TITLE_MAX_LENGTH,
-  HARNESS_SESSION_IMPORT_UPDATED_AT_MAX,
-  harnessSessionImportCandidateSchema,
-  HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE,
-  harnessSessionImportIdSchema,
-  harnessSessionImportSourcesParamsSchema,
-  harnessSessionImportSourcesResultSchema,
-  harnessSessionListParamsSchema,
-  harnessSessionListResultSchema,
-  harnessSessionImportParamsSchema,
-  harnessSessionImportResultSchema,
-} from "./harness-session-import.js";
+  HARNESS_PLUGIN_ROUTE_PREFIX,
+  decodeHarnessPluginRoute,
+  encodeHarnessPluginRoute,
+  harnessPluginRouteSchema,
+} from "./harness-route.js";
+export type { HarnessPluginRoute } from "./harness-route.js";
+
+export {
+  HARNESS_PLUGIN_API_VERSION,
+  HARNESS_PLUGIN_ICON_MAX_BYTES,
+  HARNESS_PLUGIN_LIMIT,
+  HARNESS_PLUGIN_MANIFEST_MAX_BYTES,
+  harnessPluginConfigurationSchema,
+  harnessPluginDescriptorSchema,
+  harnessPluginIconSchema,
+  harnessPluginIdSchema,
+  harnessPluginListParamsSchema,
+  harnessPluginListResultSchema,
+  harnessPluginManifestSchema,
+} from "./harness-plugins.js";
 export type {
-  HarnessSessionImportCandidate,
-  HarnessSessionImportSourcesResult,
-  HarnessSessionListParams,
-  HarnessSessionListResult,
-  HarnessSessionImportParams,
-  HarnessSessionImportResult,
-} from "./harness-session-import.js";
-export {
-  DEEPSEEK_MODERN_HOST_THREAD_ID_MAX_LENGTH,
-  DEEPSEEK_MODERN_SESSION_CWD_MAX_LENGTH,
-  DEEPSEEK_MODERN_SESSION_ID_MAX_LENGTH,
-  DEEPSEEK_MODERN_SESSION_LIST_MAX_LENGTH,
-  DEEPSEEK_MODERN_SESSION_TITLE_MAX_LENGTH,
-  DEEPSEEK_MODERN_SESSION_UPDATED_AT_MAX,
-  deepSeekModernSessionCandidateSchema,
-  deepSeekModernSessionImportParamsSchema,
-  deepSeekModernSessionImportResultSchema,
-  deepSeekModernSessionListParamsSchema,
-  deepSeekModernSessionListResultSchema,
-} from "./deepseek-modern-sessions.js";
-export type {
-  DeepSeekModernSessionCandidate,
-  DeepSeekModernSessionImportParams,
-  DeepSeekModernSessionImportResult,
-  DeepSeekModernSessionListParams,
-  DeepSeekModernSessionListResult,
-} from "./deepseek-modern-sessions.js";
-export {
-  externalThreadForkParamsSchema,
-  externalThreadForkResultSchema,
-} from "./external-thread-fork.js";
-export type { ExternalThreadForkParams, ExternalThreadForkResult } from "./external-thread-fork.js";
-export {
-  harnessHandoffIncludesSchema,
-  harnessHandoffIntentSchema,
-  threadHarnessSwitchParamsSchema,
-  threadHarnessSwitchResultSchema,
-} from "./thread-harness-switch.js";
-export type {
-  HarnessHandoffIncludes,
-  HarnessHandoffIntent,
-  ThreadHarnessSwitchParams,
-  ThreadHarnessSwitchResult,
-} from "./thread-harness-switch.js";
-export {
-  HARNESS_PERMISSION_MODE_CATALOG_MAX_LENGTH,
-  HARNESS_PERMISSION_MODE_DESCRIPTION_MAX_LENGTH,
-  HARNESS_PERMISSION_MODE_ID_MAX_LENGTH,
-  HARNESS_PERMISSION_MODE_LABEL_MAX_LENGTH,
-  harnessPermissionModeCatalogSchema,
-  harnessPermissionModeIdSchema,
-  harnessPermissionModeSchema,
-  threadPermissionModeSelectParamsSchema,
-} from "./harness-permission-modes.js";
-export type {
-  HarnessPermissionMode,
-  HarnessPermissionModeCatalog,
-  HarnessPermissionModeId,
-  ThreadPermissionModeSelectParams,
-} from "./harness-permission-modes.js";
+  HarnessPluginConfiguration,
+  HarnessPluginDescriptor,
+  HarnessPluginListResult,
+  HarnessPluginManifest,
+} from "./harness-plugins.js";
+
+// Models, capabilities, inspection -------------------------------------------
+
 export {
   HARNESS_MODEL_LABEL_MAX_LENGTH,
   HARNESS_MODEL_REF_MAX_LENGTH,
@@ -207,6 +141,9 @@ export type {
   ThreadOwnershipListParams,
   ThreadOwnershipListResult,
 } from "./harness-models.js";
+
+// Commands -------------------------------------------------------------------
+
 export {
   harnessCommandCatalogSchema,
   harnessCommandDescriptorSchema,
@@ -223,6 +160,62 @@ export type {
   ThreadCommandExecuteResult,
   ThreadCommandsInspectParams,
 } from "./harness-commands.js";
+
+// Permission modes -----------------------------------------------------------
+
+export {
+  HARNESS_PERMISSION_MODE_CATALOG_MAX_LENGTH,
+  HARNESS_PERMISSION_MODE_DESCRIPTION_MAX_LENGTH,
+  HARNESS_PERMISSION_MODE_ID_MAX_LENGTH,
+  HARNESS_PERMISSION_MODE_LABEL_MAX_LENGTH,
+  harnessPermissionModeCatalogSchema,
+  harnessPermissionModeIdSchema,
+  harnessPermissionModeSchema,
+  threadPermissionModeSelectParamsSchema,
+} from "./harness-permission-modes.js";
+export type {
+  HarnessPermissionMode,
+  HarnessPermissionModeCatalog,
+  HarnessPermissionModeId,
+  ThreadPermissionModeSelectParams,
+} from "./harness-permission-modes.js";
+
+// Thread lifecycle: delegate, switch, fork, usage -----------------------------
+
+export {
+  threadDelegateParamsSchema,
+  threadDelegationResultSchema,
+  threadMessageParamsSchema,
+} from "./thread-delegate.js";
+export type {
+  ThreadDelegateParams,
+  ThreadDelegationResult,
+  ThreadMessageParams,
+} from "./thread-delegate.js";
+
+export {
+  harnessHandoffIncludesSchema,
+  harnessHandoffIntentSchema,
+  threadHarnessSwitchParamsSchema,
+  threadHarnessSwitchResultSchema,
+} from "./thread-harness-switch.js";
+export type {
+  HarnessHandoffIncludes,
+  HarnessHandoffIntent,
+  ThreadHarnessSwitchParams,
+  ThreadHarnessSwitchResult,
+} from "./thread-harness-switch.js";
+
+export { REASONING_TRANSCRIPT_COMMAND } from "./reasoning-transcript.js";
+export { harnessmixErrorSchema } from "./errors.js";
+export type { HarnessMixError } from "./errors.js";
+
+export {
+  externalThreadForkParamsSchema,
+  externalThreadForkResultSchema,
+} from "./external-thread-fork.js";
+export type { ExternalThreadForkParams, ExternalThreadForkResult } from "./external-thread-fork.js";
+
 export {
   accountCreditsProductUsageSchema,
   accountResetCreditsSchema,
@@ -238,16 +231,57 @@ export type {
   ThreadUsageInspectionParams,
   ThreadUsageSnapshot,
 } from "./thread-usage.js";
+
+// Session import -------------------------------------------------------------
+
 export {
-  threadDelegateParamsSchema,
-  threadDelegationResultSchema,
-  threadMessageParamsSchema,
-} from "./thread-delegate.js";
+  HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH,
+  HARNESS_SESSION_IMPORT_ID_MAX_LENGTH,
+  HARNESS_SESSION_IMPORT_LIST_MAX_LENGTH,
+  HARNESS_SESSION_IMPORT_TITLE_MAX_LENGTH,
+  HARNESS_SESSION_IMPORT_UPDATED_AT_MAX,
+  harnessSessionImportCandidateSchema,
+  HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE,
+  harnessSessionImportIdSchema,
+  harnessSessionImportSourcesParamsSchema,
+  harnessSessionImportSourcesResultSchema,
+  harnessSessionListParamsSchema,
+  harnessSessionListResultSchema,
+  harnessSessionImportParamsSchema,
+  harnessSessionImportResultSchema,
+} from "./harness-session-import.js";
 export type {
-  ThreadDelegateParams,
-  ThreadDelegationResult,
-  ThreadMessageParams,
-} from "./thread-delegate.js";
+  HarnessSessionImportCandidate,
+  HarnessSessionImportSourcesResult,
+  HarnessSessionListParams,
+  HarnessSessionListResult,
+  HarnessSessionImportParams,
+  HarnessSessionImportResult,
+} from "./harness-session-import.js";
+
+export {
+  DEEPSEEK_MODERN_HOST_THREAD_ID_MAX_LENGTH,
+  DEEPSEEK_MODERN_SESSION_CWD_MAX_LENGTH,
+  DEEPSEEK_MODERN_SESSION_ID_MAX_LENGTH,
+  DEEPSEEK_MODERN_SESSION_LIST_MAX_LENGTH,
+  DEEPSEEK_MODERN_SESSION_TITLE_MAX_LENGTH,
+  DEEPSEEK_MODERN_SESSION_UPDATED_AT_MAX,
+  deepSeekModernSessionCandidateSchema,
+  deepSeekModernSessionImportParamsSchema,
+  deepSeekModernSessionImportResultSchema,
+  deepSeekModernSessionListParamsSchema,
+  deepSeekModernSessionListResultSchema,
+} from "./deepseek-modern-sessions.js";
+export type {
+  DeepSeekModernSessionCandidate,
+  DeepSeekModernSessionImportParams,
+  DeepSeekModernSessionImportResult,
+  DeepSeekModernSessionListParams,
+  DeepSeekModernSessionListResult,
+} from "./deepseek-modern-sessions.js";
+
+// Wire primitives -------------------------------------------------------------
+
 export {
   harnessIdSchema,
   hostInteractionIdSchema,
@@ -256,6 +290,7 @@ export {
   hostTurnIdSchema,
 } from "./ids.js";
 export type { HarnessId, HostInteractionId, HostItemId, HostThreadId, HostTurnId } from "./ids.js";
+
 export {
   jsonRpcEnvelopeSchema,
   jsonRpcErrorResponseSchema,
@@ -274,6 +309,7 @@ export type {
   JsonRpcRequest,
   JsonRpcSuccessResponse,
 } from "./json-rpc.js";
+
 export {
   jsonArraySchema,
   jsonObjectSchema,
@@ -281,6 +317,7 @@ export {
   jsonValueSchema,
 } from "./json-value.js";
 export type { JsonArray, JsonObject, JsonPrimitive, JsonValue } from "./json-value.js";
+
 export {
   nativeCheckpointRefSchema,
   nativeCheckpointRefV1Schema,
@@ -297,6 +334,9 @@ export type {
   NativeTurnRef,
   NativeTurnRefV1,
 } from "./native-refs.js";
+
+// Updates --------------------------------------------------------------------
+
 export {
   UPDATE_ERROR_MAX_LENGTH,
   UPDATE_SEMVER_PATTERN,
@@ -317,6 +357,7 @@ export type {
   UpdateStatus,
   UpdateStatusResult,
 } from "./updates.js";
+
 export { WORKSPACE_CONTRACT_VERSION } from "./version.js";
 
 export const workspaceContractVersionSchema = z.literal(WORKSPACE_CONTRACT_VERSION);

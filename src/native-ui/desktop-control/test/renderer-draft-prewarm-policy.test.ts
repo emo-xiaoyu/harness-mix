@@ -16,7 +16,7 @@ import {
   type RendererWebContents,
 } from "../src/renderer-draft-prewarm-runtime.js";
 
-function requestManagerFixture(): Required<RendererHostRequestManager> {
+function requestManagerFixture(): Omit<Required<RendererHostRequestManager>, "threadStore"> {
   return {
     onNotification: vi.fn(),
     onRequest: vi.fn(),
@@ -46,6 +46,32 @@ describe("Desktop connection snapshot discovery", () => {
     installDraftPrewarmPolicyBridge(nativeManager, requestBridgeFixture(), "local", target,
       { discardAllPrewarmedThreads: vi.fn() });
     expect("dispatchAppServerResponse" in nativeManager).toBe(false);
+  });
+  it("drains sidecar frames parked before the bridge installed", () => {
+    const manager = requestManagerFixture();
+    const onNotification = manager.onNotification as ReturnType<typeof vi.fn>;
+    const target: DraftPrewarmPolicyTarget = {
+      __harnessmixSidecarModeV1: true,
+      __harnessmixSidecarSendV1: vi.fn(),
+      // 帧中继在 receive 装好前停进停机坪的帧：安装时按序放行进同一条处理路径
+      __harnessmixPendingSidecarFramesV1: [
+        JSON.stringify({ method: "thread/started", params: { thread: { id: "parked-1", modelProvider: "harnessmix", ephemeral: false } } }),
+        JSON.stringify({ method: "thread/name/updated", params: { threadId: "parked-1", threadName: "Parked" } }),
+      ],
+    };
+    expect(() => installDraftPrewarmPolicyBridge(manager, requestBridgeFixture(), "local", target,
+      { discardAllPrewarmedThreads: vi.fn() })).not.toThrow();
+    expect(target.__harnessmixPendingSidecarFramesV1).toBeUndefined();
+    expect(onNotification).toHaveBeenCalledWith("thread/started",
+      { thread: { id: "parked-1", modelProvider: "harnessmix", ephemeral: false } });
+    expect(onNotification).toHaveBeenCalledWith("thread/name/updated",
+      { threadId: "parked-1", threadName: "Parked" });
+    expect(typeof target.__harnessmixSidecarReceiveV1).toBe("function");
+    // 放行后中继直达路径仍工作
+    (target.__harnessmixSidecarReceiveV1 as (frame: string) => void)(
+      JSON.stringify({ method: "thread/name/updated", params: { threadId: "parked-1", threadName: "After" } }));
+    expect(onNotification).toHaveBeenCalledWith("thread/name/updated",
+      { threadId: "parked-1", threadName: "After" });
   });
   it("explicitly rejects unsupported remote approval hooks before changing transport", () => {
     const bridge = requestBridgeFixture();
@@ -608,6 +634,36 @@ describe("Renderer draft prewarm policy", () => {
     expect(sent.some((frame) => frame.method === "turn/start")).toBe(false);
     expect(directSend).toHaveBeenCalledWith("thread/start", { cwd: "/project", model: "gpt-5" });
     expect(directSend).toHaveBeenCalledWith("turn/start", { threadId: "official-thread", input: [] });
+  });
+
+  it("loads external sessions into the native catalog after the sidecar attaches", async () => {
+    const observeCatalogThreads = vi.fn();
+    const manager: RendererHostRequestManager = {
+      ...requestManagerFixture(),
+      threadStore: { observeCatalogThreads },
+    };
+    const { bridge, directSend } = remoteRequestBridgeFixture();
+    const external = { id: "external-1", modelProvider: "harnessmix" };
+    const official = { id: "official-1", modelProvider: "openai" };
+    const target: DraftPrewarmPolicyTarget = { __harnessmixSidecarModeV1: true };
+    target.__harnessmixSidecarSendV1 = (frame: string) => {
+      const request = JSON.parse(frame) as { id: number; method: string };
+      expect(request.method).toBe("harnessmix/thread/list");
+      queueMicrotask(() => {
+        (target.__harnessmixSidecarReceiveV1 as (frame: string) => void)(
+          JSON.stringify({ id: request.id, result: { data: [external] } }),
+        );
+      });
+    };
+    installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
+      discardAllPrewarmedThreads: vi.fn(),
+    });
+    await vi.waitFor(() => expect(observeCatalogThreads).toHaveBeenCalledWith([external]));
+    manager.threadStore?.observeCatalogThreads?.([official]);
+    expect(observeCatalogThreads).toHaveBeenLastCalledWith([official, external]);
+    expect(directSend).not.toHaveBeenCalled();
+    (target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void }).dispose();
+    expect(manager.threadStore?.observeCatalogThreads).toBe(observeCatalogThreads);
   });
 
   it("keeps official Codex usable when the separate Host fails", async () => {

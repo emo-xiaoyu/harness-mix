@@ -1,3 +1,9 @@
+/**
+ * Structural DOM inspection of the Codex renderer: counts node names, open
+ * shadow roots and composer/send-button candidates. The traversal itself runs
+ * in the page (see the injected expression below); this module only validates
+ * the shape it returns.
+ */
 export interface RendererDomNodeSummary {
   nodeName: string;
   attributeNames: string[];
@@ -18,7 +24,7 @@ export interface RendererDomInspection {
   sendButtonCandidates: RendererDomNodeSummary[];
 }
 
-interface RendererRuntimeClient {
+interface RuntimeEvaluation {
   evaluate<T>(expression: string): Promise<T>;
 }
 
@@ -26,22 +32,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function stringArray(value: unknown, field: string): string[] {
+function textList(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new Error(`Renderer DOM inspection '${field}' must be a text array`);
   }
   return [...value];
 }
 
-function nodeSummary(value: unknown): RendererDomNodeSummary {
+function candidate(value: unknown): RendererDomNodeSummary {
   if (!isRecord(value) || typeof value.nodeName !== "string") {
     throw new Error("Renderer DOM inspection candidate must be an object");
   }
   return {
     nodeName: value.nodeName,
-    attributeNames: stringArray(value.attributeNames, "attributeNames"),
-    reasons: stringArray(value.reasons, "reasons"),
-    ancestorNames: stringArray(value.ancestorNames, "ancestorNames"),
+    attributeNames: textList(value.attributeNames, "attributeNames"),
+    reasons: textList(value.reasons, "reasons"),
+    ancestorNames: textList(value.ancestorNames, "ancestorNames"),
   };
 }
 
@@ -63,25 +69,22 @@ export function validateRendererDomInspection(value: unknown): RendererDomInspec
     }
     nodeNameCounts[name] = count as number;
   }
-  const shadowRoots = value.shadowRoots.map((shadowRoot) => {
+  const shadowRoots = value.shadowRoots.map((root) => {
     if (
-      !isRecord(shadowRoot) ||
-      shadowRoot.shadowRootType !== "open" ||
-      !Number.isInteger(shadowRoot.childNodeCount)
+      !isRecord(root) ||
+      root.shadowRootType !== "open" ||
+      !Number.isInteger(root.childNodeCount)
     ) {
       throw new Error("Renderer DOM inspection returned an invalid shadow root");
     }
-    return {
-      shadowRootType: "open" as const,
-      childNodeCount: shadowRoot.childNodeCount as number,
-    };
+    return { shadowRootType: "open" as const, childNodeCount: root.childNodeCount as number };
   });
   return {
     totalNodes: value.totalNodes as number,
     nodeNameCounts,
     shadowRoots,
-    editorCandidates: value.editorCandidates.map(nodeSummary),
-    sendButtonCandidates: value.sendButtonCandidates.map(nodeSummary),
+    editorCandidates: value.editorCandidates.map(candidate),
+    sendButtonCandidates: value.sendButtonCandidates.map(candidate),
   };
 }
 
@@ -137,8 +140,9 @@ const rendererStructureExpression = `(() => {
 })()`;
 
 export async function inspectRendererDom(
-  client: RendererRuntimeClient,
+  client: RuntimeEvaluation,
 ): Promise<RendererDomInspection> {
-  const inspection = await client.evaluate<unknown>(rendererStructureExpression);
-  return validateRendererDomInspection(inspection);
+  return validateRendererDomInspection(
+    await client.evaluate<unknown>(rendererStructureExpression),
+  );
 }

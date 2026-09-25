@@ -1,8 +1,13 @@
+/**
+ * Read-only telemetry about each harness's current native authentication.
+ * Snapshots never carry credentials or login state — `loginCommand` is a hint
+ * for the user, not an action harnessmix performs.
+ */
 import { z } from "zod";
+
 import { harnessIdSchema } from "./ids.js";
 import { accountCreditsSnapshotSchema } from "./thread-usage.js";
 
-/** Read-only telemetry for the Harness's current native authentication, never a login record. */
 export const harnessAccountSnapshotSchema = z
   .object({
     email: z.string().trim().min(1).max(320).optional(),
@@ -17,6 +22,7 @@ export const harnessAccountSnapshotSchema = z
 export type HarnessAccountSnapshot = z.infer<typeof harnessAccountSnapshotSchema>;
 
 export const harnessAccountListParamsSchema = z.object({}).strict();
+
 export const harnessAccountListResultSchema = z
   .object({
     accounts: z

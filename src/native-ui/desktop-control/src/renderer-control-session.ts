@@ -1,3 +1,10 @@
+/**
+ * Renderer control over the Electron main-process inspector: enumerates
+ * webContents, picks the primary renderer, installs the main-process title
+ * policy, reloads, injects the renderer bundle and re-establishes everything
+ * on demand. The expressions evaluated inside Electron are protocol payloads
+ * (see SPEC.md).
+ */
 import { CdpClient, listCdpTargets, type CdpFetch, type CdpTarget } from "./cdp-client.js";
 import {
   installMainProcessTitlePolicy,
@@ -39,35 +46,35 @@ export interface RendererControlSnapshot {
   binding: ProductionRendererStatus;
 }
 
-interface RendererInspector {
+interface InspectorConnection {
   command(method: string, params?: Record<string, unknown>): Promise<unknown>;
   evaluate<T>(expression: string): Promise<T>;
   close(): void;
 }
 
-interface RendererControlOperations {
-  inspect(inspector: RendererInspector): Promise<ElectronRendererSummary[]>;
+interface ControlOperations {
+  inspect(inspector: InspectorConnection): Promise<ElectronRendererSummary[]>;
   installTitlePolicy(
-    inspector: RendererInspector,
+    inspector: InspectorConnection,
     rendererWebContentsId: number,
   ): Promise<MainProcessTitlePolicyStatus>;
   markTitlePolicyReady(
-    inspector: RendererInspector,
+    inspector: InspectorConnection,
     rendererWebContentsId: number,
   ): Promise<RendererTitlePolicyReadiness>;
   installDraftPrewarmPolicy(
-    inspector: RendererInspector,
+    inspector: InspectorConnection,
     rendererWebContentsId: number,
   ): Promise<RendererDraftPrewarmPolicyStatus>;
-  reload(inspector: RendererInspector, rendererWebContentsId: number): Promise<void>;
+  reload(inspector: InspectorConnection, rendererWebContentsId: number): Promise<void>;
   execute(
-    inspector: RendererInspector,
+    inspector: InspectorConnection,
     rendererWebContentsId: number,
     source: string,
   ): Promise<unknown>;
-  readBinding(inspector: RendererInspector, rendererWebContentsId: number): Promise<unknown>;
+  readBinding(inspector: InspectorConnection, rendererWebContentsId: number): Promise<unknown>;
   readTitlePolicyCounters(
-    inspector: RendererInspector,
+    inspector: InspectorConnection,
   ): Promise<MainProcessTitlePolicyCounters | null>;
 }
 
@@ -89,22 +96,19 @@ export interface InstallRendererControlOptions {
 }
 
 interface CreateRendererControlOptions extends InstallRendererControlOptions {
-  inspector: RendererInspector;
-  operations?: RendererControlOperations;
+  inspector: InspectorConnection;
+  operations?: ControlOperations;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
+const sleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function sameAgents(actual: readonly string[], expected: readonly string[]): boolean {
-  return (
-    actual.length === expected.length && actual.every((agent, index) => agent === expected[index])
-  );
+function sameAgentList(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && actual.every((agent, index) => agent === expected[index]);
 }
 
 class RendererAdapterReadinessError extends Error {
@@ -126,24 +130,26 @@ function validateBindingStatus(
     value.version !== 2 ||
     !Array.isArray(value.enabledAgents) ||
     value.enabledAgents.some((agent) => typeof agent !== "string") ||
-    !sameAgents(value.enabledAgents as string[], expectedAgents) ||
+    !sameAgentList(value.enabledAgents as string[], expectedAgents) ||
     !isRecord(value.adapter)
   ) {
     throw new Error("Production Renderer binding returned an invalid status");
   }
   if (value.adapter.state !== "ready" || typeof value.adapter.reason !== "string") {
-    const state = typeof value.adapter.state === "string" ? value.adapter.state : "invalid";
-    const reason = typeof value.adapter.reason === "string" ? value.adapter.reason : "unknown";
-    throw new RendererAdapterReadinessError(state, reason);
+    throw new RendererAdapterReadinessError(
+      typeof value.adapter.state === "string" ? value.adapter.state : "invalid",
+      typeof value.adapter.reason === "string" ? value.adapter.reason : "unknown",
+    );
   }
   return value as unknown as ProductionRendererStatus;
 }
 
+/** Live primary windows only, preferring the busiest (most elements) one. */
 export function selectRendererWebContents(
   contents: readonly ElectronRendererSummary[],
   preferredRendererId?: number,
 ): ElectronRendererSummary | null {
-  const candidates = contents
+  const ranked = contents
     .filter(
       (item) =>
         item.type === "window" &&
@@ -151,15 +157,13 @@ export function selectRendererWebContents(
         item.runtime.available &&
         item.runtime.elementCount !== null,
     )
-    .toSorted(
-      (left, right) => (right.runtime.elementCount ?? 0) - (left.runtime.elementCount ?? 0),
-    );
-  const preferred = candidates.find(
+    .toSorted((left, right) => (right.runtime.elementCount ?? 0) - (left.runtime.elementCount ?? 0));
+  const preferred = ranked.find(
     (candidate) =>
       candidate.id === preferredRendererId && (candidate.runtime.elementCount ?? 0) > 0,
   );
   if (preferred) return preferred;
-  return candidates.find((candidate) => (candidate.runtime.elementCount ?? 0) > 0) ?? null;
+  return ranked.find((candidate) => (candidate.runtime.elementCount ?? 0) > 0) ?? null;
 }
 
 export async function waitForRendererTitlePolicyReady(
@@ -176,43 +180,41 @@ export async function waitForRendererTitlePolicyReady(
   const now = options.now ?? Date.now;
   const wait = options.sleep ?? sleep;
   const deadline = now() + timeoutMs;
-  let lastError: unknown;
+  let lastFailure: unknown;
   while (now() < deadline) {
     try {
       return await markReadiness();
     } catch (error) {
-      lastError = error;
+      lastFailure = error;
     }
     await wait(pollIntervalMs);
   }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  const detail = lastFailure instanceof Error ? `: ${lastFailure.message}` : "";
   throw new Error(`Renderer title policy ownership did not become ready${detail}`);
 }
 
+/** Polls `/json/list` for the Electron main-process (node) inspector target. */
 export async function waitForInspectorTarget(
   endpoint: string,
-  options: {
-    fetchImpl?: CdpFetch;
-    pollIntervalMs?: number;
-    timeoutMs?: number;
-  } = {},
+  options: { fetchImpl?: CdpFetch; pollIntervalMs?: number; timeoutMs?: number } = {},
 ): Promise<CdpTarget> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
+  let lastFailure: unknown;
   while (Date.now() < deadline) {
     try {
-      const targets = await listCdpTargets(endpoint, options.fetchImpl);
-      const inspector = targets.find((target) => target.type === "node");
+      const inspector = (await listCdpTargets(endpoint, options.fetchImpl)).find(
+        (target) => target.type === "node",
+      );
       if (inspector) return inspector;
-      lastError = new Error("Inspector has no Node target");
+      lastFailure = new Error("Inspector has no Node target");
     } catch (error) {
-      lastError = error;
+      lastFailure = error;
     }
     await sleep(pollIntervalMs);
   }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  const detail = lastFailure instanceof Error ? `: ${lastFailure.message}` : "";
   throw new Error(`Electron main-process Inspector did not become ready${detail}`);
 }
 
@@ -224,12 +226,11 @@ const electronModuleExpression = `(() => {
   const { createRequire } = process.getBuiltinModule('module');
   return createRequire(process.execPath)('electron');
 })()`;
-
 const webContentsRuntimeExpression =
   "(() => ({ elementCount: document.querySelectorAll('*').length }))()";
 
 export async function inspectElectronWebContents(
-  inspector: Pick<RendererInspector, "evaluate">,
+  inspector: Pick<InspectorConnection, "evaluate">,
 ): Promise<ElectronRendererSummary[]> {
   const value = await inspector.evaluate<unknown>(`(async () => {
     const { webContents } = ${electronModuleExpression};
@@ -281,7 +282,7 @@ export async function inspectElectronWebContents(
 }
 
 export async function activateElectronDesktop(
-  inspector: Pick<RendererInspector, "evaluate">,
+  inspector: Pick<InspectorConnection, "evaluate">,
 ): Promise<number> {
   const value = await inspector.evaluate<unknown>(`(() => {
     const { BrowserWindow } = ${electronModuleExpression};
@@ -300,7 +301,7 @@ export async function activateElectronDesktop(
 }
 
 async function executeInWebContents<T>(
-  inspector: Pick<RendererInspector, "evaluate">,
+  inspector: Pick<InspectorConnection, "evaluate">,
   rendererWebContentsId: number,
   source: string,
 ): Promise<T> {
@@ -314,13 +315,13 @@ async function executeInWebContents<T>(
 }
 
 async function reloadRenderer(
-  inspector: Pick<RendererInspector, "evaluate">,
+  inspector: Pick<InspectorConnection, "evaluate">,
   rendererWebContentsId: number,
 ): Promise<void> {
   await executeInWebContents(inspector, rendererWebContentsId, "location.reload(); null");
 }
 
-const defaultOperations: RendererControlOperations = {
+const defaultOperations: ControlOperations = {
   inspect: inspectElectronWebContents,
   installTitlePolicy: installMainProcessTitlePolicy,
   markTitlePolicyReady: markRendererTitlePolicyReady,
@@ -337,8 +338,8 @@ const defaultOperations: RendererControlOperations = {
 };
 
 async function waitForRenderer(
-  inspector: RendererInspector,
-  operations: RendererControlOperations,
+  inspector: InspectorConnection,
+  operations: ControlOperations,
   timeoutMs: number,
   pollIntervalMs: number,
   preferredRendererId?: number,
@@ -356,42 +357,42 @@ async function waitForRenderer(
 }
 
 async function waitForBinding(
-  inspector: RendererInspector,
-  operations: RendererControlOperations,
+  inspector: InspectorConnection,
+  operations: ControlOperations,
   rendererWebContentsId: number,
   enabledAgents: readonly string[],
   timeoutMs: number,
   pollIntervalMs: number,
 ): Promise<ProductionRendererStatus> {
   const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
+  let lastFailure: unknown;
   while (Date.now() < deadline) {
     try {
       const value = await operations.readBinding(inspector, rendererWebContentsId);
       if (value !== null) return validateBindingStatus(value, enabledAgents);
     } catch (error) {
-      lastError = error;
+      lastFailure = error;
       if (error instanceof RendererAdapterReadinessError && error.state !== "installing") {
         throw error;
       }
     }
     await sleep(pollIntervalMs);
   }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  const detail = lastFailure instanceof Error ? `: ${lastFailure.message}` : "";
   throw new Error(`Production Renderer binding did not become ready${detail}`);
 }
 
-class InstalledRendererControlSession implements RendererControlSession {
+class ActiveRendererControlSession implements RendererControlSession {
   #closed = false;
   #snapshot: RendererControlSnapshot;
 
   constructor(
-    private readonly inspector: RendererInspector,
+    private readonly inspector: InspectorConnection,
     private readonly rendererSource: string,
     private readonly enabledAgents: readonly string[],
     private readonly timeoutMs: number,
     private readonly pollIntervalMs: number,
-    private readonly operations: RendererControlOperations,
+    private readonly operations: ControlOperations,
     snapshot: RendererControlSnapshot,
   ) {
     this.#snapshot = snapshot;
@@ -433,15 +434,12 @@ class InstalledRendererControlSession implements RendererControlSession {
           this.pollIntervalMs,
         );
       }
-      this.#snapshot = {
-        ...this.#snapshot,
-        renderer: selected,
-        draftPrewarmPolicy,
-        binding,
-      };
+      this.#snapshot = { ...this.#snapshot, renderer: selected, draftPrewarmPolicy, binding };
       return this.#snapshot;
     }
 
+    // Cold path: the title policy reload already happened at first install;
+    // here we only wait for the policy to own this renderer again.
     const titlePolicyReadiness = await waitForRendererTitlePolicyReady(
       () => this.operations.markTitlePolicyReady(this.inspector, selected.id),
       { timeoutMs: this.timeoutMs, pollIntervalMs: this.pollIntervalMs },
@@ -496,12 +494,12 @@ class InstalledRendererControlSession implements RendererControlSession {
   }
 }
 
-const startupTraceStartedAt = Date.now();
+const traceStartedAt = Date.now();
 
 function startupTrace(stage: string): void {
   if (process.env.HARNESSMIX_STARTUP_TRACE !== "1") return;
   console.error(
-    `[harnessmix startup +${Date.now() - startupTraceStartedAt}ms] renderer-session: ${stage}`,
+    `[harnessmix startup +${Date.now() - traceStartedAt}ms] renderer-session: ${stage}`,
   );
 }
 
@@ -529,10 +527,7 @@ export async function createRendererControlSession(
   startupTrace("waiting for title policy readiness");
   const titlePolicyReadiness = await waitForRendererTitlePolicyReady(
     () => operations.markTitlePolicyReady(options.inspector, selected.id),
-    {
-      timeoutMs,
-      pollIntervalMs,
-    },
+    { timeoutMs, pollIntervalMs },
   );
   startupTrace("injecting Renderer bundle");
   await operations.execute(options.inspector, selected.id, options.rendererSource);
@@ -550,20 +545,14 @@ export async function createRendererControlSession(
     timeoutMs,
     pollIntervalMs,
   );
-  return new InstalledRendererControlSession(
+  return new ActiveRendererControlSession(
     options.inspector,
     options.rendererSource,
     enabledAgents,
     timeoutMs,
     pollIntervalMs,
     operations,
-    {
-      renderer: selected,
-      titlePolicy,
-      titlePolicyReadiness,
-      draftPrewarmPolicy,
-      binding,
-    },
+    { renderer: selected, titlePolicy, titlePolicyReadiness, draftPrewarmPolicy, binding },
   );
 }
 

@@ -1,3 +1,9 @@
+/**
+ * WIRE PROTOCOL MODULE (see SPEC.md): the finder/installer expressions below
+ * (and the helper functions they embed via .toString()) execute inside the
+ * Desktop renderer/main process; their text is protocol. The polling wrapper
+ * around them is host-side and freely changeable.
+ */
 import type { CdpClient } from "./cdp-client.js";
 import {
   installDraftPrewarmPolicyBridge,

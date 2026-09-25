@@ -1,4 +1,11 @@
+/**
+ * Official Codex account management surface (isolated accounts only; the
+ * default account stays on the stock route). Login flows surface a
+ * verification URL + user code; completion arrives as a notification. Plan
+ * type enum mirrors the values the official app-server reports.
+ */
 import { z } from "zod";
+
 import { accountCreditsSnapshotSchema, threadUsageSnapshotSchema } from "./thread-usage.js";
 
 const accountIdSchema = z
@@ -6,7 +13,7 @@ const accountIdSchema = z
   .min(1)
   .max(256)
   .regex(/^[A-Za-z0-9._~-]+$/u);
-const nonBlankTextSchema = z.string().trim().min(1);
+const nonBlank = z.string().trim().min(1);
 
 export const codexAccountPlanTypeSchema = z.enum([
   "free",
@@ -32,10 +39,10 @@ export type CodexAccountPlanType = z.infer<typeof codexAccountPlanTypeSchema>;
 export const codexAccountSchema = z
   .object({
     accountId: accountIdSchema,
-    label: nonBlankTextSchema.max(256),
+    label: nonBlank.max(256),
     email: z.string().email().max(320).optional(),
     planType: codexAccountPlanTypeSchema.optional(),
-    codexHome: nonBlankTextSchema.max(16_384),
+    codexHome: nonBlank.max(16_384),
     active: z.boolean(),
     isDefault: z.boolean(),
     authenticated: z.boolean().optional(),
@@ -50,7 +57,7 @@ export const codexAccountListResultSchema = z
 export type CodexAccountListResult = z.infer<typeof codexAccountListResultSchema>;
 
 export const codexAccountCreateParamsSchema = z
-  .object({ label: nonBlankTextSchema.max(256).optional() })
+  .object({ label: nonBlank.max(256).optional() })
   .strict();
 export type CodexAccountCreateParams = z.infer<typeof codexAccountCreateParamsSchema>;
 
@@ -74,15 +81,15 @@ export type CodexAccountLoginStartParams = z.infer<typeof codexAccountLoginStart
 export const codexAccountLoginStartResultSchema = z
   .object({
     accountId: accountIdSchema,
-    loginId: nonBlankTextSchema.max(1_024),
+    loginId: nonBlank.max(1_024),
     verificationUrl: z.string().url().max(16_384),
-    userCode: nonBlankTextSchema.max(1_024),
+    userCode: nonBlank.max(1_024),
   })
   .strict();
 export type CodexAccountLoginStartResult = z.infer<typeof codexAccountLoginStartResultSchema>;
 
 export const codexAccountLoginCancelParamsSchema = z
-  .object({ accountId: accountIdSchema.optional(), loginId: nonBlankTextSchema.max(1_024) })
+  .object({ accountId: accountIdSchema.optional(), loginId: nonBlank.max(1_024) })
   .strict();
 export type CodexAccountLoginCancelParams = z.infer<typeof codexAccountLoginCancelParamsSchema>;
 
@@ -92,7 +99,7 @@ export type CodexAccountLoginCancelResult = z.infer<typeof codexAccountLoginCanc
 export const codexAccountLoginCompletedSchema = z
   .object({
     accountId: accountIdSchema,
-    loginId: nonBlankTextSchema.max(1_024),
+    loginId: nonBlank.max(1_024),
     success: z.boolean(),
     error: z.string().max(4_096).nullable(),
   })
@@ -101,6 +108,7 @@ export type CodexAccountLoginCompleted = z.infer<typeof codexAccountLoginComplet
 
 export const codexAccountUsageParamsSchema = z.object({ accountId: accountIdSchema }).strict();
 export type CodexAccountUsageParams = z.infer<typeof codexAccountUsageParamsSchema>;
+
 export const codexAccountUsageResultSchema = z
   .object({
     accountId: accountIdSchema,

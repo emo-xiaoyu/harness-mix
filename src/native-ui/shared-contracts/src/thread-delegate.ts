@@ -1,14 +1,20 @@
+/**
+ * Host-side delegation: spawn a child thread under another harness with only
+ * the task text as context. The result carries identities for correlation;
+ * the full turn projection arrives on the turn/* notification stream, so the
+ * embedded `turn` object is intentionally loose.
+ */
 import { z } from "zod";
 
 import { harnessIdSchema, hostThreadIdSchema, hostTurnIdSchema } from "./ids.js";
 
-const delegationTaskSchema = z.string().trim().min(1).max(8000);
+const taskText = z.string().trim().min(1).max(8000);
 
 export const threadDelegateParamsSchema = z
   .object({
     threadId: hostThreadIdSchema,
     harnessId: harnessIdSchema,
-    task: delegationTaskSchema,
+    task: taskText,
   })
   .strict();
 
@@ -18,13 +24,12 @@ export const threadMessageParamsSchema = z
   .object({
     threadId: hostThreadIdSchema,
     childThreadId: hostThreadIdSchema,
-    task: delegationTaskSchema,
+    task: taskText,
   })
   .strict();
 
 export type ThreadMessageParams = z.infer<typeof threadMessageParamsSchema>;
 
-// 协作 Turn 的完整投影由 turn/* 通知流承载；结果只需携带身份供客户端关联
 export const threadDelegationResultSchema = z
   .object({
     childThreadId: hostThreadIdSchema,

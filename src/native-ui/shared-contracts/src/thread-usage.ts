@@ -1,57 +1,58 @@
+/**
+ * Token/credit telemetry shapes. A usage snapshot may be sparse (harnesses
+ * report what they have), but never empty — an all-undefined object would be
+ * indistinguishable from "no data" and is rejected. Percent-bearing plan
+ * windows must pair their usage with the reset timestamp so the renderer can
+ * show a countdown instead of a bare number.
+ */
 import { z } from "zod";
 
+import { boundedPercent, finiteNonNegative, safeNonNegativeInteger } from "./constraints.js";
 import { hostThreadIdSchema } from "./ids.js";
-
-const nonNegativeSafeIntegerSchema = z.number().int().safe().nonnegative();
-const finiteNonNegativeNumberSchema = z.number().finite().nonnegative();
-const cacheHitRatePercentSchema = z.number().finite().min(0).max(100);
 
 export const threadUsageSnapshotSchema = z
   .object({
-    inputTokens: nonNegativeSafeIntegerSchema.optional(),
-    cachedInputTokens: nonNegativeSafeIntegerSchema.optional(),
-    cacheWriteInputTokens: nonNegativeSafeIntegerSchema.optional(),
-    outputTokens: nonNegativeSafeIntegerSchema.optional(),
-    outputTokensPerSecond: finiteNonNegativeNumberSchema.optional(),
-    reasoningOutputTokens: nonNegativeSafeIntegerSchema.optional(),
-    totalTokens: nonNegativeSafeIntegerSchema.optional(),
-    totalCostUsd: finiteNonNegativeNumberSchema.optional(),
-    totalCredits: finiteNonNegativeNumberSchema.optional(),
-    contextUsagePercent: finiteNonNegativeNumberSchema.optional(),
-    cacheHitRatePercent: cacheHitRatePercentSchema.optional(),
-    contextWindowTokens: nonNegativeSafeIntegerSchema.optional(),
-    contextUsedTokens: nonNegativeSafeIntegerSchema.optional(),
-    planFiveHourUsedPercent: cacheHitRatePercentSchema.optional(),
-    planFiveHourResetsAtUnix: nonNegativeSafeIntegerSchema.optional(),
-    planSevenDayUsedPercent: cacheHitRatePercentSchema.optional(),
-    planSevenDayResetsAtUnix: nonNegativeSafeIntegerSchema.optional(),
+    inputTokens: safeNonNegativeInteger.optional(),
+    cachedInputTokens: safeNonNegativeInteger.optional(),
+    cacheWriteInputTokens: safeNonNegativeInteger.optional(),
+    outputTokens: safeNonNegativeInteger.optional(),
+    outputTokensPerSecond: finiteNonNegative.optional(),
+    reasoningOutputTokens: safeNonNegativeInteger.optional(),
+    totalTokens: safeNonNegativeInteger.optional(),
+    totalCostUsd: finiteNonNegative.optional(),
+    totalCredits: finiteNonNegative.optional(),
+    contextUsagePercent: finiteNonNegative.optional(),
+    cacheHitRatePercent: boundedPercent.optional(),
+    contextWindowTokens: safeNonNegativeInteger.optional(),
+    contextUsedTokens: safeNonNegativeInteger.optional(),
+    planFiveHourUsedPercent: boundedPercent.optional(),
+    planFiveHourResetsAtUnix: safeNonNegativeInteger.optional(),
+    planSevenDayUsedPercent: boundedPercent.optional(),
+    planSevenDayResetsAtUnix: safeNonNegativeInteger.optional(),
   })
   .strict()
-  .superRefine((usage, context) => {
+  .superRefine((usage, ctx) => {
     if (Object.keys(usage).length === 0) {
-      context.addIssue({ code: "custom", message: "Thread Usage must contain a reliable field" });
+      ctx.addIssue({ code: "custom", message: "Thread Usage must contain a reliable field" });
     }
-    const hasContextUsed = usage.contextUsedTokens !== undefined;
-    const hasContextWindow = usage.contextWindowTokens !== undefined;
-    if (hasContextUsed !== hasContextWindow) {
-      context.addIssue({
+    const hasUsed = usage.contextUsedTokens !== undefined;
+    const hasWindow = usage.contextWindowTokens !== undefined;
+    if (hasUsed !== hasWindow) {
+      ctx.addIssue({
         code: "custom",
         message: "Thread Usage context fields must be provided together",
-        path: [hasContextUsed ? "contextWindowTokens" : "contextUsedTokens"],
+        path: [hasUsed ? "contextWindowTokens" : "contextUsedTokens"],
       });
     }
     if (usage.contextWindowTokens === 0) {
-      context.addIssue({
+      ctx.addIssue({
         code: "custom",
         message: "Thread Usage contextWindowTokens must be greater than zero",
         path: ["contextWindowTokens"],
       });
     }
-    if (
-      usage.planFiveHourResetsAtUnix !== undefined &&
-      usage.planFiveHourUsedPercent === undefined
-    ) {
-      context.addIssue({
+    if (usage.planFiveHourResetsAtUnix !== undefined && usage.planFiveHourUsedPercent === undefined) {
+      ctx.addIssue({
         code: "custom",
         message:
           "Thread Usage planFiveHourResetsAtUnix must be provided with planFiveHourUsedPercent",
@@ -62,7 +63,7 @@ export const threadUsageSnapshotSchema = z
       usage.planSevenDayResetsAtUnix !== undefined &&
       usage.planSevenDayUsedPercent === undefined
     ) {
-      context.addIssue({
+      ctx.addIssue({
         code: "custom",
         message:
           "Thread Usage planSevenDayResetsAtUnix must be provided with planSevenDayUsedPercent",
@@ -73,12 +74,10 @@ export const threadUsageSnapshotSchema = z
 
 export type ThreadUsageSnapshot = z.infer<typeof threadUsageSnapshotSchema>;
 
-const usagePercentSchema = z.number().finite().min(0).max(100);
-
 export const accountCreditsProductUsageSchema = z
   .object({
     product: z.string().min(1),
-    usagePercent: usagePercentSchema,
+    usagePercent: boundedPercent,
     resetsAt: z.string().min(1).optional(),
   })
   .strict();
@@ -95,7 +94,7 @@ export const accountCreditsSnapshotSchema = z
   .object({
     /** Native label when the primary limit is scoped to a model or product group. */
     label: z.string().min(1).optional(),
-    usedPercent: usagePercentSchema,
+    usedPercent: boundedPercent,
     resetsAt: z.string().min(1).optional(),
     periodType: z.enum(["weekly", "monthly", "five_hour", "seven_day", "unknown"]),
     productUsage: z.array(accountCreditsProductUsageSchema).min(1).optional(),

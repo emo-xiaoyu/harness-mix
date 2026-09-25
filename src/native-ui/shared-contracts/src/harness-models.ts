@@ -1,5 +1,12 @@
+/**
+ * Model / thinking-option / permission-mode catalog contracts and the
+ * inspection shapes the renderer builds its pickers from. Catalog integrity
+ * rules (unique refs, defaults that exist, supported options that exist) are
+ * enforced here so no consumer has to re-check them.
+ */
 import { z } from "zod";
 
+import { nonBlankText, rejectDuplicateKeys, TRANSPORT_SAFE_ID_SOURCE } from "./constraints.js";
 import { harnessmixErrorSchema } from "./errors.js";
 import {
   harnessPermissionModeCatalogSchema,
@@ -17,13 +24,11 @@ export const HARNESS_MODEL_LABEL_MAX_LENGTH = 256;
 export const HARNESS_THINKING_OPTION_ID_MAX_LENGTH = 128;
 export const THREAD_OWNERSHIP_LIST_MAX_LENGTH = 100;
 
-const nonBlankTextSchema = z.string().refine((value) => value.trim().length > 0, {
-  message: "Value must not be empty or whitespace",
-});
+const TRANSPORT_SAFE_ID = new RegExp(TRANSPORT_SAFE_ID_SOURCE, "u");
 
-export const harnessModelRefIdSchema = nonBlankTextSchema
+export const harnessModelRefIdSchema = nonBlankText()
   .max(HARNESS_MODEL_REF_MAX_LENGTH)
-  .regex(/^[A-Za-z0-9._~-]+$/u, "Model Ref must use transport-safe opaque characters")
+  .regex(TRANSPORT_SAFE_ID, "Model Ref must use transport-safe opaque characters")
   .brand<"HarnessModelRefId">();
 
 export const harnessModelRefSchema = z
@@ -34,21 +39,21 @@ export const harnessModelRefSchema = z
 
 export type HarnessModelRef = z.infer<typeof harnessModelRefSchema>;
 
-export const harnessThinkingOptionIdSchema = nonBlankTextSchema
+export const harnessThinkingOptionIdSchema = nonBlankText()
   .max(HARNESS_THINKING_OPTION_ID_MAX_LENGTH)
-  .regex(/^[A-Za-z0-9._~-]+$/u, "Thinking option ID must use transport-safe characters")
+  .regex(TRANSPORT_SAFE_ID, "Thinking option ID must use transport-safe characters")
   .brand<"HarnessThinkingOptionId">();
 
 export type HarnessThinkingOptionId = z.infer<typeof harnessThinkingOptionIdSchema>;
 
-export const harnessResolvedModelLabelSchema = nonBlankTextSchema.max(
+export const harnessResolvedModelLabelSchema = nonBlankText().max(
   HARNESS_MODEL_LABEL_MAX_LENGTH,
 );
 
 export const harnessThinkingOptionSchema = z
   .object({
     id: harnessThinkingOptionIdSchema,
-    label: nonBlankTextSchema.max(HARNESS_MODEL_LABEL_MAX_LENGTH),
+    label: nonBlankText().max(HARNESS_MODEL_LABEL_MAX_LENGTH),
   })
   .strict();
 
@@ -57,7 +62,7 @@ export type HarnessThinkingOption = z.infer<typeof harnessThinkingOptionSchema>;
 export const harnessModelSchema = z
   .object({
     ref: harnessModelRefSchema,
-    label: nonBlankTextSchema.max(HARNESS_MODEL_LABEL_MAX_LENGTH),
+    label: nonBlankText().max(HARNESS_MODEL_LABEL_MAX_LENGTH),
     resolvedModelLabel: harnessResolvedModelLabelSchema.optional(),
     supportedThinkingOptionIds: z.array(harnessThinkingOptionIdSchema).optional(),
   })
@@ -65,70 +70,66 @@ export const harnessModelSchema = z
 
 export type HarnessModel = z.infer<typeof harnessModelSchema>;
 
-const harnessThinkingOptionsSchema = z
+const thinkingOptionsWithUniqueIds = z
   .array(harnessThinkingOptionSchema)
-  .superRefine((options, context) => {
-    const ids = new Set<string>();
-    for (const [index, option] of options.entries()) {
-      if (ids.has(option.id)) {
-        context.addIssue({
-          code: "custom",
-          message: "Thinking option IDs must be unique",
-          path: [index, "id"],
-        });
-      }
-      ids.add(option.id);
-    }
-  });
+  .superRefine((options, ctx) =>
+    rejectDuplicateKeys(
+      options,
+      (option) => option.id,
+      "Thinking option IDs must be unique",
+      (index) => [index, "id"],
+      ctx,
+    ),
+  );
 
 export const harnessModelCatalogSchema = z
   .object({
     models: z.array(harnessModelSchema),
     defaultModel: harnessModelRefSchema.optional(),
-    thinkingOptions: harnessThinkingOptionsSchema,
+    thinkingOptions: thinkingOptionsWithUniqueIds,
     defaultThinkingOptionId: harnessThinkingOptionIdSchema.optional(),
   })
   .strict()
-  .superRefine((catalog, context) => {
-    const refs = new Set<string>();
-    const thinkingIds = new Set(catalog.thinkingOptions.map(({ id }) => id));
-    for (const [index, model] of catalog.models.entries()) {
-      if (refs.has(model.ref.id)) {
-        context.addIssue({
+  .superRefine((catalog, ctx) => {
+    const modelRefs = new Set<string>();
+    const optionIds = new Set(catalog.thinkingOptions.map((option) => option.id));
+    catalog.models.forEach((model, index) => {
+      if (modelRefs.has(model.ref.id)) {
+        ctx.addIssue({
           code: "custom",
           message: "Model Catalog refs must be unique",
           path: ["models", index, "ref", "id"],
         });
       }
-      refs.add(model.ref.id);
-      const supportedThinkingIds = new Set<string>();
-      for (const [optionIndex, optionId] of (model.supportedThinkingOptionIds ?? []).entries()) {
-        if (supportedThinkingIds.has(optionId)) {
-          context.addIssue({
+      modelRefs.add(model.ref.id);
+      const seenPerModel = new Set<string>();
+      (model.supportedThinkingOptionIds ?? []).forEach((optionId, optionIndex) => {
+        if (seenPerModel.has(optionId)) {
+          ctx.addIssue({
             code: "custom",
             message: "Supported Thinking option IDs must be unique per Model",
             path: ["models", index, "supportedThinkingOptionIds", optionIndex],
           });
         }
-        supportedThinkingIds.add(optionId);
-        if (!thinkingIds.has(optionId)) {
-          context.addIssue({
+        seenPerModel.add(optionId);
+        if (!optionIds.has(optionId)) {
+          ctx.addIssue({
             code: "custom",
             message: "Supported Thinking option must exist in the catalog",
             path: ["models", index, "supportedThinkingOptionIds", optionIndex],
           });
         }
-      }
-    }
-    if (catalog.defaultModel && !refs.has(catalog.defaultModel.id)) {
-      context.addIssue({
+      });
+    });
+    if (catalog.defaultModel && !modelRefs.has(catalog.defaultModel.id)) {
+      ctx.addIssue({
         code: "custom",
         message: "Default Model must exist in the Model Catalog",
         path: ["defaultModel", "id"],
       });
     }
-    if (catalog.defaultThinkingOptionId && !thinkingIds.has(catalog.defaultThinkingOptionId)) {
-      context.addIssue({
+    if (catalog.defaultThinkingOptionId && !optionIds.has(catalog.defaultThinkingOptionId)) {
+      ctx.addIssue({
         code: "custom",
         message: "Default Thinking option must exist in the catalog",
         path: ["defaultThinkingOptionId"],
@@ -204,17 +205,17 @@ export const harnessConfigurationStateSchema = z
     effectiveModel: harnessModelRefSchema.optional(),
     resolvedModelLabel: harnessResolvedModelLabelSchema.optional(),
     effectiveThinkingOptionId: harnessThinkingOptionIdSchema.optional(),
-    availableThinkingOptions: harnessThinkingOptionsSchema.optional(),
+    availableThinkingOptions: thinkingOptionsWithUniqueIds.optional(),
     effectivePermissionModeId: harnessPermissionModeIdSchema.optional(),
   })
   .strict()
-  .superRefine((state, context) => {
+  .superRefine((state, ctx) => {
     if (
       state.effectiveThinkingOptionId &&
       state.availableThinkingOptions &&
-      !state.availableThinkingOptions.some(({ id }) => id === state.effectiveThinkingOptionId)
+      !state.availableThinkingOptions.some((option) => option.id === state.effectiveThinkingOptionId)
     ) {
-      context.addIssue({
+      ctx.addIssue({
         code: "custom",
         message: "Effective Thinking option must be currently available",
         path: ["effectiveThinkingOptionId"],
@@ -244,10 +245,10 @@ const readyHarnessInspectionSchema = z
     webUi: harnessWebUiCapabilitySchema.optional(),
   })
   .strict()
-  .superRefine((inspection, context) => {
+  .superRefine((inspection, ctx) => {
     const selectable = inspection.capabilities.configuration.selectPermissionMode;
     if (selectable !== Boolean(inspection.permissionModes)) {
-      context.addIssue({
+      ctx.addIssue({
         code: "custom",
         message: "Permission Mode catalog and capability must agree",
         path: selectable
@@ -274,7 +275,7 @@ export type HarnessInspection = z.infer<typeof harnessInspectionSchema>;
 export const harnessInspectParamsSchema = z
   .object({
     harnessId: harnessIdSchema,
-    cwd: nonBlankTextSchema.max(16_384).optional(),
+    cwd: nonBlankText().max(16_384).optional(),
     refresh: z.boolean().optional(),
   })
   .strict();
@@ -322,7 +323,7 @@ export type ThreadInspectionParams = z.infer<typeof threadInspectionParamsSchema
 const codexThreadInspectionSchema = z
   .object({
     owner: z.literal("codex"),
-    accountId: nonBlankTextSchema.optional(),
+    accountId: nonBlankText().optional(),
     locked: z.literal(true),
   })
   .strict();
@@ -330,20 +331,41 @@ const codexThreadInspectionSchema = z
 const externalThreadInspectionSchema = z
   .object({
     owner: z.literal("external"),
-    harnessId: nonBlankTextSchema.max(256),
-    transportModelId: nonBlankTextSchema.max(1_024),
+    harnessId: nonBlankText().max(256),
+    transportModelId: nonBlankText().max(1_024),
     effectiveModel: harnessModelRefSchema.optional(),
     resolvedModelLabel: harnessResolvedModelLabelSchema.optional(),
     effectiveThinkingOptionId: harnessThinkingOptionIdSchema.optional(),
-    availableThinkingOptions: harnessThinkingOptionsSchema.optional(),
+    availableThinkingOptions: thinkingOptionsWithUniqueIds.optional(),
     effectivePermissionModeId: harnessPermissionModeIdSchema.optional(),
     history: harnessHistoryCapabilitiesSchema,
     workspace: z
       .object({
         hostManaged: z.literal(true),
-        git: z.object({ available: z.boolean(), root: z.string().optional(), head: z.string().optional(), branch: z.string().nullable().optional(), dirty: z.boolean().optional(), reason: z.enum(["not-a-git-repository", "git-unavailable"]).optional() }).strict(),
-        worktree: z.object({ available: z.boolean(), active: z.boolean(), branch: z.string().optional(), root: z.string().optional() }).strict(),
-        finalDiff: z.object({ available: z.literal(true), source: z.literal("snapshot") }).strict(),
+        git: z
+          .object({
+            available: z.boolean(),
+            root: z.string().optional(),
+            head: z.string().optional(),
+            branch: z.string().nullable().optional(),
+            dirty: z.boolean().optional(),
+            reason: z.enum(["not-a-git-repository", "git-unavailable"]).optional(),
+          })
+          .strict(),
+        worktree: z
+          .object({
+            available: z.boolean(),
+            active: z.boolean(),
+            branch: z.string().optional(),
+            root: z.string().optional(),
+          })
+          .strict(),
+        finalDiff: z
+          .object({
+            available: z.literal(true),
+            source: z.literal("snapshot"),
+          })
+          .strict(),
         nativeDiff: z.boolean(),
         nativePatch: z.boolean(),
       })
@@ -367,19 +389,15 @@ export const threadOwnershipListParamsSchema = z
     threadIds: z.array(hostThreadIdSchema).min(1).max(THREAD_OWNERSHIP_LIST_MAX_LENGTH),
   })
   .strict()
-  .superRefine(({ threadIds }, context) => {
-    const seen = new Set<string>();
-    for (const [index, threadId] of threadIds.entries()) {
-      if (seen.has(threadId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Thread ownership-list IDs must be unique",
-          path: ["threadIds", index],
-        });
-      }
-      seen.add(threadId);
-    }
-  });
+  .superRefine(({ threadIds }, ctx) =>
+    rejectDuplicateKeys(
+      threadIds,
+      (threadId) => threadId,
+      "Thread ownership-list IDs must be unique",
+      (index) => ["threadIds", index],
+      ctx,
+    ),
+  );
 
 export type ThreadOwnershipListParams = z.infer<typeof threadOwnershipListParamsSchema>;
 
@@ -410,18 +428,14 @@ export const threadOwnershipListResultSchema = z
     threads: z.array(threadOwnershipSchema).min(1).max(THREAD_OWNERSHIP_LIST_MAX_LENGTH),
   })
   .strict()
-  .superRefine(({ threads }, context) => {
-    const seen = new Set<string>();
-    for (const [index, thread] of threads.entries()) {
-      if (seen.has(thread.threadId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Thread ownership-list results must be unique",
-          path: ["threads", index, "threadId"],
-        });
-      }
-      seen.add(thread.threadId);
-    }
-  });
+  .superRefine(({ threads }, ctx) =>
+    rejectDuplicateKeys(
+      threads,
+      (thread) => thread.threadId,
+      "Thread ownership-list results must be unique",
+      (index) => ["threads", index, "threadId"],
+      ctx,
+    ),
+  );
 
 export type ThreadOwnershipListResult = z.infer<typeof threadOwnershipListResultSchema>;

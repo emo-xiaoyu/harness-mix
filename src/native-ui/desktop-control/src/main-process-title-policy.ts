@@ -1,6 +1,14 @@
+/**
+ * Installs the thread-metadata title policy into the Electron main process:
+ * official Codex titles keep flowing, while harnessmix-owned drafts must not
+ * leak into the official title generator. The host side walks the inspector
+ * object graph to reach the main process's `getContextForWebContents`
+ * closure; the policy itself is the serialized payload below (see SPEC.md —
+ * its text is wire protocol).
+ */
 import type { CdpClient } from "./cdp-client.js";
 
-interface CdpCommander {
+interface Commander {
   command(method: string, params?: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -36,32 +44,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function resultRecord(value: unknown, command: string): Record<string, unknown> {
+/** Unwraps a Runtime command result, surfacing remote exceptions as errors. */
+function checkedResult(value: unknown, command: string): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`${command} returned an invalid result`);
   if (isRecord(value.exceptionDetails)) {
     const exception = value.exceptionDetails.exception;
-    const description = isRecord(exception) ? exception.description : null;
-    const text = value.exceptionDetails.text;
+    const description = isRecord(exception) ? exception.description : undefined;
     throw new Error(
       typeof description === "string"
         ? description
-        : typeof text === "string"
-          ? text
+        : typeof value.exceptionDetails.text === "string"
+          ? value.exceptionDetails.text
           : `${command} failed`,
     );
   }
   return value;
 }
 
-function remoteObjectId(value: unknown, label: string): string {
+function objectIdOf(value: unknown, label: string): string {
   if (!isRecord(value) || typeof value.objectId !== "string") {
     throw new Error(`${label} is unavailable`);
   }
   return value.objectId;
 }
 
-function properties(value: unknown, command: string): RuntimeProperty[] {
-  const result = resultRecord(value, command).result;
+function propertyList(value: unknown, command: string): RuntimeProperty[] {
+  const result = checkedResult(value, command).result;
   if (!Array.isArray(result)) throw new Error(`${command} returned invalid properties`);
   return result.filter(isRecord) as RuntimeProperty[];
 }
@@ -74,13 +82,11 @@ const ELECTRON_MODULE_EXPRESSION = `(() => {
   const { createRequire } = process.getBuiltinModule('module');
   return createRequire(process.execPath)('electron');
 })()`;
-
 const CONNECT_APP_HOST_CHANNEL = "codex_desktop:connect-app-host";
 const POLICY_STATE_SYMBOL = "harnessmix.main-process-title-policy.v1";
 const SERVICE_OWNER_SYMBOL = "harnessmix.main-process-title-policy.owner.v1";
 const RENDERER_READY_EXPRESSION =
   "(() => { Object.defineProperty(window, '__harnessmixMainProcessTitlePolicyV1', { configurable: true, value: { state: 'ready' } }); return 'ready'; })()";
-
 const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
   const mainModule = process.mainModule;
   const electron = mainModule != null && typeof mainModule.require === 'function'
@@ -225,102 +231,103 @@ const INSTALL_POLICY_FUNCTION = `async function (rendererWebContentsId) {
   };
 }`;
 
-export async function installMainProcessTitlePolicy(
-  inspector: Pick<CdpClient, "command"> | CdpCommander,
-  rendererWebContentsId: number,
-): Promise<MainProcessTitlePolicyStatus> {
+const requireWebContentsId = (rendererWebContentsId: number): void => {
   if (!Number.isInteger(rendererWebContentsId) || rendererWebContentsId <= 0) {
     throw new Error("Renderer webContents ID must be a positive integer");
   }
-  const listenerResponse = resultRecord(
+};
+
+export async function installMainProcessTitlePolicy(
+  inspector: Pick<CdpClient, "command"> | Commander,
+  rendererWebContentsId: number,
+): Promise<MainProcessTitlePolicyStatus> {
+  requireWebContentsId(rendererWebContentsId);
+  // Reach into the main process: IPC listener → closure scopes → local scope →
+  // the `f` binding (getContextForWebContents), then install the policy there.
+  const listener = checkedResult(
     await inspector.command("Runtime.evaluate", {
       expression: `(${ELECTRON_MODULE_EXPRESSION}).ipcMain.listeners(${JSON.stringify(
         CONNECT_APP_HOST_CHANNEL,
       )})[0]`,
     }),
     "Runtime.evaluate",
-  );
-  const listener = listenerResponse.result;
-  const listenerId = remoteObjectId(listener, "connect-app-host listener");
+  ).result;
+  const listenerObject = objectIdOf(listener, "connect-app-host listener");
 
-  const listenerProperties = resultRecord(
-    await inspector.command("Runtime.getProperties", { objectId: listenerId }),
+  const listenerProps = checkedResult(
+    await inspector.command("Runtime.getProperties", { objectId: listenerObject }),
     "Runtime.getProperties",
   );
-  const internalProperties = listenerProperties.internalProperties;
-  if (!Array.isArray(internalProperties)) {
+  const internalProps = listenerProps.internalProperties;
+  if (!Array.isArray(internalProps)) {
     throw new Error("connect-app-host listener scopes are unavailable");
   }
-  const scopes = internalProperties.find(
+  const scopes = internalProps.find(
     (property) => isRecord(property) && property.name === "[[Scopes]]",
   );
-  const scopesId = remoteObjectId(
+  const scopesObject = objectIdOf(
     isRecord(scopes) ? scopes.value : null,
     "connect-app-host listener scopes",
   );
 
-  const scopeProperties = properties(
+  const scopeProps = propertyList(
     await inspector.command("Runtime.getProperties", {
-      objectId: scopesId,
+      objectId: scopesObject,
       ownProperties: true,
     }),
     "Runtime.getProperties",
   );
-  const localScope = scopeProperties.find((property) => property.name === "0");
-  const localScopeId = remoteObjectId(localScope?.value, "connect-app-host local scope");
+  const localScope = scopeProps.find((property) => property.name === "0");
+  const localScopeObject = objectIdOf(localScope?.value, "connect-app-host local scope");
 
-  const localProperties = properties(
+  const localProps = propertyList(
     await inspector.command("Runtime.getProperties", {
-      objectId: localScopeId,
+      objectId: localScopeObject,
       ownProperties: true,
     }),
     "Runtime.getProperties",
   );
-  const getContext = localProperties.find(
+  const getContext = localProps.find(
     (property) => property.name === "f" && typeof property.value?.objectId === "string",
   );
-  const getContextId = remoteObjectId(getContext?.value, "getContextForWebContents");
+  const getContextObject = objectIdOf(getContext?.value, "getContextForWebContents");
 
-  const installPromise = resultRecord(
+  const installPromise = checkedResult(
     await inspector.command("Runtime.callFunctionOn", {
-      objectId: getContextId,
+      objectId: getContextObject,
       functionDeclaration: INSTALL_POLICY_FUNCTION,
       arguments: [{ value: rendererWebContentsId }],
     }),
     "Runtime.callFunctionOn",
   );
-  const promiseObjectId = remoteObjectId(
-    installPromise.result,
-    "Main-process title policy installation promise",
-  );
-  const installResponse = resultRecord(
+  const awaited = checkedResult(
     await inspector.command("Runtime.awaitPromise", {
-      promiseObjectId,
+      promiseObjectId: objectIdOf(
+        installPromise.result,
+        "Main-process title policy installation promise",
+      ),
       returnByValue: true,
     }),
     "Runtime.awaitPromise",
   );
-  const remoteResult = installResponse.result;
-  const value = isRecord(remoteResult) ? remoteResult.value : null;
+  const status = isRecord(awaited.result) ? awaited.result.value : null;
   if (
-    !isRecord(value) ||
-    value.state !== "ready" ||
-    value.reason !== "ready" ||
-    value.requiresRendererReload !== true ||
-    Object.keys(value).length !== 3
+    !isRecord(status) ||
+    status.state !== "ready" ||
+    status.reason !== "ready" ||
+    status.requiresRendererReload !== true ||
+    Object.keys(status).length !== 3
   ) {
     throw new Error("Main-process title policy returned an invalid status");
   }
-  return value as unknown as MainProcessTitlePolicyStatus;
+  return status as unknown as MainProcessTitlePolicyStatus;
 }
 
 export async function markRendererTitlePolicyReady(
   inspector: Pick<CdpClient, "evaluate">,
   rendererWebContentsId: number,
 ): Promise<RendererTitlePolicyReadiness> {
-  if (!Number.isInteger(rendererWebContentsId) || rendererWebContentsId <= 0) {
-    throw new Error("Renderer webContents ID must be a positive integer");
-  }
+  requireWebContentsId(rendererWebContentsId);
   const value = await inspector.evaluate<unknown>(`(async () => {
     const state = globalThis[Symbol.for(${JSON.stringify(POLICY_STATE_SYMBOL)})];
     if (state == null) throw new Error('Main-process title policy is unavailable');

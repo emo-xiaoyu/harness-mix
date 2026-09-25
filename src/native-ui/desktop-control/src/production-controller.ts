@@ -1,3 +1,9 @@
+/**
+ * The Desktop Controller main loop: parses launcher arguments, optionally
+ * starts the local Host sidecar, installs the renderer bundle into the
+ * Desktop with transient-failure retries, serves the attachment gate and
+ * keeps monitoring/recovering the session with bounded exponential backoff.
+ */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { startLocalSidecar, type LocalSidecar } from "./local-sidecar.js";
@@ -52,18 +58,20 @@ const TRANSIENT_INSTALL_ATTEMPTS = 3;
 const TRANSIENT_INSTALL_RETRY_MS = 250;
 const RECOVERY_RETRY_INITIAL_MS = 30_000;
 const RECOVERY_RETRY_MAX_MS = 300_000;
-const startupTraceStartedAt = Date.now();
+const traceStartedAt = Date.now();
 
 function startupTrace(stage: string, detail?: unknown): void {
   if (process.env.HARNESSMIX_STARTUP_TRACE !== "1") return;
   const suffix =
     detail === undefined ? "" : `: ${detail instanceof Error ? detail.message : String(detail)}`;
   console.error(
-    `[harnessmix startup +${Date.now() - startupTraceStartedAt}ms] controller: ${stage}${suffix}`,
+    `[harnessmix startup +${Date.now() - traceStartedAt}ms] controller: ${stage}${suffix}`,
   );
 }
 
-export function serializeDesktopControllerReadiness(readiness: DesktopControllerReadiness): string {
+export function serializeDesktopControllerReadiness(
+  readiness: DesktopControllerReadiness,
+): string {
   if (
     readiness.schemaVersion !== 2 ||
     readiness.state !== "compatible" ||
@@ -91,7 +99,7 @@ const defaultDependencies: DesktopControllerDependencies = {
   monitorIntervalMs: 500,
 };
 
-function rendererCdpEndpoint(value: string): string {
+function normalizeRendererCdpEndpoint(value: string): string {
   const url = new URL(value);
   if (
     url.protocol !== "http:" ||
@@ -111,70 +119,71 @@ function rendererCdpEndpoint(value: string): string {
 export function parseDesktopControllerArguments(
   arguments_: readonly string[],
 ): DesktopControllerOptions {
-  let endpoint: string | undefined;
-  let rendererPath: string | undefined;
-  let defaultAgent: "codex" | "pi" | undefined;
-  let attachmentPort: number | undefined;
-  let attachmentNonce: string | undefined;
+  const seen: Record<string, string | number> = {};
+  const markOnce = (flag: string, value: string | number): void => {
+    if (seen[flag] !== undefined) throw new Error(`${flag} may only be provided once`);
+    seen[flag] = value;
+  };
+  const readValue = (flag: string, argument: string, value: string | undefined): string => {
+    if (!value) throw new Error(`${flag} requires a value`);
+    void argument;
+    return value;
+  };
+
   for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    const value = arguments_[index + 1];
-    if (argument === "--renderer-cdp-endpoint") {
-      if (endpoint !== undefined) {
-        throw new Error("--renderer-cdp-endpoint may only be provided once");
+    const flag = arguments_[index];
+    const next = arguments_[index + 1];
+    switch (flag) {
+      case "--renderer-cdp-endpoint":
+        markOnce(flag, normalizeRendererCdpEndpoint(readValue(flag, flag, next)));
+        index += 1;
+        break;
+      case "--renderer": {
+        const value = readValue(flag, flag, next);
+        if (!path.isAbsolute(value)) throw new Error("--renderer must be an absolute path");
+        markOnce(flag, path.normalize(value));
+        index += 1;
+        break;
       }
-      if (!value) throw new Error("--renderer-cdp-endpoint requires a value");
-      endpoint = rendererCdpEndpoint(value);
-      index += 1;
-      continue;
+      case "--default-agent":
+        if (next !== "codex" && next !== "pi") {
+          throw new Error("--default-agent must be 'codex' or 'pi'");
+        }
+        markOnce(flag, next);
+        index += 1;
+        break;
+      case "--attachment-port": {
+        const port = Number(next);
+        if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+          throw new Error("--attachment-port must be a valid TCP port");
+        }
+        markOnce(flag, port);
+        index += 1;
+        break;
+      }
+      case "--attachment-nonce":
+        if (next === undefined || !/^[0-9a-f]{32}$/.test(next)) {
+          throw new Error("--attachment-nonce must be 32 lowercase hexadecimal characters");
+        }
+        markOnce(flag, next);
+        index += 1;
+        break;
+      default:
+        throw new Error(`unknown Desktop Controller option: ${flag}`);
     }
-    if (argument === "--renderer") {
-      if (rendererPath !== undefined) throw new Error("--renderer may only be provided once");
-      if (!value) throw new Error("--renderer requires a value");
-      if (!path.isAbsolute(value)) throw new Error("--renderer must be an absolute path");
-      rendererPath = path.normalize(value);
-      index += 1;
-      continue;
-    }
-    if (argument === "--default-agent") {
-      if (defaultAgent !== undefined) throw new Error("--default-agent may only be provided once");
-      if (value !== "codex" && value !== "pi") {
-        throw new Error("--default-agent must be 'codex' or 'pi'");
-      }
-      defaultAgent = value;
-      index += 1;
-      continue;
-    }
-    if (argument === "--attachment-port") {
-      if (attachmentPort !== undefined) {
-        throw new Error("--attachment-port may only be provided once");
-      }
-      const port = Number(value);
-      if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-        throw new Error("--attachment-port must be a valid TCP port");
-      }
-      attachmentPort = port;
-      index += 1;
-      continue;
-    }
-    if (argument === "--attachment-nonce") {
-      if (attachmentNonce !== undefined) {
-        throw new Error("--attachment-nonce may only be provided once");
-      }
-      if (value === undefined || !/^[0-9a-f]{32}$/.test(value)) {
-        throw new Error("--attachment-nonce must be 32 lowercase hexadecimal characters");
-      }
-      attachmentNonce = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`unknown Desktop Controller option: ${argument}`);
   }
-  if (endpoint === undefined) throw new Error("--renderer-cdp-endpoint is required");
-  if (rendererPath === undefined) throw new Error("--renderer is required");
-  if (defaultAgent === undefined) throw new Error("--default-agent is required");
-  if (attachmentPort === undefined) throw new Error("--attachment-port is required");
-  if (attachmentNonce === undefined) throw new Error("--attachment-nonce is required");
+  const endpoint = seen["--renderer-cdp-endpoint"];
+  const rendererPath = seen["--renderer"];
+  const defaultAgent = seen["--default-agent"];
+  const attachmentPort = seen["--attachment-port"];
+  const attachmentNonce = seen["--attachment-nonce"];
+  if (typeof endpoint !== "string") throw new Error("--renderer-cdp-endpoint is required");
+  if (typeof rendererPath !== "string") throw new Error("--renderer is required");
+  if (defaultAgent !== "codex" && defaultAgent !== "pi") {
+    throw new Error("--default-agent is required");
+  }
+  if (typeof attachmentPort !== "number") throw new Error("--attachment-port is required");
+  if (typeof attachmentNonce !== "string") throw new Error("--attachment-nonce is required");
   return {
     rendererCdpEndpoint: endpoint,
     rendererPath,
@@ -184,9 +193,10 @@ export function parseDesktopControllerArguments(
   };
 }
 
+/** Renderer reloads destroy evaluation contexts mid-flight; those are retryable. */
 function isTransientRendererInstallError(error: unknown): boolean {
   let current: unknown = error;
-  for (let depth = 0; depth < 4; depth += 1) {
+  for (let depth = 0; depth < 4 && current !== undefined; depth += 1) {
     const message = current instanceof Error ? current.message : String(current);
     if (
       message.includes("Execution context was destroyed") ||
@@ -195,7 +205,6 @@ function isTransientRendererInstallError(error: unknown): boolean {
       return true;
     }
     current = current instanceof Error ? current.cause : undefined;
-    if (current === undefined) break;
   }
   return false;
 }
@@ -224,25 +233,31 @@ export async function runDesktopController(
 ): Promise<void> {
   const sidecarScript = process.env.HARNESSMIX_SIDECAR_SCRIPT;
   const stockCodexPath = process.env.HARNESSMIX_STOCK_CODEX_PATH;
-  const sidecar = sidecarScript && stockCodexPath
-    ? startLocalSidecar(process.execPath, sidecarScript, stockCodexPath) : undefined;
+  const sidecar =
+    sidecarScript && stockCodexPath
+      ? startLocalSidecar(process.execPath, sidecarScript, stockCodexPath)
+      : undefined;
   const configuration = `Object.defineProperty(window, "__harnessmixProductionConfigV1", { configurable: true, value: { defaultAgent: ${JSON.stringify(options.defaultAgent)} } });\nwindow.__harnessmixSidecarModeV1 = ${sidecar ? "true" : "false"};`;
   const now = dependencies.now ?? Date.now;
+
   let session: RendererCdpControlSession | undefined;
   let nextRecoveryAt = 0;
   let recoveryDelayMs = RECOVERY_RETRY_INITIAL_MS;
-  const recordRecoveryFailure = (): void => {
+  const scheduleRecoveryFailure = (): void => {
     nextRecoveryAt = now() + recoveryDelayMs;
     recoveryDelayMs = Math.min(recoveryDelayMs * 2, RECOVERY_RETRY_MAX_MS);
   };
-  const recordRecoverySuccess = (): void => {
+  const scheduleRecoverySuccess = (): void => {
     nextRecoveryAt = 0;
     recoveryDelayMs = RECOVERY_RETRY_INITIAL_MS;
   };
+
   const createSession = async (): Promise<RendererCdpControlSession> => {
     startupTrace("reading Renderer bundle");
     const rendererSource = await dependencies.readRenderer(options.rendererPath);
-    if (rendererSource.trim().length === 0) throw new Error("production Renderer Bundle is empty");
+    if (rendererSource.trim().length === 0) {
+      throw new Error("production Renderer Bundle is empty");
+    }
     startupTrace("installing Renderer Session");
     const installed = await installProductionSession(
       {
@@ -276,16 +291,19 @@ export async function runDesktopController(
     startupTrace("Renderer Session installed");
     return installed;
   };
+
   startupTrace("initialization started");
   try {
     session = await createSession();
-    recordRecoverySuccess();
+    scheduleRecoverySuccess();
   } catch (error) {
     startupTrace("initial Renderer Session unavailable", error);
     session = undefined;
-    recordRecoveryFailure();
+    scheduleRecoveryFailure();
   }
 
+  // Serialize all session-touching work: attachment requests and the monitor
+  // loop must never interleave an install with a close.
   let operation = Promise.resolve<unknown>(undefined);
   const useSession = <T>(callback: () => Promise<T>): Promise<T> => {
     const next = operation.then(callback, callback);
@@ -295,23 +313,16 @@ export async function runDesktopController(
     );
     return next;
   };
-  const resetSession = (): void => {
-    session?.close();
-    session = undefined;
-  };
-  const ensureSession = async (): Promise<RendererCdpControlSession> => {
-    if (!session) session = await createSession();
-    else await session.ensureInstalled();
-    return session;
-  };
   const recoverSession = async (): Promise<RendererCdpControlSession> => {
     try {
-      const current = await ensureSession();
-      recordRecoverySuccess();
-      return current;
+      if (!session) session = await createSession();
+      else await session.ensureInstalled();
+      scheduleRecoverySuccess();
+      return session;
     } catch (error) {
-      resetSession();
-      recordRecoveryFailure();
+      session?.close();
+      session = undefined;
+      scheduleRecoveryFailure();
       throw error;
     }
   };
@@ -330,11 +341,7 @@ export async function runDesktopController(
     });
     startupTrace("attachment server ready");
     startupTrace("publishing readiness");
-    dependencies.ready({
-      schemaVersion: 2,
-      state: "compatible",
-      issues: [],
-    });
+    dependencies.ready({ schemaVersion: 2, state: "compatible", issues: [] });
     while (!signal.aborted) {
       await dependencies.sleep(dependencies.monitorIntervalMs);
       if (signal.aborted) continue;
@@ -343,14 +350,15 @@ export async function runDesktopController(
         try {
           await recoverSession();
         } catch {
-          // Renderer integration remains unavailable until a later bounded retry succeeds.
+          // Renderer integration stays unavailable until a later bounded retry.
         }
       });
     }
   } finally {
     await attachmentServer?.close();
     await operation;
-    resetSession();
+    session?.close();
+    session = undefined;
     await sidecar?.close();
   }
 }

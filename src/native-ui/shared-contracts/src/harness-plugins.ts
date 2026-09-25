@@ -1,3 +1,11 @@
+/**
+ * Harness plugin manifest/descriptor/configuration contracts. Plugin ids are
+ * portable directory keys (lowercase, dot/dash/hyphen separated) — never a
+ * native session id — and `codex` is reserved for the official route. A
+ * manifest is inert data: validating it must precede importing any plugin
+ * code. The configuration list is an explicit trust grant; discovery alone
+ * enables nothing.
+ */
 import { z } from "zod";
 
 import { harnessIdSchema } from "./ids.js";
@@ -7,7 +15,6 @@ export const HARNESS_PLUGIN_MANIFEST_MAX_BYTES = 32 * 1024;
 export const HARNESS_PLUGIN_ICON_MAX_BYTES = 128 * 1024;
 export const HARNESS_PLUGIN_LIMIT = 128;
 
-/** Plugin identities are portable directory/route keys, not arbitrary Native Session IDs. */
 export const harnessPluginIdSchema = z
   .string()
   .min(1)
@@ -16,51 +23,61 @@ export const harnessPluginIdSchema = z
   .refine((id) => id !== "codex", "The official Codex identity is reserved")
   .pipe(harnessIdSchema);
 
-const relativeResourceSchema = z
+// NUL is kept out via a dedicated check so the regex literal can stay
+// printable (raw control characters in source are fragile across tooling).
+const NUL = String.fromCharCode(0);
+
+/** Entry/icon paths stay inside the plugin directory: no drive letters, no .., no empty segments. */
+const pluginRelativePath = z
   .string()
   .min(1)
   .max(512)
   .refine(
     (value) =>
-      !/[\\\u0000:#?]/u.test(value) &&
+      !/[\\:#?]/u.test(value) &&
+      !value.includes(NUL) &&
       !value.startsWith("/") &&
-      !value.split("/").some((part) => part === ".." || part === ""),
+      !value.split("/").some((segment) => segment === ".." || segment === ""),
     "Plugin resources must be relative paths inside the plugin",
   );
 
-const documentationUrlSchema = z
+/** Documentation surfaces must be plain credential-free HTTPS links. */
+const pluginDocumentationUrl = z
   .url()
   .refine(
     (value) => /^https:\/\/[^/?#@]+(?:[/?#]|$)/iu.test(value),
     "Plugin documentation links must be credential-free HTTPS URLs",
   );
 
-const pluginPresentationShape = {
+const pluginPresentation = {
   id: harnessPluginIdSchema,
   name: z.string().trim().min(1).max(128),
   version: z.string().min(1).max(128),
   links: z
     .object({
-      documentation: documentationUrlSchema.optional(),
-      installation: documentationUrlSchema.optional(),
+      documentation: pluginDocumentationUrl.optional(),
+      installation: pluginDocumentationUrl.optional(),
     })
     .strict()
     .optional(),
 };
 
-/** A manifest is data only. It must be validated before importing any plugin code. */
 export const harnessPluginManifestSchema = z
   .object({
     manifestVersion: z.literal(1),
-    ...pluginPresentationShape,
+    ...pluginPresentation,
     adapterApiVersion: z.number().int().positive(),
-    entry: relativeResourceSchema,
-    icon: relativeResourceSchema.optional(),
+    entry: pluginRelativePath,
+    icon: pluginRelativePath.optional(),
   })
   .strict();
 export type HarnessPluginManifest = z.infer<typeof harnessPluginManifestSchema>;
 
-/** Images are presentation data; consumers must use an img, never inline markup. */
+/**
+ * Data-URI icons are presentation data only — consumers render them in an
+ * <img>, never as markup. The length bound leaves headroom over the raw
+ * base64 payload (4/3 expansion) for the URI prefix and padding.
+ */
 export const harnessPluginIconSchema = z
   .string()
   .max(Math.ceil(HARNESS_PLUGIN_ICON_MAX_BYTES / 3) * 4 + 64)
@@ -68,7 +85,7 @@ export const harnessPluginIconSchema = z
 
 export const harnessPluginDescriptorSchema = z
   .object({
-    ...pluginPresentationShape,
+    ...pluginPresentation,
     icon: harnessPluginIconSchema.optional(),
   })
   .strict();
@@ -82,7 +99,6 @@ export const harnessPluginListResultSchema = z
   .strict();
 export type HarnessPluginListResult = z.infer<typeof harnessPluginListResultSchema>;
 
-/** Entries are explicit trust grants. Discovery alone never enables a plugin. */
 export const harnessPluginConfigurationSchema = z
   .object({
     version: z.literal(1),

@@ -6,9 +6,14 @@ This product includes software developed by third-party open source projects.
 Third-party components remain subject to their respective licenses.
 
 Native Codex Desktop components (renderer-extension, desktop-control, shared-contracts)
-are derived from an upstream MIT-licensed project by BytePioneer-AI (v0.6.1).
-Copyright (c) 2026 BytePioneer-AI.
-The upstream license text is preserved in licenses/bytepioneer-MIT.txt.
+were originally derived from an upstream MIT-licensed project by BytePioneer-AI (v0.6.1),
+Copyright (c) 2026 BytePioneer-AI, and were fully re-implemented in this repository
+(2026-09) against behavior specifications with all test suites and live-Desktop
+acceptance passing. Wire-protocol strings, DOM selectors and UI copy that interoperate
+with external surfaces are necessarily identical; all implementation structure,
+helper decomposition and comments are original to this repository. The upstream license
+text remains preserved in licenses/bytepioneer-MIT.txt pending an independent legal
+review of the re-implementation.
 All execution runtimes, protocols, adapters and local launchers are developed and maintained in this repository.
 
 Native DeepSeek integration uses @deepseek-ai/dsh 0.1.2-rc.1 (MIT).

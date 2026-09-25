@@ -138,8 +138,54 @@ describe("Renderer CDP Control Session", () => {
     expect(sidecar.send).toHaveBeenCalledWith('{"id":1,"method":"harnessmix/thread/list"}');
     output?.('{"id":1,"result":{"data":[]}}');
     expect(client.command).toHaveBeenCalledWith("Runtime.evaluate", {
-      expression: 'window.__harnessmixSidecarReceiveV1?.("{\\"id\\":1,\\"result\\":{\\"data\\":[]}}")',
+      expression: expect.stringContaining('window.__harnessmixSidecarReceiveV1(frame)'),
     });
+    expect(client.command).toHaveBeenCalledWith("Runtime.evaluate", {
+      expression: expect.stringContaining("(window.__harnessmixPendingSidecarFramesV1 ??= []).push(frame)"),
+    });
+    session.close();
+  });
+
+  it("parks Host frames when the bridge receive handler is not installed yet", async () => {
+    const client = rendererClient();
+    Object.assign(client, {
+      on: vi.fn((method: string, listener: (params: unknown) => void) => {
+        void method; void listener;
+        return () => undefined;
+      }),
+    });
+    let output: ((frame: string) => void) | undefined;
+    const sidecar = {
+      send: vi.fn(),
+      onFrame: vi.fn((listener: (frame: string) => void) => {
+        output = listener;
+        return () => undefined;
+      }),
+      close: vi.fn(),
+    };
+    const session = await createRendererCdpControlSession({
+      rendererCdpEndpoint: "http://127.0.0.1:43123",
+      rendererSource: "production renderer",
+      sidecar,
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+      operations: {
+        listTargets: vi.fn(async () => [target("page-1")]),
+        connect: vi.fn(async () => client),
+        installDraftPrewarmPolicy: vi.fn(async () => ({
+          state: "ready" as const,
+          reason: "owned-request-bridge" as const,
+        })),
+      },
+    });
+    output?.('{"method":"thread/started","params":{"thread":{"id":"parked"}}}');
+    const relay = client.commands.find(
+      (entry) => typeof entry.params?.expression === "string" && entry.params.expression.includes("__harnessmixPendingSidecarFramesV1"),
+    ) as { method: string; params: { expression: string } } | undefined;
+    expect(relay?.method).toBe("Runtime.evaluate");
+    // 停机坪表达式在 receive 未装好时把帧推入页面级队列而不是丢弃
+    expect(relay?.params.expression).toContain('if (typeof window.__harnessmixSidecarReceiveV1 === "function")');
+    expect(relay?.params.expression).toContain("(window.__harnessmixPendingSidecarFramesV1 ??= []).push(frame)");
     session.close();
   });
 

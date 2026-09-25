@@ -1,3 +1,8 @@
+/**
+ * DeepSeek's modern session list/import endpoint: the same candidate shape as
+ * the generic session-import contract, minus harness selection (there is only
+ * one DeepSeek) and without paging.
+ */
 import { z } from "zod";
 
 import {
@@ -11,6 +16,7 @@ import {
   type HarnessSessionImportCandidate,
 } from "./harness-session-import.js";
 import { hostThreadIdSchema } from "./ids.js";
+import { nonBlankText } from "./constraints.js";
 
 export const DEEPSEEK_MODERN_SESSION_ID_MAX_LENGTH = HARNESS_SESSION_IMPORT_ID_MAX_LENGTH;
 export const DEEPSEEK_MODERN_SESSION_CWD_MAX_LENGTH = HARNESS_SESSION_IMPORT_CWD_MAX_LENGTH;
@@ -19,12 +25,11 @@ export const DEEPSEEK_MODERN_SESSION_LIST_MAX_LENGTH = HARNESS_SESSION_IMPORT_LI
 export const DEEPSEEK_MODERN_SESSION_UPDATED_AT_MAX = HARNESS_SESSION_IMPORT_UPDATED_AT_MAX;
 export const DEEPSEEK_MODERN_HOST_THREAD_ID_MAX_LENGTH = 1_024;
 
-const nonBlankTextSchema = z
-  .string()
-  .refine((value) => value.trim().length > 0, "Value must not be empty or whitespace")
-  .refine((value) => !value.includes("\0"), "Value must not contain NUL");
-
-const deepSeekModernSessionIdSchema = harnessSessionImportIdSchema;
+const NUL = String.fromCharCode(0);
+const wireText = nonBlankText().refine(
+  (value) => !value.includes(NUL),
+  "Value must not contain NUL",
+);
 
 export const deepSeekModernSessionCandidateSchema = harnessSessionImportCandidateSchema;
 
@@ -46,7 +51,7 @@ export type DeepSeekModernSessionListResult = z.infer<typeof deepSeekModernSessi
 
 export const deepSeekModernSessionImportParamsSchema = z
   .object({
-    nativeSessionId: deepSeekModernSessionIdSchema,
+    nativeSessionId: harnessSessionImportIdSchema,
   })
   .strict();
 
@@ -56,7 +61,7 @@ export type DeepSeekModernSessionImportParams = z.infer<
 
 export const deepSeekModernSessionImportResultSchema = z
   .object({
-    threadId: nonBlankTextSchema
+    threadId: wireText
       .max(DEEPSEEK_MODERN_HOST_THREAD_ID_MAX_LENGTH)
       .pipe(hostThreadIdSchema),
   })

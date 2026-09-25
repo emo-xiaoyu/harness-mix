@@ -1,3 +1,9 @@
+/**
+ * Read-only contract audit: drives the renderer-side audit entrypoint
+ * (`window.__harnessmixContractAuditV1`) through the Electron main process
+ * and validates the counting result against the schema below. Used by the
+ * compatibility checks that decide whether a Desktop build is supported.
+ */
 import { CdpClient, getCdpBrowserVersion, type CdpBrowserVersion } from "./cdp-client.js";
 import {
   inspectElectronWebContents,
@@ -80,89 +86,77 @@ export interface InspectDesktopContractsOptions {
   timeoutMs?: number;
 }
 
-interface RecordValue {
-  [key: string]: unknown;
-}
-
-function isRecord(value: unknown): value is RecordValue {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function strictKeys(value: RecordValue, expected: readonly string[], label: string): void {
-  const keys = Object.keys(value).toSorted();
-  const sortedExpected = [...expected].toSorted();
-  if (
-    keys.length !== sortedExpected.length ||
-    keys.some((key, index) => key !== sortedExpected[index])
-  ) {
+/** Exact key-set check: no unknown fields, no missing fields. */
+function requireExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).toSorted();
+  const wanted = [...expected].toSorted();
+  if (actual.length !== wanted.length || actual.some((key, i) => key !== wanted[i])) {
     throw new Error(`${label} contains unknown or missing fields`);
   }
 }
 
-function integer(value: unknown, label: string): number {
+function countField(value: unknown, label: string): number {
   if (!Number.isInteger(value) || (value as number) < 0) {
     throw new Error(`${label} must be a non-negative integer`);
   }
   return value as number;
 }
 
-function integerRecord<T extends readonly string[]>(
+function countGroup<T extends readonly string[]>(
   value: unknown,
   keys: T,
   label: string,
 ): { [K in T[number]]: number } {
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
-  strictKeys(value, keys, label);
-  return Object.fromEntries(keys.map((key) => [key, integer(value[key], `${label}.${key}`)])) as {
+  requireExactKeys(value, keys, label);
+  return Object.fromEntries(keys.map((key) => [key, countField(value[key], `${label}.${key}`)])) as {
     [K in T[number]]: number;
   };
 }
+
+const PRODUCTION_ADAPTER_STATES = ["installing", "ready", "unsupported", "absent"] as const;
+const POLICY_STATES = ["ready", "absent", "unknown"] as const;
 
 export function validateRendererContractAuditInspection(
   value: unknown,
 ): RendererContractAuditInspection {
   if (!isRecord(value)) throw new Error("Renderer contract audit must be an object");
-  strictKeys(
+  requireExactKeys(
     value,
-    [
-      "schemaVersion",
-      "composer",
-      "model",
-      "settings",
-      "sidebar",
-      "transcript",
-      "fork",
-      "production",
-    ],
+    ["schemaVersion", "composer", "model", "settings", "sidebar", "transcript", "fork", "production"],
     "Renderer contract audit",
   );
   if (value.schemaVersion !== 1) throw new Error("Renderer contract audit schema is unsupported");
   const production = value.production;
-  if (!isRecord(production)) throw new Error("Renderer contract audit production state is invalid");
-  strictKeys(
+  if (!isRecord(production)) {
+    throw new Error("Renderer contract audit production state is invalid");
+  }
+  requireExactKeys(
     production,
-    [
-      "bindingPresent",
-      "adapterState",
-      "adapterReason",
-      "titlePolicyState",
-      "draftPrewarmPolicyState",
-    ],
+    ["bindingPresent", "adapterState", "adapterReason", "titlePolicyState", "draftPrewarmPolicyState"],
     "Renderer contract audit production state",
   );
   if (
     typeof production.bindingPresent !== "boolean" ||
-    !["installing", "ready", "unsupported", "absent"].includes(String(production.adapterState)) ||
+    !PRODUCTION_ADAPTER_STATES.includes(String(production.adapterState) as (typeof PRODUCTION_ADAPTER_STATES)[number]) ||
     typeof production.adapterReason !== "string" ||
     production.adapterReason.length > 64 ||
-    !["ready", "absent", "unknown"].includes(String(production.titlePolicyState)) ||
-    !["ready", "absent", "unknown"].includes(String(production.draftPrewarmPolicyState))
+    !POLICY_STATES.includes(String(production.titlePolicyState) as (typeof POLICY_STATES)[number]) ||
+    !POLICY_STATES.includes(String(production.draftPrewarmPolicyState) as (typeof POLICY_STATES)[number])
   ) {
     throw new Error("Renderer contract audit production state is invalid");
   }
   return {
     schemaVersion: 1,
-    composer: integerRecord(
+    composer: countGroup(
       value.composer,
       [
         "composerCount",
@@ -179,33 +173,27 @@ export function validateRendererContractAuditInspection(
       ] as const,
       "Renderer composer contract",
     ),
-    model: integerRecord(
+    model: countGroup(
       value.model,
       ["draftCount", "conversationCount", "missingCount", "ambiguousCount"] as const,
       "Renderer model contract",
     ),
-    settings: integerRecord(
+    settings: countGroup(
       value.settings,
       ["headerCount", "visibleHeaderCount", "insertionPointCount"] as const,
       "Renderer settings contract",
     ),
-    sidebar: integerRecord(
+    sidebar: countGroup(
       value.sidebar,
       ["rowCount", "titleOwnerCount", "resolvedThreadCount", "ambiguousThreadCount"] as const,
       "Renderer sidebar contract",
     ),
-    transcript: integerRecord(
+    transcript: countGroup(
       value.transcript,
-      [
-        "turnCount",
-        "itemNodeCount",
-        "identifiedItemCount",
-        "textBodyCount",
-        "textBodyOwnerCount",
-      ] as const,
+      ["turnCount", "itemNodeCount", "identifiedItemCount", "textBodyCount", "textBodyOwnerCount"] as const,
       "Renderer transcript contract",
     ),
-    fork: integerRecord(
+    fork: countGroup(
       value.fork,
       ["annotatedResponseCount", "candidateButtonCount", "verifiedButtonCount"] as const,
       "Renderer fork contract",
@@ -258,10 +246,6 @@ async function executeReadOnlyAudit(
   })()`);
 }
 
-function browserIdentity(version: CdpBrowserVersion): DesktopContractAuditObservation["browser"] {
-  return { browser: version.browser, protocolVersion: version.protocolVersion };
-}
-
 export async function inspectDesktopContracts(
   options: InspectDesktopContractsOptions,
 ): Promise<DesktopContractAuditObservation> {
@@ -281,7 +265,7 @@ export async function inspectDesktopContracts(
     );
     return {
       schemaVersion: DESKTOP_CONTRACT_AUDIT_SCHEMA_VERSION,
-      browser: browserIdentity(browser),
+      browser: { browser: browser.browser, protocolVersion: browser.protocolVersion },
       renderer,
       contracts,
     };
