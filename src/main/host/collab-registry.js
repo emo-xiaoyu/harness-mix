@@ -118,8 +118,19 @@ class CollabRegistry {
     if (!target || !this.state) return;
     const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     const run = (this.writing ?? Promise.resolve()).then(async () => {
-      await fsp.writeFile(tmp, JSON.stringify(this.state), 'utf8');
-      await fsp.rename(tmp, target);
+      try {
+        await fsp.writeFile(tmp, JSON.stringify(this.state), 'utf8');
+        for (let attempt = 0; ; attempt++) {
+          try { await fsp.rename(tmp, target); break; }
+          catch (error) {
+            if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt === 9) throw error;
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        }
+      } catch (error) {
+        await fsp.rm(tmp, { force: true }).catch(() => {});
+        throw error;
+      }
     });
     this.writing = run.catch(() => {});
     await run;

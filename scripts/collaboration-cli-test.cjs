@@ -13,7 +13,7 @@ const registryDir = path.join(root, 'registry');
 process.env.HARNESS_MIX_COLLAB_REGISTRY_DIR = registryDir;
 
 const { HostRuntime } = require('../src/main/host/runtime');
-const { discoverRegistry } = require('../src/main/host/collab-registry');
+const { CollabRegistry, discoverRegistry } = require('../src/main/host/collab-registry');
 const CLI = path.resolve(__dirname, '../src/main/host/collaboration-cli.cjs');
 
 const wait = async fn => { for (let i = 0; i < 1000; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Timed out'); };
@@ -32,6 +32,25 @@ function runCli(args, { cwd, env = {}, input = null } = {}) {
 
 async function main() {
   await fs.mkdir(root, { recursive: true });
+  // Windows 的读句柄或扫描器可能让原子替换短暂返回 EPERM。
+  const retryRegistry = new CollabRegistry(path.join(root, 'retry-registry'));
+  const rename = fs.rename;
+  let busyOnce = true;
+  fs.rename = async (...args) => {
+    if (busyOnce) {
+      busyOnce = false;
+      throw Object.assign(new Error('file busy'), { code: 'EPERM' });
+    }
+    return rename(...args);
+  };
+  try {
+    await retryRegistry.start('http://127.0.0.1:1');
+    assert.equal(busyOnce, false, '模拟了注册文件被占用');
+    assert.ok(retryRegistry.instanceFile, '短暂 EPERM 后完成注册');
+  } finally {
+    fs.rename = rename;
+    await retryRegistry.stop();
+  }
   const rt = new HostRuntime({ dataDirectory: path.join(root, 'data') });
   await rt.store.load();
   const pending = new Map();
@@ -50,8 +69,10 @@ async function main() {
   rt.adapters.set('reviewer', reviewer); rt.status.reviewer = { available: true };
   try {
     const parent = await rt.createThread({ harnessId: 'zlead', cwd: root });
-    await wait(async () => (await discoverRegistry({ cwd: root })).entries.length >= 1);
-    const [entry] = (await discoverRegistry({ cwd: root })).entries;
+    // createThread 完成时 CLI 必须能立即发现 lead；Windows 读写竞态不能丢登记。
+    const initialRegistry = await discoverRegistry({ cwd: root });
+    assert.equal(initialRegistry.entries.length, 1, '建任务返回前已完成 CLI 注册表登记');
+    const [entry] = initialRegistry.entries;
     assert.equal(entry.threadId, parent.id, '注册表登记 lead 线程');
     assert.equal(entry.kind, 'lead');
 

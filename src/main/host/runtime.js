@@ -225,7 +225,7 @@ class HostRuntime {
     this.threads.unshift(thread);
     this.execution.threadCreated(thread);
     // CLI 发现注册表登记（内部吞错；ephemeral/协作停用时为 no-op）
-    this.collaboration.noteThread(thread);
+    await this.collaboration.noteThread(thread);
     await this.#save();
     if (onCreated) await onCreated(thread);
     this.#broadcast();
