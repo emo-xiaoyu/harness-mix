@@ -4,7 +4,11 @@ import {
 } from "@harnessmix/shared-contracts";
 import type { RendererSettingsMessages } from "./localization.js";
 
-/** Search submission and pagination state; native discovery and import are owned elsewhere. */
+const PAGE_SIZE_CHOICES = [20, 50, 100] as const;
+
+// Owns the search box and pager for the session-import list. Harness discovery
+// and the import action itself live in the page module; this control only
+// tracks query/offset/limit state and reports changes upward.
 export function createSessionImportListControls(
   document: Document,
   messages: RendererSettingsMessages,
@@ -12,10 +16,11 @@ export function createSessionImportListControls(
 ) {
   let query = "";
   let offset = 0;
-  let limit = HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE;
+  let limit: number = HARNESS_SESSION_IMPORT_DEFAULT_PAGE_SIZE;
   let total = 0;
   let loading = false;
   let locked = false;
+
   const searchForm = document.createElement("form");
   searchForm.className = "settings-session-import-search";
   searchForm.setAttribute("role", "search");
@@ -47,7 +52,7 @@ export function createSessionImportListControls(
   const pageSize = document.createElement("select");
   pageSize.dataset.sessionImportAction = "page-size";
   pageSize.setAttribute("aria-label", messages.sessionImportPageSize);
-  for (const size of [20, 50, 100]) {
+  for (const size of PAGE_SIZE_CHOICES) {
     const option = document.createElement("option");
     option.value = String(size);
     option.textContent = String(size);
@@ -58,35 +63,45 @@ export function createSessionImportListControls(
   pageSize.addEventListener("change", () => {
     if (locked) return;
     const value = Number(pageSize.value);
-    if (![20, 50, 100].includes(value)) return;
+    if (!(PAGE_SIZE_CHOICES as readonly number[]).includes(value)) return;
     limit = value;
     offset = 0;
     onChange();
   });
+
   const summary = document.createElement("span");
   summary.setAttribute("role", "status");
   summary.dataset.sessionImportAction = "page-summary";
+
   const previous = document.createElement("button");
   const next = document.createElement("button");
-  for (const [button, label, action, direction] of [
-    [previous, messages.sessionImportPrevious, "previous", -1],
-    [next, messages.sessionImportNext, "next", 1],
-  ] as const) {
+  const pagerButtons: ReadonlyArray<{
+    button: HTMLButtonElement;
+    step: number;
+  }> = [
+    { button: previous, step: -1 },
+    { button: next, step: 1 },
+  ];
+  previous.textContent = messages.sessionImportPrevious;
+  previous.dataset.sessionImportAction = "previous";
+  next.textContent = messages.sessionImportNext;
+  next.dataset.sessionImportAction = "next";
+  for (const { button, step } of pagerButtons) {
     button.type = "button";
     button.className = "settings-command-button settings-command-button--secondary";
-    button.textContent = label;
-    button.dataset.sessionImportAction = action;
     button.addEventListener("click", () => {
       if (button.disabled || locked || loading) return;
-      offset += direction * limit;
+      offset += step * limit;
       onChange();
     });
   }
+
   const navigation = document.createElement("div");
   navigation.className = "settings-session-import-pagination__navigation";
   navigation.append(previous, next);
   pagination.append(pageSizeLabel, summary, navigation);
-  const update = (): void => {
+
+  const syncDisabledState = (): void => {
     search.disabled = locked;
     submit.disabled = locked;
     pageSize.disabled = locked;
@@ -99,7 +114,8 @@ export function createSessionImportListControls(
           .replace("{pages}", String(Math.ceil(total / limit)))
           .replace("{total}", String(total));
   };
-  update();
+  syncDisabledState();
+
   return {
     searchForm,
     pagination,
@@ -109,19 +125,19 @@ export function createSessionImportListControls(
     reset(): void {
       offset = 0;
       total = 0;
-      update();
+      syncDisabledState();
     },
     setBusy(value: boolean, lock = false): void {
       loading = value;
       locked = lock;
-      update();
+      syncDisabledState();
     },
     setTotal(value: number): boolean {
       total = value;
       const lastOffset = Math.max(0, Math.ceil(total / limit) - 1) * limit;
       const changed = offset > lastOffset;
       if (changed) offset = lastOffset;
-      update();
+      syncDisabledState();
       return changed;
     },
   };

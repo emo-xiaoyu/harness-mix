@@ -33,6 +33,9 @@ export function creditsProductLabel(product: string, messages: RendererSettingsM
   return product;
 }
 
+// Formats a reset timestamp for the accounts table. The English variant
+// delegates to the shared credits control; the Chinese variant prefers a
+// "今天 HH:MM" shape for same-day resets.
 export function formatAccountCreditsReset(
   value: string,
   locale: RendererSettingsMessages["locale"],
@@ -41,11 +44,11 @@ export function formatAccountCreditsReset(
   if (locale !== "zh-CN") return formatRendererCreditsReset(value, now);
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  const isToday =
+  const sameDay =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  if (isToday) {
+  if (sameDay) {
     return `今天 ${date.toLocaleTimeString("zh-CN", { hour: "numeric", minute: "2-digit" })}`;
   }
   return date.toLocaleString("zh-CN", {
@@ -67,6 +70,15 @@ export function resetCreditDetailLine(
     .replace("{time}", formatAccountCreditsReset(expiresAt, messages.locale, now));
 }
 
+function pendingUsageMessage(
+  state: Exclude<AccountUsageViewState, { status: "ready" }>,
+  messages: RendererSettingsMessages,
+): string {
+  if (state.status === "loading") return messages.accountCreditsLoading;
+  if (state.status === "error") return messages.accountCreditsFailed;
+  return messages.accountCreditsEmpty;
+}
+
 export function renderAccountUsage(
   document: Document,
   state: AccountUsageViewState | undefined,
@@ -80,12 +92,7 @@ export function renderAccountUsage(
   if (state.status !== "ready") {
     const message = document.createElement("span");
     message.className = "settings-account-usage__message";
-    message.textContent =
-      state.status === "loading"
-        ? messages.accountCreditsLoading
-        : state.status === "error"
-          ? messages.accountCreditsFailed
-          : messages.accountCreditsEmpty;
+    message.textContent = pendingUsageMessage(state, messages);
     usage.append(message);
     if (state.status === "loading") usage.setAttribute("aria-busy", "true");
     if (state.status === "error") {
@@ -99,8 +106,8 @@ export function renderAccountUsage(
     return usage;
   }
   const credits = state.credits;
-  // Render only reported windows/products. Neither a plan name nor a missing
-  // window is evidence of zero usage, unlimited access, or a synthetic 5h limit.
+  // Only windows the API actually reported are rendered: a missing window or
+  // plan name must never be presented as zero usage or a synthetic limit.
   const windows = [
     {
       label: credits.label ?? creditsPeriodLabel(credits.periodType, messages),
@@ -114,44 +121,53 @@ export function renderAccountUsage(
     })),
   ];
   for (const window of windows) {
-    const meter = document.createElement("div");
-    meter.className = "settings-account-usage__meter";
-    const label = document.createElement("span");
-    label.className = "settings-account-usage__title";
-    label.textContent = window.label;
-    label.title = window.label;
-    const value = display === "remaining" ? 100 - window.usedPercent : window.usedPercent;
-    const valueLabel =
-      display === "remaining" ? messages.accountCreditsRemaining : messages.accountCreditsUsed;
-    const tone = rendererCreditsTone(window.usedPercent);
-    const bar = document.createElement("div");
-    bar.className = `settings-account-usage__bar settings-account-usage__bar--${tone}`;
-    bar.setAttribute("role", "meter");
-    bar.setAttribute("aria-label", `${window.label} · ${valueLabel}`);
-    bar.setAttribute("aria-valuemin", "0");
-    bar.setAttribute("aria-valuemax", "100");
-    bar.setAttribute("aria-valuenow", String(value));
-    const fill = document.createElement("span");
-    fill.style.width = `${Math.min(100, Math.max(0, value))}%`;
-    bar.append(fill);
-    const percent = document.createElement("span");
-    percent.className = `settings-account-usage__percent settings-account-usage__percent--${tone}`;
-    const prefix = document.createElement("span");
-    prefix.textContent = valueLabel;
-    prefix.className = "settings-account-usage__value-label";
-    const number = document.createElement("span");
-    number.textContent = formatRendererCreditsPercent(value);
-    percent.append(prefix, number);
-    meter.append(label, bar, percent);
-    if (window.resetsAt) {
-      const reset = document.createElement("span");
-      reset.className = "settings-account-usage__sub";
-      reset.textContent = `${formatAccountCreditsReset(window.resetsAt, messages.locale)} ${messages.accountCreditsReset}`;
-      meter.append(reset);
-    }
-    usage.append(meter);
+    usage.append(buildUsageMeter(document, window, messages, display));
   }
   return usage;
+}
+
+function buildUsageMeter(
+  document: Document,
+  window: { label: string; usedPercent: number; resetsAt: string | undefined },
+  messages: RendererSettingsMessages,
+  display: AccountUsageDisplay,
+): HTMLElement {
+  const meter = document.createElement("div");
+  meter.className = "settings-account-usage__meter";
+  const label = document.createElement("span");
+  label.className = "settings-account-usage__title";
+  label.textContent = window.label;
+  label.title = window.label;
+  const value = display === "remaining" ? 100 - window.usedPercent : window.usedPercent;
+  const valueLabel =
+    display === "remaining" ? messages.accountCreditsRemaining : messages.accountCreditsUsed;
+  const tone = rendererCreditsTone(window.usedPercent);
+  const bar = document.createElement("div");
+  bar.className = `settings-account-usage__bar settings-account-usage__bar--${tone}`;
+  bar.setAttribute("role", "meter");
+  bar.setAttribute("aria-label", `${window.label} · ${valueLabel}`);
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", String(value));
+  const fill = document.createElement("span");
+  fill.style.width = `${Math.min(100, Math.max(0, value))}%`;
+  bar.append(fill);
+  const percent = document.createElement("span");
+  percent.className = `settings-account-usage__percent settings-account-usage__percent--${tone}`;
+  const prefix = document.createElement("span");
+  prefix.textContent = valueLabel;
+  prefix.className = "settings-account-usage__value-label";
+  const number = document.createElement("span");
+  number.textContent = formatRendererCreditsPercent(value);
+  percent.append(prefix, number);
+  meter.append(label, bar, percent);
+  if (window.resetsAt) {
+    const reset = document.createElement("span");
+    reset.className = "settings-account-usage__sub";
+    reset.textContent = `${formatAccountCreditsReset(window.resetsAt, messages.locale)} ${messages.accountCreditsReset}`;
+    meter.append(reset);
+  }
+  return meter;
 }
 
 export function renderAccountResetCredits(
@@ -177,7 +193,15 @@ export function renderAccountResetCredits(
     count,
     createRendererSettingsIcon("chevron-right", 14),
   );
+  return { summary, details: buildResetCreditsDetails(document, resetCredits, messages, options) };
+}
 
+function buildResetCreditsDetails(
+  document: Document,
+  resetCredits: NonNullable<AccountCreditsSnapshot["resetCredits"]>,
+  messages: RendererSettingsMessages,
+  options: { onUseReset?: () => void; usingReset: boolean; resetDisabled: boolean },
+): HTMLElement {
   const details = document.createElement("div");
   details.className = "settings-account-reset-details";
   const copy = document.createElement("div");
@@ -185,15 +209,7 @@ export function renderAccountResetCredits(
   heading.textContent = messages.accountResetCredits;
   copy.append(heading);
   if (resetCredits.nextExpiresAt) {
-    const next = document.createElement("p");
-    next.className = "settings-account-reset-expiry";
-    const reset = formatAccountCreditsReset(resetCredits.nextExpiresAt, messages.locale);
-    next.textContent = messages.locale === "zh-CN" ? `最早 ${reset}到期` : `Next expires ${reset}`;
-    const remaining = Date.parse(resetCredits.nextExpiresAt) - Date.now();
-    if (remaining <= 24 * 60 * 60 * 1000) {
-      next.className += remaining <= 8 * 60 * 60 * 1000 ? " is-hot" : " is-warn";
-    }
-    copy.append(next);
+    copy.append(buildNextExpiryLine(document, resetCredits.nextExpiresAt, messages));
   }
   if (resetCredits.expiresAt?.length) {
     const list = document.createElement("ul");
@@ -217,5 +233,22 @@ export function renderAccountResetCredits(
     use.addEventListener("click", options.onUseReset);
     details.append(use);
   }
-  return { summary, details };
+  return details;
+}
+
+function buildNextExpiryLine(
+  document: Document,
+  nextExpiresAt: string,
+  messages: RendererSettingsMessages,
+): HTMLElement {
+  const next = document.createElement("p");
+  next.className = "settings-account-reset-expiry";
+  const reset = formatAccountCreditsReset(nextExpiresAt, messages.locale);
+  next.textContent = messages.locale === "zh-CN" ? `最早 ${reset}到期` : `Next expires ${reset}`;
+  // Escalate urgency as the earliest card approaches expiry (8h hot / 24h warn).
+  const remaining = Date.parse(nextExpiresAt) - Date.now();
+  if (remaining <= 24 * 60 * 60 * 1000) {
+    next.className += remaining <= 8 * 60 * 60 * 1000 ? " is-hot" : " is-warn";
+  }
+  return next;
 }

@@ -1,3 +1,7 @@
+// Locale catalogue for the injected settings UI. Two full message tables
+// (English + Simplified Chinese) are kept side by side; the visible copy is
+// part of the product contract, so every entry below ships verbatim.
+
 import type { DefaultRendererSettingsPageId } from "./pages.js";
 
 export const RENDERER_SETTINGS_LOCALES = ["en", "zh-CN"] as const;
@@ -19,6 +23,8 @@ export interface RendererSettingsLanguageControl {
 
 export interface RendererSettingsMessages {
   readonly locale: RendererSettingsLocale;
+
+  // Shell chrome
   readonly title: string;
   readonly close: string;
   readonly starOnGitHub: string;
@@ -29,6 +35,8 @@ export interface RendererSettingsMessages {
   readonly inDevelopment: string;
   readonly notAvailable: string;
   readonly runtimeCapabilityNotInstalled: string;
+
+  // Session import
   readonly sessionImportHarness: string;
   readonly sessionImportDescription: string;
   readonly sessionImportAvailabilityNote: string;
@@ -60,13 +68,64 @@ export interface RendererSettingsMessages {
   readonly sessionImportPathCopyFailed: string;
   readonly sessionImportRetryOpen: string;
   readonly sessionImportRetrying: string;
+
+  // Connections overview
   readonly connectionsDescription: string;
+  readonly connectionAdapter: string;
+  readonly connectionHosts: string;
+  readonly connectionLocalHost: string;
+  readonly connectionRemoteHost: string;
+  readonly connectionActiveHost: string;
+  readonly connectionReason: string;
+  readonly connectionRefresh: string;
+  readonly connectionRefreshing: string;
+  readonly connectionViewError: string;
+  readonly connectionCopyDetails: string;
+  readonly connectionCopied: string;
+  readonly connectionCopyFailed: string;
+  readonly connectionErrorCode: string;
+  readonly connectionErrorMessage: string;
+  readonly connectionRetryable: string;
+  readonly connectionFailureStage: string;
+  readonly connectionDuration: string;
+  readonly connectionDiagnostic: string;
+  readonly connectionNoRuntime: string;
+  readonly connectionStatusReady: string;
+  readonly connectionStatusChecking: string;
+  readonly connectionStatusNotInstalled: string;
+  readonly connectionStatusUnavailable: string;
+  readonly connectionStatusError: string;
+  readonly connectionStatusInstalling: string;
+  readonly connectionStatusUnsupported: string;
+  readonly connectionComponent: string;
+  readonly connectionStatus: string;
+  readonly connectionHostsScrollLeft: string;
+  readonly connectionHostsScrollRight: string;
+  readonly connectionOpenInstallation: string;
+  readonly connectionOpenHarnessWeb: string;
+  readonly connectionInstall: string;
+  readonly connectionInstallDescription: string;
+  readonly connectionErrorTitle: string;
+  readonly connectionErrorLog: string;
+  readonly connectionOpenIssue: string;
+  readonly connectionIssueDescription: string;
+  readonly connectionReadyDescription: string;
+  readonly connectionUnavailableDescription: string;
+  readonly connectionGroupMoreLabel: string;
+  readonly connectionGroupMoreHintTitle: string;
+  readonly connectionGroupMoreHintBody: string;
+  readonly connectionGroupMoveToMore: string;
+  readonly connectionGroupMoveToMain: string;
+  readonly connectionGroupDragHandle: string;
+  readonly connectionGroupReset: string;
+
+  // Accounts
   readonly accountsDescription: string;
-  readonly accountAdd: string;
-  readonly accountColumnAccount: string;
   readonly accountTaskHint: string;
   readonly accountConnected: string;
   readonly accountDefaultBadge: string;
+  readonly accountAdd: string;
+  readonly accountColumnAccount: string;
   readonly accountColumnUsage: string;
   readonly accountColumnActions: string;
   readonly accountSearch: string;
@@ -122,46 +181,8 @@ export interface RendererSettingsMessages {
   readonly accountResetCreditsSucceeded: string;
   readonly accountResetCreditsDetails: string;
   readonly accountResetCreditsCardExpiry: string;
-  readonly connectionAdapter: string;
-  readonly connectionHosts: string;
-  readonly connectionLocalHost: string;
-  readonly connectionRemoteHost: string;
-  readonly connectionActiveHost: string;
-  readonly connectionReason: string;
-  readonly connectionRefresh: string;
-  readonly connectionRefreshing: string;
-  readonly connectionViewError: string;
-  readonly connectionCopyDetails: string;
-  readonly connectionCopied: string;
-  readonly connectionCopyFailed: string;
-  readonly connectionErrorCode: string;
-  readonly connectionErrorMessage: string;
-  readonly connectionRetryable: string;
-  readonly connectionFailureStage: string;
-  readonly connectionDuration: string;
-  readonly connectionDiagnostic: string;
-  readonly connectionNoRuntime: string;
-  readonly connectionStatusReady: string;
-  readonly connectionStatusChecking: string;
-  readonly connectionStatusNotInstalled: string;
-  readonly connectionStatusUnavailable: string;
-  readonly connectionStatusError: string;
-  readonly connectionStatusInstalling: string;
-  readonly connectionStatusUnsupported: string;
-  readonly connectionComponent: string;
-  readonly connectionStatus: string;
-  readonly connectionHostsScrollLeft: string;
-  readonly connectionHostsScrollRight: string;
-  readonly connectionOpenInstallation: string;
-  readonly connectionOpenHarnessWeb: string;
-  readonly connectionInstall: string;
-  readonly connectionInstallDescription: string;
-  readonly connectionErrorTitle: string;
-  readonly connectionErrorLog: string;
-  readonly connectionOpenIssue: string;
-  readonly connectionIssueDescription: string;
-  readonly connectionReadyDescription: string;
-  readonly connectionUnavailableDescription: string;
+
+  // Model configuration
   readonly modelConfigurationTitle: string;
   readonly modelConfigurationDescription: string;
   readonly modelSelectLabel: string;
@@ -173,6 +194,8 @@ export interface RendererSettingsMessages {
   readonly preferenceReset: string;
   readonly loadingModels: string;
   readonly noModelsAvailable: string;
+
+  // Installation helpers
   readonly oneClickInstall: string;
   readonly oneClickInstalling: string;
   readonly oneClickInstallSuccess: string;
@@ -198,13 +221,8 @@ export interface RendererSettingsMessages {
   readonly installCommandCopied: string;
   readonly officialDownload: string;
   readonly refreshDetection: string;
-  readonly connectionGroupMoreLabel: string;
-  readonly connectionGroupMoreHintTitle: string;
-  readonly connectionGroupMoreHintBody: string;
-  readonly connectionGroupMoveToMore: string;
-  readonly connectionGroupMoveToMain: string;
-  readonly connectionGroupDragHandle: string;
-  readonly connectionGroupReset: string;
+
+  // Agent picker
   readonly pickerMoreAgentsLabel: string;
   readonly pickerManageLink: string;
   readonly pickerHideUnusedAgentsCta: string;
@@ -213,6 +231,8 @@ export interface RendererSettingsMessages {
   readonly openSettings: string;
   readonly settingsButtonTitle: string;
   readonly settingsUnavailableTitle: string;
+
+  // Updates
   readonly updateCurrentVersion: string;
   readonly updateInstallation: string;
   readonly updateInstallationNpm: string;
@@ -245,11 +265,14 @@ export interface RendererSettingsMessages {
   readonly updateCopyFailed: string;
   readonly updateDownloadFromReleases: string;
   readonly updateDownloadWindowsInstaller: string;
+
+  // About
   readonly aboutTagline: string;
   readonly aboutParagraphs: readonly string[];
   readonly aboutOpenSource: string;
   readonly aboutStarCallout: string;
   readonly aboutRepository: string;
+
   readonly pageLabels: Readonly<Record<DefaultRendererSettingsPageId, string>>;
 }
 
@@ -512,8 +535,8 @@ const ENGLISH_MESSAGES: RendererSettingsMessages = Object.freeze({
     connections: "Connections",
     collaboration: "Collaboration",
     accounts: "Accounts",
-    mcp: 'MCP',
-    skills: 'Skills',
+    mcp: "MCP",
+    skills: "Skills",
     "session-import": "Session Import",
     storage: "Storage & verification",
     usage: "Usage center",
@@ -775,8 +798,8 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
     connections: "连接",
     collaboration: "协作",
     accounts: "账号",
-    mcp: 'MCP',
-    skills: 'Skills',
+    mcp: "MCP",
+    skills: "Skills",
     "session-import": "会话导入",
     storage: "存储与验证",
     usage: "用量中心",
@@ -790,7 +813,9 @@ const CHINESE_MESSAGES: RendererSettingsMessages = Object.freeze({
 
 export const DEFAULT_RENDERER_SETTINGS_MESSAGES = ENGLISH_MESSAGES;
 
-function languageFromTag(tag: string): string | undefined {
+// The selector only distinguishes the two supported catalogs; anything else
+// (unknown base language) surfaces as "other" in the language picker.
+function primaryLanguageOf(tag: string): string | undefined {
   try {
     return new Intl.Locale(tag).language.toLowerCase();
   } catch {
@@ -798,13 +823,18 @@ function languageFromTag(tag: string): string | undefined {
   }
 }
 
+function catalogForLanguage(code: string | undefined): RendererSettingsLocale | null {
+  if (code === "zh") return "zh-CN";
+  if (code === "en") return "en";
+  return null;
+}
+
 export function resolveRendererSettingsLocale(
   languageTags: readonly string[],
 ): RendererSettingsLocale {
   for (const tag of languageTags) {
-    const language = languageFromTag(tag);
-    if (language === "zh") return "zh-CN";
-    if (language === "en") return "en";
+    const locale = catalogForLanguage(primaryLanguageOf(tag));
+    if (locale) return locale;
   }
   return "en";
 }
@@ -817,10 +847,8 @@ export function rendererSettingsLanguageSelection(
   localeOverride: string | null | undefined,
 ): RendererSettingsLanguageSelection {
   if (localeOverride == null) return "automatic";
-  const language = languageFromTag(localeOverride);
-  if (language === "zh") return "zh-CN";
-  if (language === "en") return "en";
-  return "other";
+  const known = catalogForLanguage(primaryLanguageOf(localeOverride));
+  return known ?? "other";
 }
 
 export function codexLocaleOverrideForSettingsSelection(

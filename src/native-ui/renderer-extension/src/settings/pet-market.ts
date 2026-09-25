@@ -1,3 +1,7 @@
+// Pet market settings page: browse, install and select desktop companions.
+// Selecting a pet drives Codex's own official pet setting through UI
+// automation, then records the choice locally so this panel mirrors it.
+
 import type { RendererSettingsMessages } from "./localization.js";
 import type {
   RendererSettingsPageDefinition,
@@ -12,7 +16,7 @@ import {
 } from "./pets-client.js";
 import { switchOfficialCodexPet } from "../renderer-pet-switcher.js";
 
-const COPY = {
+const PET_MARKET_COPY = {
   en: {
     title: "Pets",
     intro:
@@ -85,109 +89,115 @@ const COPY = {
   },
 } as const;
 
+type MarketCopy = (typeof PET_MARKET_COPY)[keyof typeof PET_MARKET_COPY];
 type PetTab = "all" | "official" | "community" | "installed";
 type PetOperation = "install" | "uninstall" | "select";
-type PetOperationState =
+
+type PetCardState =
   | { readonly status: "installing" | "uninstalling" | "selecting" }
   | { readonly status: "failed"; readonly op: PetOperation; readonly error: string };
 
-function petOperationBusyLabel(
+// Sheet layout for the animated previews. Version 1 sheets use 9 rows, newer
+// sheets use 11; only the top row (6 frames across 8 columns) animates.
+const SHEET_COLUMNS = 8;
+const SHEET_FRAMES = 6;
+const FRAME_STEP_MS = 220;
+const IDLE_PERIOD_MIN_MS = 4000;
+const IDLE_PERIOD_JITTER_MS = 3000;
+
+function busyLabelFor(
   status: "installing" | "uninstalling" | "selecting",
-  copy: (typeof COPY)[keyof typeof COPY],
+  copy: MarketCopy,
 ): string {
   if (status === "installing") return copy.installing;
   if (status === "uninstalling") return copy.uninstalling;
   return copy.usingPet;
 }
 
-function petOperationFailedLabel(
-  op: PetOperation,
-  copy: (typeof COPY)[keyof typeof COPY],
-): string {
+function failureLabelFor(op: PetOperation, copy: MarketCopy): string {
   if (op === "install") return copy.installFailed;
   if (op === "uninstall") return copy.uninstallFailed;
   return copy.selectFailed;
 }
 
-const SPRITE_COLUMNS = 8;
-const SPRITE_FRAMES = 6;
-const FRAME_DURATION_MS = 220;
-
-function setupSpriteAnimation(
+// Drives a CSS background-position spritesheet animation on one element.
+// Playback is hover-driven on the surrounding card, with a periodic idle
+// wiggle so static grids still feel alive. Returns a disposer.
+function mountSpriteAnimation(
   element: HTMLElement,
   imageUrl: string,
   spriteVersion = 2,
 ): () => void {
-  const rows = spriteVersion === 1 ? 9 : 11;
+  const rowCount = spriteVersion === 1 ? 9 : 11;
   element.style.backgroundImage = `url("${imageUrl}")`;
-  element.style.backgroundSize = `${SPRITE_COLUMNS * 100}% ${rows * 100}%`;
+  element.style.backgroundSize = `${SHEET_COLUMNS * 100}% ${rowCount * 100}%`;
   element.style.backgroundPosition = "0% 0%";
 
-  let currentFrame = 0;
-  let timer: number | null = null;
-  let idleTimeout: number | null = null;
-  let isHovered = false;
+  let frame = 0;
+  let loopTimer: number | null = null;
+  let idleStopTimer: number | null = null;
+  let hovering = false;
 
-  const tick = () => {
-    currentFrame = (currentFrame + 1) % SPRITE_FRAMES;
-    const posX = (currentFrame / (SPRITE_COLUMNS - 1)) * 100;
+  const advance = (): void => {
+    frame = (frame + 1) % SHEET_FRAMES;
+    const posX = (frame / (SHEET_COLUMNS - 1)) * 100;
     element.style.backgroundPosition = `${posX}% 0%`;
   };
 
-  const startLoop = () => {
-    if (timer !== null) return;
-    timer = window.setInterval(tick, FRAME_DURATION_MS);
+  const playLoop = (): void => {
+    if (loopTimer !== null) return;
+    loopTimer = window.setInterval(advance, FRAME_STEP_MS);
   };
 
-  const stopLoop = () => {
-    if (timer !== null) {
-      clearInterval(timer);
-      timer = null;
+  const stopLoop = (): void => {
+    if (loopTimer !== null) {
+      window.clearInterval(loopTimer);
+      loopTimer = null;
     }
-    if (!isHovered) {
-      currentFrame = 0;
+    if (!hovering) {
+      frame = 0;
       element.style.backgroundPosition = "0% 0%";
     }
   };
 
-  const onMouseEnter = () => {
-    isHovered = true;
-    startLoop();
+  const onCardEnter = (): void => {
+    hovering = true;
+    playLoop();
   };
 
-  const onMouseLeave = () => {
-    isHovered = false;
+  const onCardLeave = (): void => {
+    hovering = false;
     stopLoop();
   };
 
-  const parentCard = element.closest(".pet-card, .pet-current");
-  if (parentCard) {
-    parentCard.addEventListener("mouseenter", onMouseEnter);
-    parentCard.addEventListener("mouseleave", onMouseLeave);
+  const hostCard = element.closest(".pet-card, .pet-current");
+  if (hostCard) {
+    hostCard.addEventListener("mouseenter", onCardEnter);
+    hostCard.addEventListener("mouseleave", onCardLeave);
   }
 
-  // Periodic idle blink/movement every few seconds
-  const idleInterval = window.setInterval(() => {
-    if (!isHovered && timer === null) {
-      startLoop();
-      if (idleTimeout !== null) window.clearTimeout(idleTimeout);
-      idleTimeout = window.setTimeout(() => {
-        idleTimeout = null;
+  // Occasional unsolicited blink/wiggle while idle.
+  const idleKick = window.setInterval(() => {
+    if (!hovering && loopTimer === null) {
+      playLoop();
+      if (idleStopTimer !== null) window.clearTimeout(idleStopTimer);
+      idleStopTimer = window.setTimeout(() => {
+        idleStopTimer = null;
         stopLoop();
-      }, FRAME_DURATION_MS * SPRITE_FRAMES);
+      }, FRAME_STEP_MS * SHEET_FRAMES);
     }
-  }, 4000 + Math.random() * 3000);
+  }, IDLE_PERIOD_MIN_MS + Math.random() * IDLE_PERIOD_JITTER_MS);
 
   return () => {
     stopLoop();
-    clearInterval(idleInterval);
-    if (idleTimeout !== null) {
-      window.clearTimeout(idleTimeout);
-      idleTimeout = null;
+    window.clearInterval(idleKick);
+    if (idleStopTimer !== null) {
+      window.clearTimeout(idleStopTimer);
+      idleStopTimer = null;
     }
-    if (parentCard) {
-      parentCard.removeEventListener("mouseenter", onMouseEnter);
-      parentCard.removeEventListener("mouseleave", onMouseLeave);
+    if (hostCard) {
+      hostCard.removeEventListener("mouseenter", onCardEnter);
+      hostCard.removeEventListener("mouseleave", onCardLeave);
     }
   };
 }
@@ -196,7 +206,7 @@ export function createPetSettingsPage(
   messages: RendererSettingsMessages,
   getClient: () => RendererPetsClient | null,
 ): RendererSettingsPageDefinition {
-  const copy = COPY[messages.locale];
+  const copy = PET_MARKET_COPY[messages.locale];
 
   return Object.freeze({
     id: "pets",
@@ -204,8 +214,10 @@ export function createPetSettingsPage(
     icon: "pets",
     mount(context: RendererSettingsPageMountContext) {
       const document = context.content.ownerDocument;
-      const disposers: Array<() => void> = [];
+      const cardAnimationDisposers: Array<() => void> = [];
 
+      // Static page scaffolding: heading, intro, safety note, active-pet
+      // panel, tab/search toolbar and the card grid.
       const heading = document.createElement("div");
       heading.className = "settings-section-label";
       heading.textContent = copy.title;
@@ -225,22 +237,19 @@ export function createPetSettingsPage(
       safetyBody.append(safetyTitle, safetyDetail);
       safety.append(safetyBody);
 
-      // 当前桌宠面板（Harness Mix 本地选择状态驱动的展示面，置顶显示）
+      // Current-pet panel at the top, driven by the local selection record.
       const currentPanel = document.createElement("section");
       currentPanel.className = "pet-current";
       currentPanel.dataset.active = "false";
 
-      // Toolbar: tabs + search
       const toolbar = document.createElement("div");
       toolbar.className = "pet-market__toolbar";
-
       const tabsWrap = document.createElement("div");
       tabsWrap.className = "pet-market__tabs";
 
       let activeTab: PetTab = "all";
       let searchQuery = "";
       const tabButtons = new Map<PetTab, HTMLButtonElement>();
-
       const tabs: Array<{ id: PetTab; label: string }> = [
         { id: "all", label: copy.all },
         { id: "official", label: copy.official },
@@ -251,7 +260,6 @@ export function createPetSettingsPage(
       const searchWrap = document.createElement("div");
       searchWrap.className = "pet-market__search-wrap";
       searchWrap.append(createRendererSettingsIcon("search", 15));
-
       const searchInput = document.createElement("input");
       searchInput.type = "search";
       searchInput.className = "pet-market__search";
@@ -265,43 +273,44 @@ export function createPetSettingsPage(
 
       context.content.append(heading, intro, safety, currentPanel, toolbar, grid);
 
+      // Mutable page state.
       let allPets: RendererPetItem[] = [];
-      const imageCache = new Map<string, string>(); // id -> dataUrl / url
-      // 每个 pet 的操作状态机：installing / uninstalling / selecting / failed（含错误与失败操作类型）
-      const petStates = new Map<string, PetOperationState>();
-      // 渲染世代：重渲染后让在途的 preview 回调失效，避免给已分离的 DOM 节点挂动画
-      let renderEpoch = 0;
-      // 当前桌宠面板状态：选择结果 + 隐藏操作进行中 + 面板级错误（选择失败显示在卡片内）
+      const imageCache = new Map<string, string>();
+      // Per-pet operation state machine: installing / uninstalling /
+      // selecting, or failed with the failing operation and error text.
+      const cardStates = new Map<string, PetCardState>();
+      // Render generation counter: stale preview callbacks from an older
+      // grid must not attach animations to detached nodes.
+      let gridEpoch = 0;
       let currentSelection: RendererPetSelection = { id: null };
       let selectionReady = false;
       let hidePending = false;
       let panelError: string | null = null;
       let panelEpoch = 0;
-      const panelDisposers: Array<() => void> = [];
+      const panelAnimationDisposers: Array<() => void> = [];
 
       const runPetOperation = (pet: RendererPetItem, op: PetOperation) => {
         const client = getClient();
-        const current = petStates.get(pet.id);
-        // 操作进行中禁止重复触发；failed 状态允许重试
-        if (!client || (current && current.status !== "failed")) return;
-        petStates.set(pet.id, {
+        const state = cardStates.get(pet.id);
+        // Re-entrant guard: busy pets are locked, failed ones may retry.
+        if (!client || (state && state.status !== "failed")) return;
+        cardStates.set(pet.id, {
           status: op === "install" ? "installing" : "uninstalling",
         });
         renderGrid();
         const settle = (installed: boolean, failure: string | null) => {
           if (failure === null) {
-            petStates.delete(pet.id);
+            cardStates.delete(pet.id);
           } else {
-            petStates.set(pet.id, { status: "failed", op, error: failure });
+            cardStates.set(pet.id, { status: "failed", op, error: failure });
           }
-          allPets = allPets.map((p) =>
-            p.id === pet.id ? { ...p, installed } : p,
-          );
+          allPets = allPets.map((p) => (p.id === pet.id ? { ...p, installed } : p));
           renderGrid();
         };
         const onSuccess = () => {
           settle(op === "install", null);
-          // 卸载当前选中的桌宠：Host 端已自动清除持久化选择，这里同步面板与悬浮层
+          // Uninstalling the active pet: the Host already cleared the stored
+          // selection, so mirror that here in panel and badges.
           if (op === "uninstall" && currentSelection.id === pet.id) {
             applySelection({ id: null });
           }
@@ -323,27 +332,152 @@ export function createPetSettingsPage(
         }
       };
 
+      const matchesActiveTab = (pet: RendererPetItem): boolean => {
+        if (activeTab === "official" && pet.source !== "official") return false;
+        if (activeTab === "community" && pet.source !== "community") return false;
+        if (activeTab === "installed" && !pet.installed) return false;
+        return true;
+      };
+
+      const matchesQuery = (pet: RendererPetItem, query: string): boolean => {
+        if (!query) return true;
+        const haystack = [pet.displayName, pet.description || "", pet.id];
+        return haystack.some((part) => part.toLowerCase().includes(query));
+      };
+
+      // Card badges: failure notice outranks everything, then installed,
+      // then provenance; the Active badge is additive.
+      const buildBadges = (pet: RendererPetItem, state: PetCardState | undefined) => {
+        const badges = document.createElement("div");
+        badges.className = "pet-card__badges";
+        if (state?.status === "failed") {
+          const b = document.createElement("span");
+          b.className = "pet-card__badge pet-card__badge--failed";
+          b.textContent = failureLabelFor(state.op, copy);
+          badges.append(b);
+        } else if (pet.installed) {
+          const b = document.createElement("span");
+          b.className = "pet-card__badge pet-card__badge--installed";
+          b.append(createRendererSettingsIcon("check", 12), copy.installedBadge);
+          badges.append(b);
+        } else if (pet.source === "official") {
+          const b = document.createElement("span");
+          b.className = "pet-card__badge pet-card__badge--official";
+          b.textContent = copy.officialBadge;
+          badges.append(b);
+        } else if (pet.source === "community") {
+          const b = document.createElement("span");
+          b.className = "pet-card__badge pet-card__badge--community";
+          b.textContent = copy.communityBadge;
+          badges.append(b);
+        }
+        if (pet.installed && currentSelection.id === pet.id && state?.status !== "failed") {
+          const activeBadge = document.createElement("span");
+          activeBadge.className = "pet-card__badge pet-card__badge--active";
+          activeBadge.textContent = copy.activeBadge;
+          badges.append(activeBadge);
+        }
+        return badges;
+      };
+
+      const actionButton = (
+        label: string,
+        tone: "primary" | "danger" | "secondary",
+        onClick: () => void,
+        disabled = false,
+      ): HTMLButtonElement => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `pet-btn pet-btn--${tone}`;
+        btn.textContent = label;
+        btn.disabled = disabled;
+        btn.addEventListener("click", onClick);
+        return btn;
+      };
+
+      const buildActions = (pet: RendererPetItem, state: PetCardState | undefined) => {
+        const actions = document.createElement("div");
+        actions.className = "pet-card__actions";
+        if (state && state.status !== "failed") {
+          // Operation in flight: one disabled button blocks double clicks.
+          const tone = state.status === "uninstalling" ? "danger" : "primary";
+          actions.append(actionButton(busyLabelFor(state.status, copy), tone, () => {}, true));
+        } else if (state?.status === "failed") {
+          // Errors render inside the card; Retry re-runs the failed operation.
+          actions.append(actionButton(copy.retry, state.op === "uninstall" ? "danger" : "primary", () => {
+            if (state.op === "select") runSelectOperation(pet);
+            else runPetOperation(pet, state.op);
+          }));
+        } else if (pet.installed) {
+          // Installed: offer switching (the active pet shows a badge instead
+          // of a Use button) plus removal.
+          if (currentSelection.id !== pet.id) {
+            actions.append(actionButton(copy.usePet, "primary", () => runSelectOperation(pet)));
+          }
+          actions.append(actionButton(copy.uninstall, "danger", () => runPetOperation(pet, "uninstall")));
+        } else {
+          actions.append(actionButton(copy.install, "primary", () => runPetOperation(pet, "install")));
+        }
+        return actions;
+      };
+
+      const attachCardArt = (
+        pet: RendererPetItem,
+        sprite: HTMLElement,
+        epoch: number,
+      ): void => {
+        const cached = imageCache.get(pet.id);
+        if (cached) {
+          cardAnimationDisposers.push(mountSpriteAnimation(sprite, cached, pet.spriteVersionNumber));
+          return;
+        }
+        if (pet.spritesheetUrl) {
+          imageCache.set(pet.id, pet.spritesheetUrl);
+          cardAnimationDisposers.push(
+            mountSpriteAnimation(sprite, pet.spritesheetUrl, pet.spriteVersionNumber),
+          );
+          return;
+        }
+        // Fallback preview path: static poster if present, otherwise fetch a
+        // base64 preview through the client.
+        const showStatic = (): void => {
+          if (!pet.previewUrl) return;
+          sprite.style.backgroundImage = `url("${pet.previewUrl}")`;
+          sprite.style.backgroundSize = "contain";
+          sprite.style.backgroundPosition = "center";
+        };
+        const client = getClient();
+        if (!client) {
+          showStatic();
+          return;
+        }
+        void client.preview(pet.id).then(
+          (res) => {
+            if (epoch !== gridEpoch || !sprite.isConnected) return;
+            if (res && res.dataBase64) {
+              const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
+              imageCache.set(pet.id, dataUrl);
+              cardAnimationDisposers.push(
+                mountSpriteAnimation(sprite, dataUrl, pet.spriteVersionNumber),
+              );
+            }
+          },
+          () => {
+            if (epoch !== gridEpoch || !sprite.isConnected) return;
+            showStatic();
+          },
+        );
+      };
+
       const renderGrid = () => {
-        renderEpoch += 1;
-        const epoch = renderEpoch;
-        // Clear previous animations
-        for (const d of disposers) d();
-        disposers.length = 0;
+        gridEpoch += 1;
+        const epoch = gridEpoch;
+        for (const dispose of cardAnimationDisposers) dispose();
+        cardAnimationDisposers.length = 0;
         grid.replaceChildren();
 
         const query = searchQuery.trim().toLowerCase();
-        const filtered = allPets.filter((pet) => {
-          if (activeTab === "official" && pet.source !== "official") return false;
-          if (activeTab === "community" && pet.source !== "community") return false;
-          if (activeTab === "installed" && !pet.installed) return false;
-          if (query) {
-            const matchesName = pet.displayName.toLowerCase().includes(query);
-            const matchesDesc = (pet.description || "").toLowerCase().includes(query);
-            const matchesId = pet.id.toLowerCase().includes(query);
-            if (!matchesName && !matchesDesc && !matchesId) return false;
-          }
-          return true;
-        });
+        const filtered = allPets.filter((pet) => matchesActiveTab(pet) && matchesQuery(pet, query));
 
         if (filtered.length === 0) {
           const empty = document.createElement("div");
@@ -354,147 +488,50 @@ export function createPetSettingsPage(
         }
 
         for (const pet of filtered) {
-          const opState = petStates.get(pet.id);
+          const state = cardStates.get(pet.id);
           const card = document.createElement("article");
           card.className = "pet-card";
           card.dataset.petId = pet.id;
           card.dataset.installed = String(pet.installed);
-          if (opState) card.dataset.state = opState.status;
+          if (state) card.dataset.state = state.status;
 
-          // Stage
           const stage = document.createElement("div");
           stage.className = "pet-card__stage";
-
           const sprite = document.createElement("div");
           sprite.className = "pet-card__sprite";
           stage.append(sprite);
 
-          // Body
           const body = document.createElement("div");
           body.className = "pet-card__body";
 
           const cardHeader = document.createElement("div");
           cardHeader.className = "pet-card__header";
-
           const title = document.createElement("strong");
           title.className = "pet-card__title";
           title.textContent = pet.displayName;
-
-          const badges = document.createElement("div");
-          badges.className = "pet-card__badges";
-
-          if (opState?.status === "failed") {
-            const b = document.createElement("span");
-            b.className = "pet-card__badge pet-card__badge--failed";
-            b.textContent = petOperationFailedLabel(opState.op, copy);
-            badges.append(b);
-          } else if (pet.installed) {
-            const b = document.createElement("span");
-            b.className = "pet-card__badge pet-card__badge--installed";
-            b.append(createRendererSettingsIcon("check", 12), copy.installedBadge);
-            badges.append(b);
-          } else if (pet.source === "official") {
-            const b = document.createElement("span");
-            b.className = "pet-card__badge pet-card__badge--official";
-            b.textContent = copy.officialBadge;
-            badges.append(b);
-          } else if (pet.source === "community") {
-            const b = document.createElement("span");
-            b.className = "pet-card__badge pet-card__badge--community";
-            b.textContent = copy.communityBadge;
-            badges.append(b);
-          }
-
-          if (pet.installed && currentSelection.id === pet.id && opState?.status !== "failed") {
-            const activeBadge = document.createElement("span");
-            activeBadge.className = "pet-card__badge pet-card__badge--active";
-            activeBadge.textContent = copy.activeBadge;
-            badges.append(activeBadge);
-          }
-
-          cardHeader.append(title, badges);
+          cardHeader.append(title, buildBadges(pet, state));
 
           const desc = document.createElement("p");
           desc.className = "pet-card__description";
           desc.textContent = pet.description || "";
 
-          // Footer & Actions
           const footer = document.createElement("div");
           footer.className = "pet-card__footer";
-
           const hint = document.createElement("span");
           hint.className = "pet-card__dir-hint";
           hint.textContent = copy.tip;
+          footer.append(hint, buildActions(pet, state));
 
-          const actions = document.createElement("div");
-          actions.className = "pet-card__actions";
-
-          if (opState && opState.status !== "failed") {
-            // 操作进行中：按钮禁用，防止重复点击（runPetOperation/runSelectOperation 内还有 petStates 防重入）
-            const busyBtn = document.createElement("button");
-            busyBtn.type = "button";
-            busyBtn.className =
-              opState.status === "uninstalling"
-                ? "pet-btn pet-btn--danger"
-                : "pet-btn pet-btn--primary";
-            busyBtn.disabled = true;
-            busyBtn.textContent = petOperationBusyLabel(opState.status, copy);
-            actions.append(busyBtn);
-          } else if (opState?.status === "failed") {
-            // 失败后错误显示在卡片内，重试按钮恢复对应操作
-            const retryBtn = document.createElement("button");
-            retryBtn.type = "button";
-            retryBtn.className =
-              opState.op === "uninstall"
-                ? "pet-btn pet-btn--danger"
-                : "pet-btn pet-btn--primary";
-            retryBtn.textContent = copy.retry;
-            retryBtn.addEventListener("click", () => {
-              if (opState.op === "select") runSelectOperation(pet);
-              else runPetOperation(pet, opState.op);
-            });
-            actions.append(retryBtn);
-          } else if (pet.installed) {
-            // 已安装：可切换为当前桌宠（已在使用中的不再显示 Use，用 Active 徽标表达）
-            if (currentSelection.id !== pet.id) {
-              const useBtn = document.createElement("button");
-              useBtn.type = "button";
-              useBtn.className = "pet-btn pet-btn--primary";
-              useBtn.textContent = copy.usePet;
-              useBtn.addEventListener("click", () => runSelectOperation(pet));
-              actions.append(useBtn);
-            }
-            const uninstallBtn = document.createElement("button");
-            uninstallBtn.type = "button";
-            uninstallBtn.className = "pet-btn pet-btn--danger";
-            uninstallBtn.textContent = copy.uninstall;
-            uninstallBtn.addEventListener("click", () =>
-              runPetOperation(pet, "uninstall"),
-            );
-            actions.append(uninstallBtn);
-          } else {
-            const installBtn = document.createElement("button");
-            installBtn.type = "button";
-            installBtn.className = "pet-btn pet-btn--primary";
-            installBtn.textContent = copy.install;
-            installBtn.addEventListener("click", () =>
-              runPetOperation(pet, "install"),
-            );
-            actions.append(installBtn);
-          }
-
-          footer.append(hint, actions);
-
-          // 操作状态/错误显示在卡片内（而非全局弹窗）
-          if (opState?.status === "failed") {
+          // Operation feedback lives inside the card, not in a global dialog.
+          if (state?.status === "failed") {
             const errorBox = document.createElement("div");
             errorBox.className = "pet-card__error";
-            errorBox.textContent = opState.error;
+            errorBox.textContent = state.error;
             body.append(cardHeader, desc, errorBox, footer);
-          } else if (opState) {
+          } else if (state) {
             const statusLine = document.createElement("div");
             statusLine.className = "pet-card__status";
-            statusLine.textContent = petOperationBusyLabel(opState.status, copy);
+            statusLine.textContent = busyLabelFor(state.status, copy);
             body.append(cardHeader, desc, statusLine, footer);
           } else {
             body.append(cardHeader, desc, footer);
@@ -502,56 +539,19 @@ export function createPetSettingsPage(
           card.append(stage, body);
           grid.append(card);
 
-          // Load visual asset（必须在 card 挂载后进行，setupSpriteAnimation 依赖 closest('.pet-card')）
-          const cachedImg = imageCache.get(pet.id);
-          if (cachedImg) {
-            disposers.push(
-              setupSpriteAnimation(sprite, cachedImg, pet.spriteVersionNumber),
-            );
-          } else if (pet.spritesheetUrl) {
-            imageCache.set(pet.id, pet.spritesheetUrl);
-            disposers.push(
-              setupSpriteAnimation(sprite, pet.spritesheetUrl, pet.spriteVersionNumber),
-            );
-          } else {
-            const showStaticPreview = () => {
-              if (!pet.previewUrl) return;
-              sprite.style.backgroundImage = `url("${pet.previewUrl}")`;
-              sprite.style.backgroundSize = "contain";
-              sprite.style.backgroundPosition = "center";
-            };
-            const client = getClient();
-            if (client) {
-              // Load base64 preview on demand；重渲染/卸载后丢弃过期回调，避免泄漏动画定时器
-              void client.preview(pet.id).then(
-                (res) => {
-                  if (epoch !== renderEpoch || !sprite.isConnected) return;
-                  if (res && res.dataBase64) {
-                    const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
-                    imageCache.set(pet.id, dataUrl);
-                    disposers.push(
-                      setupSpriteAnimation(sprite, dataUrl, pet.spriteVersionNumber),
-                    );
-                  }
-                },
-                () => {
-                  if (epoch !== renderEpoch || !sprite.isConnected) return;
-                  showStaticPreview();
-                },
-              );
-            } else {
-              showStaticPreview();
-            }
-          }
+          // Artwork must attach after the card is in the DOM because the
+          // animation controller walks up to .pet-card for hover events.
+          attachCardArt(pet, sprite, epoch);
         }
       };
 
-      // 当前桌宠面板渲染：空态提示 / 选中态（精灵图动画 + 名称 + 隐藏按钮），面板级错误行
+      // Current-pet panel: empty hint, or animated selection with its Clear
+      // action, plus an optional panel-level error line.
       const renderPanel = () => {
         panelEpoch += 1;
         const epoch = panelEpoch;
-        for (const d of panelDisposers) d();
-        panelDisposers.length = 0;
+        for (const dispose of panelAnimationDisposers) dispose();
+        panelAnimationDisposers.length = 0;
         currentPanel.replaceChildren();
         currentPanel.dataset.active = String(currentSelection.id !== null);
 
@@ -569,7 +569,7 @@ export function createPetSettingsPage(
           emptyWrap.append(hint);
           currentPanel.append(label, emptyWrap);
         } else {
-          const selectionId = currentSelection.id;
+          const selectedId = currentSelection.id;
           const stage = document.createElement("div");
           stage.className = "pet-current__stage";
           const sprite = document.createElement("div");
@@ -580,7 +580,7 @@ export function createPetSettingsPage(
           info.className = "pet-current__info";
           const name = document.createElement("strong");
           name.className = "pet-current__name";
-          name.textContent = currentSelection.displayName ?? selectionId;
+          name.textContent = currentSelection.displayName ?? selectedId;
           const note = document.createElement("span");
           note.className = "pet-current__note";
           note.textContent = copy.panelNote;
@@ -595,29 +595,30 @@ export function createPetSettingsPage(
 
           currentPanel.append(stage, info, hideBtn);
 
-          const attachAnimation = (imageUrl: string) => {
-            panelDisposers.push(
-              setupSpriteAnimation(sprite, imageUrl, currentSelection.spriteVersionNumber),
+          const attach = (imageUrl: string): void => {
+            panelAnimationDisposers.push(
+              mountSpriteAnimation(sprite, imageUrl, currentSelection.spriteVersionNumber),
             );
           };
-          const cachedImg = imageCache.get(selectionId);
-          if (cachedImg) {
-            attachAnimation(cachedImg);
+          const cached = imageCache.get(selectedId);
+          if (cached) {
+            attach(cached);
           } else {
             const client = getClient();
             if (client) {
-              // 与卡片一致的按需加载；面板重渲染/页面卸载后丢弃过期回调
-              void client.preview(selectionId).then(
+              // Same lazy preview loading as cards; a failed preview only
+              // costs the animation, the textual panel stays valid.
+              void client.preview(selectedId).then(
                 (res) => {
                   if (epoch !== panelEpoch || !sprite.isConnected) return;
                   if (res && res.dataBase64) {
                     const dataUrl = `data:${res.mime};base64,${res.dataBase64}`;
-                    imageCache.set(selectionId, dataUrl);
-                    attachAnimation(dataUrl);
+                    imageCache.set(selectedId, dataUrl);
+                    attach(dataUrl);
                   }
                 },
                 () => {
-                  /* 预览加载失败仅影响动画，面板文字信息仍有效 */
+                  /* preview is cosmetic here */
                 },
               );
             }
@@ -632,7 +633,7 @@ export function createPetSettingsPage(
         }
       };
 
-      // 选择变更的统一入口：更新面板与卡片徽标
+      // Single entry point for selection changes so panel and badges agree.
       const applySelection = (selection: RendererPetSelection) => {
         currentSelection = selection;
         selectionReady = true;
@@ -662,21 +663,22 @@ export function createPetSettingsPage(
 
       const runSelectOperation = (pet: RendererPetItem) => {
         const client = getClient();
-        const current = petStates.get(pet.id);
-        // 操作进行中禁止重复触发；failed 状态允许重试；当前选中的 pet 无需再选
-        if (!client || !pet.installed || (current && current.status !== "failed")) return;
+        const state = cardStates.get(pet.id);
+        if (!client || !pet.installed || (state && state.status !== "failed")) return;
         if (currentSelection.id === pet.id) return;
-        petStates.set(pet.id, { status: "selecting" });
+        cardStates.set(pet.id, { status: "selecting" });
         renderGrid();
-        // 先通过 DOM 自动化切换 Codex 官方桌宠（应用自己的点击链路，不碰账号 API），
-        // 确认成功后写入 Harness Mix 本地记录（驱动面板与徽标）
+        // First drive Codex's own pet setting through UI automation (its own
+        // click path, never the account API); only after that succeeds is the
+        // local record written, which drives this panel and the badges.
         void switchOfficialCodexPet({ id: pet.id, displayName: pet.displayName })
           .then(() => client.select(pet.id))
           .then(
             (result) => {
-              // 切换耗时数秒，页面可能已经卸载：中止后不再触碰已分离的 DOM
+              // The switch can take seconds; the page may be gone by now, so
+              // never touch detached DOM after an abort.
               if (context.signal.aborted) return;
-              petStates.delete(pet.id);
+              cardStates.delete(pet.id);
               const applied = normalizeRendererPetSelection(result);
               applySelection(
                 applied.id !== null
@@ -692,7 +694,7 @@ export function createPetSettingsPage(
             },
             (err) => {
               if (context.signal.aborted) return;
-              petStates.set(pet.id, {
+              cardStates.set(pet.id, {
                 status: "failed",
                 op: "select",
                 error: err instanceof Error ? err.message : String(err),
@@ -724,9 +726,9 @@ export function createPetSettingsPage(
         renderGrid();
       });
 
-      // Fetch catalog
+      // Initial paint with the empty panel, then hydrate from the client.
       const client = getClient();
-      renderPanel(); // 首次渲染（空态），随后拉取选择填充
+      renderPanel();
       if (client) {
         void context.runLatest(
           () => client.catalog(),
@@ -741,7 +743,8 @@ export function createPetSettingsPage(
             },
           },
         );
-        // 拉取当前选择填充面板；若期间用户已完成一次切换（panelEpoch 变化），丢弃过期结果
+        // Fill the panel from the persisted selection; if the user already
+        // interacted meanwhile (panelEpoch moved on), drop the stale result.
         const selectionFetchEpoch = panelEpoch;
         void client.selection().then(
           (result) => {
@@ -749,7 +752,9 @@ export function createPetSettingsPage(
             currentSelection = normalizeRendererPetSelection(result);
             selectionReady = true;
             renderPanel();
-            renderGrid(); // 卡片的 Active 徽标 / Use 按钮依赖 currentSelection，需随选择到位重渲染
+            // Badges and Use buttons depend on the selection, so the grid
+            // needs one more pass once it arrives.
+            renderGrid();
           },
           () => {
             if (selectionFetchEpoch !== panelEpoch) return;
@@ -760,19 +765,19 @@ export function createPetSettingsPage(
       }
 
       return () => {
-        renderEpoch += 1; // 使在途 preview 回调失效
-        panelEpoch += 1; // 面板动画与在途 selection/preview 回调一并失效
-        for (const d of panelDisposers) d();
-        panelDisposers.length = 0;
-        for (const d of disposers) d();
-        disposers.length = 0;
-        // 释放图片缓存（blob: URL 需要显式 revoke；data: URL 仅释放引用）
+        gridEpoch += 1; // invalidate in-flight card preview callbacks
+        panelEpoch += 1; // and panel animation/selection callbacks
+        for (const dispose of panelAnimationDisposers) dispose();
+        panelAnimationDisposers.length = 0;
+        for (const dispose of cardAnimationDisposers) dispose();
+        cardAnimationDisposers.length = 0;
+        // blob: URLs need an explicit revoke; data: URLs just drop the ref.
         for (const url of imageCache.values()) {
           if (url.startsWith("blob:")) {
             try {
               URL.revokeObjectURL(url);
             } catch {
-              /* 忽略撤销失败 */
+              /* revocation is best-effort */
             }
           }
         }

@@ -1,3 +1,7 @@
+// Skin catalog + runtime applier for the renderer extension. The stylesheet
+// emitted per skin is a fixed visual contract; the module code around it only
+// assembles and persists the selected skin id.
+
 import dalaoDianyanHero from "../../../../assets/skins/heige/themes/dalao-dianyan/hero.webp";
 import deepspaceDawnHero from "../../../../assets/skins/heige/themes/deepspace-dawn/hero.webp";
 import deepspaceStarHero from "../../../../assets/skins/heige/themes/deepspace-star/hero.webp";
@@ -55,6 +59,44 @@ const CODEX_STYLER_SOURCE_URL = "https://github.com/xuhuanstudio/codex-styler";
 const DREAM_SKIN_SOURCE_URL = "https://github.com/Fei-Away/Codex-Dream-Skin";
 const ANTHROPIC_THEME_SOURCE_URL = "https://github.com/miniLV/Anthropic-codex-theme";
 
+// Hero artwork tint used as the card preview; dark themes get a deeper wash.
+function heroPreviewGradient(dark: boolean): string {
+  return dark
+    ? "linear-gradient(rgb(3 7 12 / 16%), transparent)"
+    : "linear-gradient(rgb(255 255 255 / 8%), transparent)";
+}
+
+// One assembly point for every non-native entry so the frozen shape stays
+// uniform across the four provenance families below.
+function defineSkin(
+  id: Exclude<RendererSkinId, "native">,
+  name: string,
+  provenance: { readonly sourceName: string; readonly sourceUrl: string },
+  fields: {
+    readonly heroUrl: string | null;
+    readonly palette: RendererSkinDefinition["palette"];
+    readonly focus: string;
+    readonly dark: boolean;
+    readonly preview: string;
+    readonly logoUrl?: string | null;
+    readonly polaroidUrl?: string | null;
+  },
+): RendererSkinDefinition {
+  return Object.freeze({
+    id,
+    name,
+    sourceName: provenance.sourceName,
+    sourceUrl: provenance.sourceUrl,
+    heroUrl: fields.heroUrl,
+    logoUrl: fields.logoUrl ?? null,
+    polaroidUrl: fields.polaroidUrl ?? null,
+    palette: fields.palette,
+    preview: fields.preview,
+    focus: fields.focus,
+    dark: fields.dark,
+  });
+}
+
 function heigeSkin(
   id: Exclude<RendererSkinId, "native">,
   name: string,
@@ -67,11 +109,14 @@ function heigeSkin(
     polaroidUrl: null,
   },
 ): RendererSkinDefinition {
-  return Object.freeze({
-    id, name, heroUrl, palette, focus, dark, ...decorations,
-    sourceName: "HeiGe Codex Skin Studio",
-    sourceUrl: HEIGE_SOURCE_URL,
-    preview: `linear-gradient(${dark ? "rgb(3 7 12 / 16%)" : "rgb(255 255 255 / 8%)"}, transparent)`,
+  return defineSkin(id, name, { sourceName: "HeiGe Codex Skin Studio", sourceUrl: HEIGE_SOURCE_URL }, {
+    heroUrl,
+    palette,
+    focus,
+    dark,
+    preview: heroPreviewGradient(dark),
+    logoUrl: decorations.logoUrl,
+    polaroidUrl: decorations.polaroidUrl,
   });
 }
 
@@ -82,11 +127,12 @@ function codexStylerSkin(
   palette: RendererSkinDefinition["palette"],
   focus: string,
 ): RendererSkinDefinition {
-  return Object.freeze({
-    id, name, heroUrl, logoUrl: null, polaroidUrl: null, palette, focus, dark: true,
-    sourceName: "Codex Styler · CC BY 4.0",
-    sourceUrl: CODEX_STYLER_SOURCE_URL,
-    preview: "linear-gradient(rgb(3 7 12 / 16%), transparent)",
+  return defineSkin(id, name, { sourceName: "Codex Styler · CC BY 4.0", sourceUrl: CODEX_STYLER_SOURCE_URL }, {
+    heroUrl,
+    palette,
+    focus,
+    dark: true,
+    preview: heroPreviewGradient(true),
   });
 }
 
@@ -97,11 +143,12 @@ function dreamSkin(
   palette: RendererSkinDefinition["palette"],
   focus: string,
 ): RendererSkinDefinition {
-  return Object.freeze({
-    id, name, heroUrl, logoUrl: null, polaroidUrl: null, palette, focus, dark: true,
-    sourceName: "Codex Dream Skin · MIT",
-    sourceUrl: DREAM_SKIN_SOURCE_URL,
-    preview: "linear-gradient(rgb(3 7 12 / 16%), transparent)",
+  return defineSkin(id, name, { sourceName: "Codex Dream Skin · MIT", sourceUrl: DREAM_SKIN_SOURCE_URL }, {
+    heroUrl,
+    palette,
+    focus,
+    dark: true,
+    preview: heroPreviewGradient(true),
   });
 }
 
@@ -112,10 +159,11 @@ function paletteSkin(
   panel: string,
   dark: boolean,
 ): RendererSkinDefinition {
-  return Object.freeze({
-    id, name, heroUrl: null, logoUrl: null, polaroidUrl: null, palette, focus: "50% 50%", dark,
-    sourceName: "Anthropic Codex Theme · MIT",
-    sourceUrl: ANTHROPIC_THEME_SOURCE_URL,
+  return defineSkin(id, name, { sourceName: "Anthropic Codex Theme · MIT", sourceUrl: ANTHROPIC_THEME_SOURCE_URL }, {
+    heroUrl: null,
+    palette,
+    focus: "50% 50%",
+    dark,
     preview: `linear-gradient(155deg, ${palette[0]} 0 58%, ${panel} 58% 100%)`,
   });
 }
@@ -173,43 +221,51 @@ interface RendererSkinStorage {
   removeItem(key: string): void;
 }
 
-function documentSkinStorage(ownerDocument: Document): RendererSkinStorage | null {
-  try { return ownerDocument.defaultView?.localStorage ?? null; } catch { return null; }
-}
-
-function isRendererSkinId(value: string | null): value is RendererSkinId {
-  return (RENDERER_SKIN_IDS as readonly string[]).includes(value ?? "");
-}
-
 export function rendererSkinDefinition(id: RendererSkinId): RendererSkinDefinition {
   return RENDERER_SKINS.find((skin) => skin.id === id) ?? RENDERER_SKINS[0]!;
+}
+
+function skinStorageOf(ownerDocument: Document): RendererSkinStorage | null {
+  try {
+    return ownerDocument.defaultView?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isKnownSkinId(value: string | null): value is RendererSkinId {
+  return (RENDERER_SKIN_IDS as readonly string[]).includes(value ?? "");
 }
 
 export function readRendererSkin(storage?: RendererSkinStorage | null): RendererSkinId {
   try {
     const stored = storage?.getItem(RENDERER_SKIN_STORAGE_KEY) ?? null;
-    return isRendererSkinId(stored) ? stored : "native";
-  } catch { return "native"; }
+    return isKnownSkinId(stored) ? stored : "native";
+  } catch {
+    return "native";
+  }
 }
 
 export function readActiveRendererSkin(ownerDocument: Document = document): RendererSkinId {
-  const active = ownerDocument.documentElement.getAttribute(RENDERER_SKIN_ATTRIBUTE);
-  return isRendererSkinId(active) ? active : readRendererSkin(documentSkinStorage(ownerDocument));
+  const fromAttribute = ownerDocument.documentElement.getAttribute(RENDERER_SKIN_ATTRIBUTE);
+  return isKnownSkinId(fromAttribute)
+    ? fromAttribute
+    : readRendererSkin(skinStorageOf(ownerDocument));
 }
 
-function skinCss(skin: RendererSkinDefinition): string {
+function buildSkinStylesheet(skin: RendererSkinDefinition): string {
   const [surface, secondary, accent, text] = skin.palette;
-  const image = skin.heroUrl ? `url("${skin.heroUrl}")` : skin.preview;
-  const sidebarVeil = skin.dark
-    ? `color-mix(in srgb, ${surface} 91%, transparent)`
-    : `color-mix(in srgb, ${surface} 88%, transparent)`;
-  const lowerVeil = skin.dark
-    ? `color-mix(in srgb, ${surface} 68%, transparent)`
-    : `color-mix(in srgb, ${surface} 72%, transparent)`;
-  const panelOpacity = skin.dark ? "84%" : "82%";
-  const secondaryText = `color-mix(in srgb, ${text} 72%, transparent)`;
-  const tertiaryText = `color-mix(in srgb, ${text} 54%, transparent)`;
-  const logoCss = skin.logoUrl ? `
+  const mixInSurface = (ratio: string, tint = "transparent"): string =>
+    `color-mix(in srgb, ${surface} ${ratio}, ${tint})`;
+  const mixInText = (ratio: string, tint = "transparent"): string =>
+    `color-mix(in srgb, ${text} ${ratio}, ${tint})`;
+  const heroLayer = skin.heroUrl ? `url("${skin.heroUrl}")` : skin.preview;
+  const sidebarTint = mixInSurface(skin.dark ? "91%" : "88%");
+  const lowerTint = mixInSurface(skin.dark ? "68%" : "72%");
+  const panelAlpha = skin.dark ? "84%" : "82%";
+  const softInk = mixInText("72%");
+  const faintInk = mixInText("54%");
+  const logoRules = skin.logoUrl ? `
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel button[aria-haspopup="menu"][aria-label*="ChatGPT"],
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel button[aria-haspopup="menu"][aria-label*="Codex"] {
   width: min(214px, calc(100% - 12px)); height: 72px !important; margin: 4px 6px 0;
@@ -218,7 +274,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel button[aria-
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel button[aria-haspopup="menu"][aria-label*="ChatGPT"] > :where(span, svg),
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel button[aria-haspopup="menu"][aria-label*="Codex"] > :where(span, svg) { visibility: hidden !important; }
 ` : "";
-  const polaroidCss = skin.polaroidUrl ? `
+  const polaroidRules = skin.polaroidUrl ? `
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] body::after {
   content: ""; position: fixed; right: clamp(12px, 2vw, 24px); bottom: clamp(72px, 11vh, 108px);
   width: clamp(108px, 11.5vw, 168px); aspect-ratio: 2 / 3;
@@ -241,21 +297,21 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   --color-text-primary-soft-alt: ${text}; --color-text-primary-ghost: ${text};
   --color-text-primary-ghost-hover: ${text}; --color-text-primary-outline: ${text};
   --color-text-primary-outline-hover: ${text};
-  --color-text-secondary: ${secondaryText}; --color-token-text-secondary: ${secondaryText};
-  --color-text-secondary-soft: ${secondaryText}; --color-text-secondary-soft-alt: ${secondaryText};
-  --color-text-secondary-ghost: ${secondaryText}; --color-text-secondary-ghost-hover: ${text};
-  --color-text-secondary-outline: ${secondaryText}; --color-text-secondary-outline-hover: ${text};
-  --color-text-secondary-solid: ${secondaryText};
-  --color-text-tertiary: ${tertiaryText}; --color-token-text-tertiary: ${tertiaryText};
-  --color-token-description-foreground: ${tertiaryText};
+  --color-text-secondary: ${softInk}; --color-token-text-secondary: ${softInk};
+  --color-text-secondary-soft: ${softInk}; --color-text-secondary-soft-alt: ${softInk};
+  --color-text-secondary-ghost: ${softInk}; --color-text-secondary-ghost-hover: ${text};
+  --color-text-secondary-outline: ${softInk}; --color-text-secondary-outline-hover: ${text};
+  --color-text-secondary-solid: ${softInk};
+  --color-text-tertiary: ${faintInk}; --color-token-text-tertiary: ${faintInk};
+  --color-token-description-foreground: ${faintInk};
   --color-token-dropdown-foreground: ${text};
-  --app-color-text-foreground: ${text}; --app-color-text-foreground-secondary: ${secondaryText};
-  --app-color-text-foreground-tertiary: ${tertiaryText};
+  --app-color-text-foreground: ${text}; --app-color-text-foreground-secondary: ${softInk};
+  --app-color-text-foreground-tertiary: ${faintInk};
   --app-color-foreground-application-menu: ${text};
-  --app-color-text-button-secondary: ${text}; --app-color-text-button-tertiary: ${tertiaryText};
-  --wb-text-primary: ${text}; --wb-text-secondary: ${secondaryText}; --wb-text-tertiary: ${tertiaryText};
+  --app-color-text-button-secondary: ${text}; --app-color-text-button-tertiary: ${faintInk};
+  --wb-text-primary: ${text}; --wb-text-secondary: ${softInk}; --wb-text-tertiary: ${faintInk};
   --color-control-thumb-foreground: ${text};
-  --color-text-mode-toggle-inactive: ${secondaryText};
+  --color-text-mode-toggle-inactive: ${softInk};
   --color-text-user-message: ${text} !important;
   --color-surface: color-mix(in srgb, ${surface} 92%, transparent);
   --color-surface-secondary: color-mix(in srgb, ${surface} 88%, transparent);
@@ -314,7 +370,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   --wb-surface-secondary: color-mix(in srgb, ${surface} 88%, transparent);
   --wb-border: color-mix(in srgb, ${text} 16%, transparent);
   --wb-border-hover: color-mix(in srgb, ${text} 22%, transparent);
-  --vscode-foreground: ${text}; --vscode-descriptionForeground: ${secondaryText};
+  --vscode-foreground: ${text}; --vscode-descriptionForeground: ${softInk};
   --vscode-editor-foreground: ${text}; --vscode-input-foreground: ${text};
   --vscode-editor-background: ${surface}; --vscode-editorPane-background: ${surface};
   --vscode-input-background: color-mix(in srgb, ${surface} 96%, transparent);
@@ -327,7 +383,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] {
   --vscode-list-activeSelectionForeground: ${text};
   --vscode-list-inactiveSelectionBackground: color-mix(in srgb, ${accent} 16%, transparent);
   --vscode-list-inactiveSelectionForeground: ${text};
-  --background: color-mix(in srgb, ${surface} ${panelOpacity}, transparent);
+  --background: color-mix(in srgb, ${surface} ${panelAlpha}, transparent);
   --foreground: ${text}; --card: color-mix(in srgb, ${surface} 88%, transparent);
   --card-foreground: ${text}; --popover: color-mix(in srgb, ${surface} 94%, transparent);
   --popover-foreground: ${text}; --primary: ${accent}; --primary-foreground: ${surface};
@@ -354,9 +410,9 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] body > #root {
   min-height: 100vh; color: ${text} !important;
   background-color: transparent !important;
   background-image:
-    linear-gradient(90deg, ${sidebarVeil} 0 22%, transparent 46%),
-    linear-gradient(180deg, transparent 0 43%, ${lowerVeil} 100%),
-    ${image} !important;
+    linear-gradient(90deg, ${sidebarTint} 0 22%, transparent 46%),
+    linear-gradient(180deg, transparent 0 43%, ${lowerTint} 100%),
+    ${heroLayer} !important;
   background-position: left top, left top, ${skin.focus} !important;
   background-repeat: no-repeat !important;
   background-size: 100% 100%, 100% 100%, cover !important;
@@ -375,7 +431,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] .app-shell-left-panel {
   backdrop-filter: none !important;
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.bg-background, .bg-sidebar, .bg-card, .bg-token-main-surface-primary, .bg-token-sidebar-surface-primary) {
-  background: color-mix(in srgb, ${surface} ${panelOpacity}, transparent) !important;
+  background: color-mix(in srgb, ${surface} ${panelAlpha}, transparent) !important;
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(
   [data-response-annotation-conversation],
@@ -641,7 +697,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-harnessmix-settings-shell] {
   --settings-primary: ${accent}; --settings-primary-hover: color-mix(in srgb, ${accent} 82%, white);
   --settings-primary-text: ${surface};
 }
-${logoCss}${polaroidCss}
+${logoRules}${polaroidRules}
 @media (prefers-reduced-transparency: reduce) {
   html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.app-shell-left-panel, [data-response-annotation-conversation], .composer-surface-chrome, [data-user-message-bubble], [data-codex-approval-surface]) {
     background-color: ${surface} !important;
@@ -654,26 +710,35 @@ export function applyRendererSkin(
   ownerDocument: Document = document,
   storage?: RendererSkinStorage | null,
 ): RendererSkinId {
-  const resolvedStorage = storage === undefined ? documentSkinStorage(ownerDocument) : storage;
-  const currentStyle = ownerDocument.getElementById(RENDERER_SKIN_STYLE_ID);
+  // Undefined means "use whatever the document exposes"; explicit null opts
+  // out of persistence entirely.
+  const persistentStorage = storage === undefined ? skinStorageOf(ownerDocument) : storage;
+  const existingStyle = ownerDocument.getElementById(RENDERER_SKIN_STYLE_ID);
   if (id === "native") {
-    currentStyle?.remove();
+    existingStyle?.remove();
     ownerDocument.documentElement.removeAttribute(RENDERER_SKIN_ATTRIBUTE);
-    try { resolvedStorage?.removeItem(RENDERER_SKIN_STORAGE_KEY); } catch { /* visual reset succeeded */ }
+    try {
+      persistentStorage?.removeItem(RENDERER_SKIN_STORAGE_KEY);
+    } catch {
+      // The visual reset already succeeded; a failing store is not fatal.
+    }
     return id;
   }
-  const skin = rendererSkinDefinition(id);
-  const style = currentStyle ?? ownerDocument.createElement("style");
+  const style = existingStyle ?? ownerDocument.createElement("style");
   style.id = RENDERER_SKIN_STYLE_ID;
-  style.textContent = skinCss(skin);
-  if (!currentStyle) ownerDocument.head.append(style);
+  style.textContent = buildSkinStylesheet(rendererSkinDefinition(id));
+  if (!existingStyle) ownerDocument.head.append(style);
   ownerDocument.documentElement.setAttribute(RENDERER_SKIN_ATTRIBUTE, id);
-  try { resolvedStorage?.setItem(RENDERER_SKIN_STORAGE_KEY, id); } catch { /* session-only fallback */ }
+  try {
+    persistentStorage?.setItem(RENDERER_SKIN_STORAGE_KEY, id);
+  } catch {
+    // Keep the in-memory skin even when the store rejects the write.
+  }
   return id;
 }
 
 export function restoreRendererSkin(ownerWindow: Window = window): RendererSkinId {
-  const storage = documentSkinStorage(ownerWindow.document);
+  const storage = skinStorageOf(ownerWindow.document);
   const id = readRendererSkin(storage);
   if (id === "native") return id;
   return applyRendererSkin(id, ownerWindow.document, storage);

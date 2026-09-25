@@ -1,8 +1,14 @@
+// Integrations settings pages: one factory builds both the MCP page and the
+// Skills page. Both share scope controls (Harness / global / project), a
+// shared client, and — in "All Harnesses" mode — an overview with cross-
+// harness sync and distribution actions.
+
 import type { RendererSettingsPageDefinition, RendererSettingsPageMountContext } from './core.js';
 import type { RendererSettingsMessages } from './localization.js';
 import type { DroppedSkillFile, RendererIntegrationsClient, IntegrationSnapshot, IntegrationScope, ManagedServer } from '../renderer-integrations-client.js';
 
 type IntegrationPageKind = 'mcp' | 'skills';
+
 type WebkitEntry = {
   readonly isFile: boolean;
   readonly isDirectory: boolean;
@@ -10,6 +16,51 @@ type WebkitEntry = {
   file?(success: (file: File) => void, failure?: (error: DOMException) => void): void;
   createReader?(): { readEntries(success: (entries: WebkitEntry[]) => void, failure?: (error: DOMException) => void): void };
 };
+
+// File-system entries only expose their reader through repeated batch reads
+// that must be drained until an empty batch comes back.
+async function readAllDirectoryEntries(entry: WebkitEntry): Promise<WebkitEntry[]> {
+  const reader = entry.createReader?.();
+  if (!reader) return [];
+  const all: WebkitEntry[] = [];
+  while (true) {
+    const batch = await new Promise<WebkitEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) break;
+    all.push(...batch);
+  }
+  return all;
+}
+
+async function walkWebkitEntry(entry: WebkitEntry, prefix: string, output: Array<{ path: string; file: File }>): Promise<void> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) => entry.file?.(resolve, reject));
+    output.push({ path: `${prefix}${entry.name}`, file });
+    return;
+  }
+  if (entry.isDirectory) {
+    for (const child of await readAllDirectoryEntries(entry)) await walkWebkitEntry(child, `${prefix}${entry.name}/`, output);
+  }
+}
+
+// Reads files out of a drop/pick gesture, preferring the webkit directory
+// entry API so folders arrive with their relative paths; falls back to the
+// plain FileList (with webkitRelativePath when the picker provides it).
+async function collectDroppedFiles(transfer: DataTransfer | FileList): Promise<Array<{ path: string; file: File }>> {
+  const collected: Array<{ path: string; file: File }> = [];
+  const entries: WebkitEntry[] = 'items' in transfer && transfer.items.length
+    ? [...transfer.items]
+      .map(item => (item.webkitGetAsEntry?.() ?? null) as WebkitEntry | null)
+      .filter((entry): entry is WebkitEntry => entry !== null)
+    : [];
+  if (entries.length) {
+    for (const entry of entries) await walkWebkitEntry(entry, '', collected);
+  }
+  if (!collected.length) {
+    const fileList = 'files' in transfer ? transfer.files : transfer;
+    collected.push(...[...fileList].map(file => ({ path: file.webkitRelativePath || file.name, file })));
+  }
+  return collected;
+}
 
 function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: RendererSettingsMessages, getClient: () => RendererIntegrationsClient | null): RendererSettingsPageDefinition {
   const zh = messages.locale === 'zh-CN';
@@ -23,6 +74,8 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
       const lifecycle = { signal: context.signal, runLatest: context.runLatest, get disposed() { return context.signal.aborted; } };
       const doc = content.ownerDocument;
       const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const node = doc.createElement(tag); node.textContent = text; return node; };
+
+      // Page scaffold: title, description, scope controls, status line, body.
       const title = el('h2', kind === 'mcp' ? 'MCP' : 'Skills');
       const note = el('p', kind === 'mcp'
         ? tr('按 Harness 管理 MCP 服务器。配置会在下次打开原生会话时传入。', 'Manage MCP servers per Harness. Configuration is passed to the next native session.')
@@ -31,13 +84,20 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
       const controls = el('div'); controls.className = 'settings-integrations-controls';
       const harness = el('select'); harness.setAttribute('aria-label', 'Harness');
       const level = el('select'); level.setAttribute('aria-label', tr('作用范围', 'Scope'));
-      for (const [value, label] of [['global', tr('全局', 'Global')], ['project', tr('项目', 'Project')]]) { const option = el('option', label); option.value = value!; level.append(option); }
+      const scopeOptions: Array<[string, string]> = [['global', tr('全局', 'Global')], ['project', tr('项目', 'Project')]];
+      for (const [value, label] of scopeOptions) { const option = el('option', label); option.value = value; level.append(option); }
       const cwd = el('input'); cwd.placeholder = tr('项目绝对路径', 'Absolute project path'); cwd.setAttribute('aria-label', cwd.placeholder); cwd.hidden = true;
       const refreshButton = el('button', tr('刷新', 'Refresh')); refreshButton.type = 'button'; refreshButton.className = 'settings-command-button settings-command-button--secondary';
       const status = el('p'); status.className = 'settings-integrations-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
       const body = el('div'); body.className = 'settings-integrations-body';
+
       let busy = false;
+
       const selectedScope = (): IntegrationScope => ({ harnessId: harness.value, scope: level.value === 'project' ? 'project' : 'global', ...(level.value === 'project' ? { cwd: cwd.value.trim() } : {}) });
+      const currentScopeChoice = (): { scopeType: 'global' | 'project'; currentCwd: string | undefined } => ({
+        scopeType: level.value === 'project' ? 'project' : 'global',
+        currentCwd: level.value === 'project' ? cwd.value.trim() : undefined,
+      });
       const client = () => { const value = getClient(); if (!value) throw new Error(tr('Host 尚未连接，请连接后刷新。', 'Host is not connected. Connect and refresh.')); return value; };
       const fail = (error: unknown) => { status.textContent = error instanceof Error ? error.message : String(error); status.setAttribute('role', 'alert'); };
       const setBusy = (value: boolean) => {
@@ -49,6 +109,9 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
         const node = el('button', label); node.type = 'button'; node.className = `settings-command-button ${primary ? 'settings-command-button--primary' : 'settings-command-button--secondary'}`;
         node.addEventListener('click', action, { signal: lifecycle.signal }); return node;
       };
+
+      // Every write goes through one of these two runners so busy state,
+      // refresh and the saved toast stay consistent.
       const mutate = async (operation: (value: RendererIntegrationsClient, selected: IntegrationScope) => Promise<unknown>) => {
         if (busy) return;
         const selected = selectedScope(); setBusy(true); status.textContent = tr('正在保存…', 'Saving…'); status.setAttribute('role', 'status');
@@ -65,22 +128,14 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           if (!lifecycle.disposed) { setBusy(false); await refresh(); status.textContent = message || tr('已保存，下次打开原生会话时生效。', 'Saved. Applies on the next native session open.'); }
         } catch (error) { if (!lifecycle.disposed) { setBusy(false); fail(error); } }
       };
+
       const bytesToBase64 = (buffer: ArrayBuffer) => {
         const bytes = new Uint8Array(buffer); let binary = '';
         for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
         return btoa(binary);
       };
-      const fileFromEntry = (entry: WebkitEntry) => new Promise<File>((resolve, reject) => entry.file?.(resolve, reject));
-      const entriesFromReader = async (entry: WebkitEntry) => {
-        const reader = entry.createReader?.(); if (!reader) return [];
-        const all: WebkitEntry[] = [];
-        while (true) { const batch = await new Promise<WebkitEntry[]>((resolve, reject) => reader.readEntries(resolve, reject)); if (!batch.length) break; all.push(...batch); }
-        return all;
-      };
-      const walkEntry = async (entry: WebkitEntry, prefix: string, output: Array<{ path: string; file: File }>) => {
-        if (entry.isFile) { output.push({ path: `${prefix}${entry.name}`, file: await fileFromEntry(entry) }); return; }
-        if (entry.isDirectory) for (const child of await entriesFromReader(entry)) await walkEntry(child, `${prefix}${entry.name}/`, output);
-      };
+
+      // Validates and normalizes a dropped skill into { name, files }.
       const parseDroppedSkills = async (incoming: Array<{ path: string; file: File }>) => {
         if (!incoming.length) throw new Error(tr('没有读取到文件。', 'No files were read.'));
         if (incoming.length > 500 || incoming.reduce((sum, item) => sum + item.file.size, 0) > 10 * 1024 * 1024) throw new Error(tr('技能超过 10 MB 或 500 个文件。', 'Skill exceeds 10 MB or 500 files.'));
@@ -104,14 +159,19 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
         for (const item of normalized) files.push({ path: item.path.replaceAll('\\', '/'), contentBase64: bytesToBase64(await item.file.arrayBuffer()) });
         return { name, files };
       };
+
       const field = (form: HTMLElement, label: string, node: HTMLElement) => { const wrap = el('label', label); wrap.className = 'settings-integrations-field'; wrap.append(node); form.append(wrap); };
 
+      // When the overview sends the user into a specific harness editor.
       let targetEditServerName: string | undefined = undefined;
       const editInHarness = (harnessId: string, serverName?: string) => {
         harness.value = harnessId;
         targetEditServerName = serverName;
         void refresh();
       };
+
+      // Copies a server definition to other harnesses: id stripped, transport
+      // fields normalized by type.
       const toManagedForCopy = (s: Partial<ManagedServer> & { name: string; enabled?: boolean }, newEnabled?: boolean): ManagedServer => {
         const isHttp = s.transportType === 'streamable_http' || (typeof s.url === 'string' && s.url.trim().length > 0);
         if (isHttp) {
@@ -137,12 +197,15 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
         };
       };
 
+      const TRASH_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
       const renderMcp = (snapshot: IntegrationSnapshot) => {
         const toolbar = el('div'); toolbar.className = 'settings-integrations-toolbar';
         const search = el('input'); search.type = 'search'; search.placeholder = tr('搜索 MCP 服务器', 'Search MCP servers'); search.setAttribute('aria-label', search.placeholder);
         const list = el('div'); list.className = 'settings-integrations-list';
         const editor = el('div'); editor.className = 'settings-mcp-editor'; editor.hidden = true;
         const showList = () => { editor.hidden = true; list.hidden = false; toolbar.hidden = false; };
+
         const showEditor = (server?: IntegrationSnapshot['servers'][number]) => {
           editor.replaceChildren(); editor.hidden = false; list.hidden = true; toolbar.hidden = true;
           const heading = el('div'); heading.className = 'settings-integrations-editor-head';
@@ -161,14 +224,15 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                 if (!lifecycle.disposed) showList();
               });
             });
-            uninstallBtn.classList.add('settings-command-button--danger');
+            uninstallBtn.className = 'settings-command-button settings-command-button--secondary settings-command-button--danger';
             heading.append(uninstallBtn);
           }
 
+          // Small trash button used by every removable row below.
           const createTrashBtn = (onRemove: () => void) => {
             const btn = el('button'); btn.type = 'button'; btn.className = 'settings-mcp-icon-btn';
             btn.setAttribute('aria-label', tr('移除', 'Remove')); btn.title = tr('移除', 'Remove');
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+            btn.innerHTML = TRASH_SVG;
             btn.addEventListener('click', onRemove);
             return btn;
           };
@@ -181,6 +245,8 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           name.placeholder = 'MCP server name'; name.value = server?.name ?? '';
           field(basicCard, tr('名称', 'Name'), name);
 
+          // Type switch: locked for existing servers (they must uninstall
+          // first, since transports are not convertible).
           const typeField = el('div'); typeField.className = 'settings-integrations-field';
           typeField.append(el('span', tr('类型', 'Type')));
           const toggle = el('div'); toggle.className = 'settings-mcp-type-toggle';
@@ -208,7 +274,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
             row.append(input, createTrashBtn(() => row.remove())); argsList.append(row);
           };
           for (const value of (server?.args?.length ? server.args : (transportType === 'stdio' ? [''] : []))) addArg(value);
-          const addArgBtn = button(tr('＋ 添加参数', '+ Add argument'), () => addArg()); addArgBtn.classList.add('settings-mcp-add-arg');
+          const addArgBtn = button(tr('＋ 添加参数', '+ Add argument'), () => addArg()); addArgBtn.className = 'settings-command-button settings-command-button--secondary settings-mcp-add-arg';
           argsField.append(argsList, addArgBtn); stdioSection.append(argsField);
 
           const envField = el('div'); envField.className = 'settings-integrations-field'; envField.append(el('span', tr('环境变量', 'Environment variables')));
@@ -220,7 +286,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
             row.append(keyInput, valInput, createTrashBtn(() => row.remove())); envList.append(row);
           };
           if (server?.env) { for (const [k, v] of Object.entries(server.env)) addEnv(k, String(v ?? '')); }
-          const addEnvBtn = button(tr('＋ 添加环境变量', '+ Add environment variable'), () => addEnv()); addEnvBtn.classList.add('settings-mcp-add-arg');
+          const addEnvBtn = button(tr('＋ 添加环境变量', '+ Add environment variable'), () => addEnv()); addEnvBtn.className = 'settings-command-button settings-command-button--secondary settings-mcp-add-arg';
           envField.append(envList, addEnvBtn); stdioSection.append(envField);
 
           const envPassField = el('div'); envPassField.className = 'settings-integrations-field'; envPassField.append(el('span', tr('环境变量传递', 'Environment variable passthrough')));
@@ -231,7 +297,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
             row.append(input, createTrashBtn(() => row.remove())); envPassList.append(row);
           };
           if (server?.env_vars) { for (const v of server.env_vars) addEnvPass(v); }
-          const addEnvPassBtn = button(tr('＋ 添加变量', '+ Add variable'), () => addEnvPass()); addEnvPassBtn.classList.add('settings-mcp-add-arg');
+          const addEnvPassBtn = button(tr('＋ 添加变量', '+ Add variable'), () => addEnvPass()); addEnvPassBtn.className = 'settings-command-button settings-command-button--secondary settings-mcp-add-arg';
           envPassField.append(envPassList, addEnvPassBtn); stdioSection.append(envPassField);
 
           const cwd = el('input'); cwd.placeholder = '~/code'; cwd.value = server?.cwd ?? '';
@@ -253,7 +319,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
             row.append(keyInput, valInput, createTrashBtn(() => row.remove())); headersList.append(row);
           };
           if (server?.http_headers) { for (const [k, v] of Object.entries(server.http_headers)) addHeader(k, String(v ?? '')); }
-          const addHeaderBtn = button(tr('＋ 添加标头', '+ Add header'), () => addHeader()); addHeaderBtn.classList.add('settings-mcp-add-arg');
+          const addHeaderBtn = button(tr('＋ 添加标头', '+ Add header'), () => addHeader()); addHeaderBtn.className = 'settings-command-button settings-command-button--secondary settings-mcp-add-arg';
           headersField.append(headersList, addHeaderBtn); httpSection.append(headersField);
 
           const envHeadersField = el('div'); envHeadersField.className = 'settings-integrations-field'; envHeadersField.append(el('span', tr('来自环境变量的标头', 'Headers from environment variables')));
@@ -265,7 +331,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
             row.append(keyInput, valInput, createTrashBtn(() => row.remove())); envHeadersList.append(row);
           };
           if (server?.env_http_headers) { for (const [k, v] of Object.entries(server.env_http_headers)) addEnvHeader(k, String(v ?? '')); }
-          const addEnvHeaderBtn = button(tr('＋ 添加变量', '+ Add variable'), () => addEnvHeader()); addEnvHeaderBtn.classList.add('settings-mcp-add-arg');
+          const addEnvHeaderBtn = button(tr('＋ 添加变量', '+ Add variable'), () => addEnvHeader()); addEnvHeaderBtn.className = 'settings-command-button settings-command-button--secondary settings-mcp-add-arg';
           envHeadersField.append(envHeadersList, addEnvHeaderBtn); httpSection.append(envHeadersField);
 
           const updateTypeView = () => {
@@ -341,6 +407,8 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           }, { signal: lifecycle.signal });
           editor.append(heading, form); name.focus();
         };
+
+        // Deep link from the overview into this harness's editor.
         if (targetEditServerName) {
           const target = targetEditServerName === '__new__' ? undefined : snapshot.servers.find(s => s.name === targetEditServerName);
           targetEditServerName = undefined;
@@ -469,8 +537,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           modal.remove();
           if (!selectedHarnesses.length) return;
           void mutateCustom(async c => {
-            const scopeType = level.value === 'project' ? 'project' : 'global';
-            const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+            const { scopeType, currentCwd } = currentScopeChoice();
             const successes: string[] = [];
             const errors: string[] = [];
             const cleanConfig = toManagedForCopy(server);
@@ -555,6 +622,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
 
         form.append(stdioCard, httpCard);
 
+        // Harness checklist with a select-all shortcut.
         const targetSection = el('div'); targetSection.className = 'settings-integrations-form--card';
         const targetHead = el('div');
         targetHead.style.display = 'flex'; targetHead.style.justifyContent = 'space-between'; targetHead.style.alignItems = 'center'; targetHead.style.marginBottom = '8px';
@@ -639,8 +707,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           modal.remove();
 
           void mutateCustom(async c => {
-            const scopeType = level.value === 'project' ? 'project' : 'global';
-            const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+            const { scopeType, currentCwd } = currentScopeChoice();
             const successes: string[] = [];
             const errors: string[] = [];
             for (const targetId of selectedHarnesses) {
@@ -812,8 +879,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                     const actions = el('div'); actions.className = 'settings-skills-item-actions settings-mcp-item-actions';
                     actions.append(button(s.enabled ? tr('停用', 'Disable') : tr('启用', 'Enable'), () => {
                       void mutateCustom(async c => {
-                        const scopeType = level.value === 'project' ? 'project' : 'global';
-                        const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                        const { scopeType, currentCwd } = currentScopeChoice();
                         await c.saveMcp({
                           harnessId: item.harness.id,
                           scope: scopeType,
@@ -895,8 +961,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                 for (const missing of missingHarnesses) {
                   const installBtn = button(`+ ${missing.harness.name}`, () => {
                     void mutateCustom(async c => {
-                      const scopeType = level.value === 'project' ? 'project' : 'global';
-                      const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                      const { scopeType, currentCwd } = currentScopeChoice();
                       await c.saveMcp({
                         harnessId: missing.harness.id,
                         scope: scopeType,
@@ -912,8 +977,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                 if (missingHarnesses.length > 1) {
                   const installAllBtn = button(tr('一键同步到全部支持的 Harness', 'Sync to all supported'), () => {
                     void mutateCustom(async c => {
-                      const scopeType = level.value === 'project' ? 'project' : 'global';
-                      const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                      const { scopeType, currentCwd } = currentScopeChoice();
                       const successes: string[] = [];
                       for (const missing of missingHarnesses) {
                         try {
@@ -924,7 +988,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                             server: toManagedForCopy(firstServer),
                           });
                           successes.push(missing.harness.name);
-                        } catch { /* skip */ }
+                        } catch { /* skip unreachable harnesses */ }
                       }
                       return tr(`已将 MCP【${serverName}】同步到：${successes.join('、')}。`, `Synced [${serverName}] to: ${successes.join(', ')}.`);
                     });
@@ -1017,8 +1081,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
           modal.remove();
           if (!selectedHarnesses.length) return;
           void mutateCustom(async c => {
-            const scopeType = level.value === 'project' ? 'project' : 'global';
-            const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+            const { scopeType, currentCwd } = currentScopeChoice();
             const successes: string[] = [];
             const errors: string[] = [];
             for (const targetId of selectedHarnesses) {
@@ -1064,16 +1127,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
 
         const receiveFiles = async (transfer: DataTransfer | FileList) => {
           try {
-            let incoming: Array<{ path: string; file: File }> = [];
-            if ('items' in transfer && transfer.items.length) {
-              const entries: WebkitEntry[] = [...transfer.items]
-                .map(item => (item.webkitGetAsEntry?.() ?? null) as WebkitEntry | null)
-                .filter((entry): entry is WebkitEntry => entry !== null);
-              if (entries.length) for (const entry of entries) await walkEntry(entry, '', incoming);
-            }
-            const fileList = 'files' in transfer ? transfer.files : transfer;
-            if (!incoming.length) incoming = [...fileList].map(file => ({ path: file.webkitRelativePath || file.name, file }));
-            await installFiles(incoming);
+            await installFiles(await collectDroppedFiles(transfer));
           } catch (error) { fail(error); }
         };
 
@@ -1111,6 +1165,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
         const dropTitle = el('strong', tr('拖拽技能到这里，一键分发安装', 'Drop a skill here to distribute and install'));
         const dropHint = el('span', tr('支持单个 Markdown 文件或包含 SKILL.md 的文件夹 · 自动安装至所选 Harness', 'Supports one Markdown file or folder with SKILL.md · Installs to target Harnesses'));
 
+        // Distribution target selector pinned into the dropzone.
         const targetRow = el('div'); targetRow.className = 'settings-skills-target-row';
         const targetLabel = el('span', tr('安装目标：', 'Target: '));
         const targetSelect = el('select'); targetSelect.setAttribute('aria-label', tr('选择目标 Harness', 'Select target Harness'));
@@ -1131,19 +1186,10 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
 
         const receiveOverviewFiles = async (transfer: DataTransfer | FileList) => {
           try {
-            let incoming: Array<{ path: string; file: File }> = [];
-            if ('items' in transfer && transfer.items.length) {
-              const entries: WebkitEntry[] = [...transfer.items]
-                .map(item => (item.webkitGetAsEntry?.() ?? null) as WebkitEntry | null)
-                .filter((entry): entry is WebkitEntry => entry !== null);
-              if (entries.length) for (const entry of entries) await walkEntry(entry, '', incoming);
-            }
-            const fileList = 'files' in transfer ? transfer.files : transfer;
-            if (!incoming.length) incoming = [...fileList].map(file => ({ path: file.webkitRelativePath || file.name, file }));
+            const incoming = await collectDroppedFiles(transfer);
             const parsed = await parseDroppedSkills(incoming);
             await mutateCustom(async c => {
-              const scopeType = level.value === 'project' ? 'project' : 'global';
-              const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+              const { scopeType, currentCwd } = currentScopeChoice();
               const targets = targetSelect.value === '__all__'
                 ? items.filter(i => i.harness.skills).map(i => i.harness)
                 : items.filter(i => i.harness.id === targetSelect.value).map(i => i.harness);
@@ -1262,8 +1308,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                   if (s.writable) {
                     actions.append(button(s.enabled ? tr('停用', 'Disable') : tr('恢复', 'Restore'), () => {
                       void mutateCustom(async c => {
-                        const scopeType = level.value === 'project' ? 'project' : 'global';
-                        const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                        const { scopeType, currentCwd } = currentScopeChoice();
                         await c.changeSkill({
                           harnessId: item.harness.id,
                           scope: scopeType,
@@ -1327,8 +1372,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                 for (const missing of missingHarnesses) {
                   const installBtn = button(`+ ${missing.harness.name}`, () => {
                     void mutateCustom(async c => {
-                      const scopeType = level.value === 'project' ? 'project' : 'global';
-                      const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                      const { scopeType, currentCwd } = currentScopeChoice();
                       await c.changeSkill({
                         harnessId: missing.harness.id,
                         scope: scopeType,
@@ -1346,8 +1390,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                 if (missingHarnesses.length > 1) {
                   const installAllBtn = button(tr('一键同步到全部', 'Sync to all'), () => {
                     void mutateCustom(async c => {
-                      const scopeType = level.value === 'project' ? 'project' : 'global';
-                      const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+                      const { scopeType, currentCwd } = currentScopeChoice();
                       const successes: string[] = [];
                       for (const missing of missingHarnesses) {
                         try {
@@ -1360,7 +1403,7 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
                             action: 'install',
                           });
                           successes.push(missing.harness.name);
-                        } catch { /* skip */ }
+                        } catch { /* skip unreachable harnesses */ }
                       }
                       return tr(`已将【${skillName}】同步安装到：${successes.join('、')}。`, `Synced [${skillName}] to: ${successes.join(', ')}.`);
                     });
@@ -1408,15 +1451,17 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
       };
 
       const render = (snapshot: IntegrationSnapshot) => { body.replaceChildren(); if (kind === 'mcp') renderMcp(snapshot); else renderSkills(snapshot); };
+
       const refresh = async () => {
         if (busy || lifecycle.disposed) return;
         if (level.value === 'project' && !cwd.value.trim()) { body.replaceChildren(); status.textContent = tr('填写项目路径后即可读取。', 'Enter the project path to continue.'); cwd.focus(); return; }
         setBusy(true); status.textContent = tr('正在读取…', 'Loading…'); status.setAttribute('role', 'status');
         if (harness.value === '__all__') {
+          // Overview mode: gather every harness's snapshot, tolerating
+          // individual failures so one broken harness doesn't blank the page.
           await lifecycle.runLatest(async () => {
             const catalog = await client().integrationCatalog();
-            const scopeType = level.value === 'project' ? 'project' : 'global';
-            const currentCwd = level.value === 'project' ? cwd.value.trim() : undefined;
+            const { scopeType, currentCwd } = currentScopeChoice();
             const items = await Promise.all(
               catalog.harnesses.map(async h => {
                 try {
@@ -1449,11 +1494,14 @@ function createIntegrationSettingsPage(kind: IntegrationPageKind, messages: Rend
         }
         if (!lifecycle.disposed) setBusy(false);
       };
+
       refreshButton.addEventListener('click', () => { void refresh(); }, { signal: lifecycle.signal });
       controls.append(harness, level, cwd, refreshButton); content.append(title, note, controls, status, body);
       harness.addEventListener('change', () => { void refresh(); }, { signal: lifecycle.signal });
       level.addEventListener('change', () => { cwd.hidden = level.value !== 'project'; void refresh(); }, { signal: lifecycle.signal });
       cwd.addEventListener('change', () => { void refresh(); }, { signal: lifecycle.signal });
+
+      // Populate the harness selector, then run the first load.
       void lifecycle.runLatest(() => client().integrationCatalog(), { success: data => {
         const allOption = el('option', tr('全部 Harness（总览）', 'All Harnesses (Overview)'));
         allOption.value = '__all__';

@@ -10,51 +10,60 @@ import {
 import { createRendererSettingsIcon } from "./icons.js";
 import type { RendererSettingsMessages } from "./localization.js";
 
+// Sequence source for the per-account reset-details row ids; module-level so
+// ids stay unique across re-renders within one settings session.
 let resetDetailsSequence = 0;
 
 export function isCodexAccountAuthenticated(account: CodexAccountSummary): boolean {
   return account.authenticated ?? Boolean(account.email);
 }
 
+// Marketing label for a Codex plan type; unknown/absent plans stay silent.
 function accountPlanLabel(planType: CodexAccountSummary["planType"]): string | null {
   if (!planType || planType === "unknown") return null;
-  if (planType === "free") return "Free";
-  if (planType === "go") return "Go";
-  if (planType === "plus") return "Plus";
-  if (planType === "pro") return "Pro 20x";
-  if (planType === "prolite") return "Pro 5x";
-  if (planType === "team") return "Team";
-  if (planType === "self_serve_business_prolite") return "Business Pro Lite";
-  if (planType === "self_serve_business_usage_based") return "Business";
-  if (planType === "business") return "Business";
-  if (planType === "edu") return "Edu";
-  if (planType === "edu_plus") return "Edu Plus";
-  if (planType === "edu_pro") return "Edu Pro";
-  return "Enterprise";
+  const labels: Record<string, string> = {
+    free: "Free",
+    go: "Go",
+    plus: "Plus",
+    pro: "Pro 20x",
+    prolite: "Pro 5x",
+    team: "Team",
+    self_serve_business_prolite: "Business Pro Lite",
+    self_serve_business_usage_based: "Business",
+    business: "Business",
+    edu: "Edu",
+    edu_plus: "Edu Plus",
+    edu_pro: "Edu Pro",
+  };
+  return labels[planType] ?? "Enterprise";
 }
 
-/** Preserve keyboard position when an async update replaces the table body. */
+/**
+ * Captures where keyboard focus sits inside the account table so it can be
+ * restored after an async update swaps out the table body.
+ */
 export function accountListFocusRestorer(list: HTMLElement, fallback: HTMLElement): () => void {
   const active = (list.getRootNode() as Document | ShadowRoot).activeElement;
   if (!active || !list.contains(active)) return () => undefined;
-  const key = active.getAttribute("data-account-focus");
+  const focusKey = active.getAttribute("data-account-focus");
   const accountId = active.closest<HTMLElement>(".settings-account-row")?.dataset.accountId;
   return () => {
-    const target = key
-      ? list.querySelector<HTMLElement>(`[data-account-focus="${CSS.escape(key)}"]`)
+    const sameControl = focusKey
+      ? list.querySelector<HTMLElement>(`[data-account-focus="${CSS.escape(focusKey)}"]`)
       : null;
-    if (target && !target.matches(":disabled")) {
-      target.focus({ preventScroll: true });
+    if (sameControl && !sameControl.matches(":disabled")) {
+      sameControl.focus({ preventScroll: true });
       return;
     }
-    // An action may be disabled while pending or disappear after success.
-    // Keep focus with its Account; use the page fallback only if that row is gone.
-    const row = accountId
+    // The focused action may be temporarily disabled or removed after its
+    // action succeeded: keep focus on the same Account row when it still
+    // exists, otherwise hand focus to the page-level fallback.
+    const sameRow = accountId
       ? list.querySelector<HTMLElement>(
           `.settings-account-row[data-account-id="${CSS.escape(accountId)}"]`,
         )
       : null;
-    (row ?? fallback).focus({ preventScroll: true });
+    (sameRow ?? fallback).focus({ preventScroll: true });
   };
 }
 
@@ -63,7 +72,7 @@ export function createAccountsTable(document: Document, messages: RendererSettin
   table.className = "settings-account-table";
   table.setAttribute("aria-label", messages.pageLabels.accounts);
   const head = document.createElement("thead");
-  const row = document.createElement("tr");
+  const headerRow = document.createElement("tr");
   for (const label of [
     messages.accountColumnAccount,
     messages.accountColumnUsage,
@@ -73,42 +82,36 @@ export function createAccountsTable(document: Document, messages: RendererSettin
     const cell = document.createElement("th");
     cell.scope = "col";
     cell.textContent = label;
-    row.append(cell);
+    headerRow.append(cell);
   }
-  head.append(row);
+  head.append(headerRow);
   const body = document.createElement("tbody");
   table.append(head, body);
   return { table, body };
 }
 
-export function renderAccountRows(
+interface RenderAccountRowsInput {
+  usage: AccountUsageViewState | undefined;
+  display: AccountUsageDisplay;
+  actionsDisabled: boolean;
+  usingReset: boolean;
+  resetDisabled: boolean;
+  resetExpanded: boolean;
+  onActivate: () => void;
+  onSignIn: () => void;
+  onSignOut?: () => void;
+  onDelete: () => void;
+  onRetry: () => void;
+  onUseReset?: () => void;
+  onResetExpanded: (open: boolean) => void;
+}
+
+function accountIdentityCell(
   document: Document,
   account: CodexAccountSummary,
   messages: RendererSettingsMessages,
-  input: {
-    usage: AccountUsageViewState | undefined;
-    display: AccountUsageDisplay;
-    actionsDisabled: boolean;
-    usingReset: boolean;
-    resetDisabled: boolean;
-    resetExpanded: boolean;
-    onActivate: () => void;
-    onSignIn: () => void;
-    onSignOut?: () => void;
-    onDelete: () => void;
-    onRetry: () => void;
-    onUseReset?: () => void;
-    onResetExpanded: (open: boolean) => void;
-  },
-): HTMLTableRowElement[] {
-  const row = document.createElement("tr");
-  row.className = "settings-account-row";
-  row.dataset.accountId = account.accountId;
-  row.dataset.accountFocus = `${account.accountId}:row`;
-  row.tabIndex = -1;
-  const name = codexAccountDisplayName(account);
-  row.setAttribute("aria-label", name.full);
-  const personCell = document.createElement("td");
+): HTMLTableCellElement {
+  const cell = document.createElement("td");
   const person = document.createElement("div");
   person.className = "settings-account-row__person";
   const mark = document.createElement("div");
@@ -117,12 +120,13 @@ export function renderAccountRows(
   mark.append(createRendererSettingsIcon("terminal", 17));
   const identity = document.createElement("div");
   identity.className = "settings-account-row__identity";
+
   const title = document.createElement("div");
   title.className = "settings-account-title";
   const local = document.createElement("strong");
   local.className = "settings-account-email";
-  local.textContent = name.local;
-  local.title = name.full;
+  local.textContent = codexAccountDisplayName(account).local;
+  local.title = codexAccountDisplayName(account).full;
   title.append(local);
   if (account.active) {
     const badge = document.createElement("span");
@@ -131,8 +135,10 @@ export function renderAccountRows(
     title.append(badge);
   }
   identity.append(title);
+
   const metadata = document.createElement("div");
   metadata.className = "settings-account-metadata";
+  const name = codexAccountDisplayName(account);
   if (name.domain) {
     const domain = document.createElement("span");
     domain.className = "settings-account-domain";
@@ -157,66 +163,88 @@ export function renderAccountRows(
     metadata.append(plan);
   }
   if (metadata.childElementCount > 0) identity.append(metadata);
-  person.append(mark, identity);
-  personCell.append(person);
 
-  const usageCell = document.createElement("td");
-  const usage = renderAccountUsage(document, input.usage, messages, input.display, input.onRetry);
-  if (usage) usageCell.append(usage);
-  const resetCell = document.createElement("td");
-  const resetLabel = document.createElement("span");
-  resetLabel.className = "settings-account-mobile-label";
-  resetLabel.textContent = messages.accountResetCredits;
-  resetCell.append(resetLabel);
-  const actionsCell = document.createElement("td");
+  person.append(mark, identity);
+  cell.append(person);
+  return cell;
+}
+
+function accountActionsCell(
+  document: Document,
+  account: CodexAccountSummary,
+  messages: RendererSettingsMessages,
+  input: RenderAccountRowsInput,
+): HTMLTableCellElement {
+  const cell = document.createElement("td");
   const actions = document.createElement("div");
   actions.className = "settings-account-actions";
+  const actionButton = (
+    kind: "activate" | "login" | "logout",
+    label: string,
+    onClick: () => void,
+  ): HTMLButtonElement => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "settings-account-action";
+    button.textContent = label;
+    button.dataset.accountFocus = `${account.accountId}:${kind}`;
+    button.disabled = input.actionsDisabled;
+    button.addEventListener("click", onClick);
+    return button;
+  };
   if (!account.active) {
-    const activate = document.createElement("button");
-    activate.type = "button";
-    activate.className = "settings-account-action";
-    activate.textContent = messages.accountUse;
-    activate.dataset.accountFocus = `${account.accountId}:activate`;
-    activate.disabled = input.actionsDisabled;
-    activate.addEventListener("click", input.onActivate);
-    actions.append(activate);
+    actions.append(actionButton("activate", messages.accountUse, input.onActivate));
   }
   if (!isCodexAccountAuthenticated(account)) {
-    const signIn = document.createElement("button");
-    signIn.type = "button";
-    signIn.className = "settings-account-action";
-    signIn.textContent = messages.accountSignIn;
-    signIn.dataset.accountFocus = `${account.accountId}:login`;
-    signIn.disabled = input.actionsDisabled;
-    signIn.addEventListener("click", input.onSignIn);
-    actions.append(signIn);
+    actions.append(actionButton("login", messages.accountSignIn, input.onSignIn));
   }
   if (account.management === "native" && isCodexAccountAuthenticated(account) && input.onSignOut) {
-    const signOut = document.createElement("button");
-    signOut.type = "button";
-    signOut.className = "settings-account-action";
-    signOut.textContent = messages.accountSignOut;
-    signOut.dataset.accountFocus = `${account.accountId}:logout`;
-    signOut.disabled = input.actionsDisabled;
-    signOut.addEventListener("click", input.onSignOut);
-    actions.append(signOut);
+    actions.append(actionButton("logout", messages.accountSignOut, input.onSignOut));
   }
-  // isDefault protects the native Account home; active selects the Account for
-  // new tasks. Preserve these distinct Host semantics when exposing deletion.
+  // Deletion is hidden for the default Account: isDefault marks the protected
+  // native Account home, while active only selects which Account new tasks
+  // use. These are two distinct Host semantics and must not be conflated.
   if (!account.isDefault) {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "settings-icon-button settings-account-delete";
     remove.title = messages.accountDelete;
     remove.dataset.accountFocus = `${account.accountId}:delete`;
-    remove.setAttribute("aria-label", `${messages.accountDelete}: ${name.full}`);
+    remove.setAttribute("aria-label", `${messages.accountDelete}: ${codexAccountDisplayName(account).full}`);
     remove.disabled = input.actionsDisabled;
     remove.append(createRendererSettingsIcon("trash", 16));
     remove.addEventListener("click", input.onDelete);
     actions.append(remove);
   }
-  actionsCell.append(actions);
-  row.append(personCell, usageCell, resetCell, actionsCell);
+  cell.append(actions);
+  return cell;
+}
+
+export function renderAccountRows(
+  document: Document,
+  account: CodexAccountSummary,
+  messages: RendererSettingsMessages,
+  input: RenderAccountRowsInput,
+): HTMLTableRowElement[] {
+  const row = document.createElement("tr");
+  row.className = "settings-account-row";
+  row.dataset.accountId = account.accountId;
+  row.dataset.accountFocus = `${account.accountId}:row`;
+  row.tabIndex = -1;
+  row.setAttribute("aria-label", codexAccountDisplayName(account).full);
+
+  const usageCell = document.createElement("td");
+  const usage = renderAccountUsage(document, input.usage, messages, input.display, input.onRetry);
+  if (usage) usageCell.append(usage);
+
+  const resetCell = document.createElement("td");
+  const resetLabel = document.createElement("span");
+  resetLabel.className = "settings-account-mobile-label";
+  resetLabel.textContent = messages.accountResetCredits;
+  resetCell.append(resetLabel);
+
+  row.append(accountIdentityCell(document, account, messages), usageCell, resetCell, accountActionsCell(document, account, messages, input));
+
   const reset =
     input.usage?.status === "ready"
       ? renderAccountResetCredits(document, input.usage.credits, messages, input)
@@ -230,6 +258,8 @@ export function renderAccountRows(
     resetCell.append(unknown);
     return [row];
   }
+
+  // Expandable second row holding the reset-credit details.
   const detailsRow = document.createElement("tr");
   detailsRow.className = "settings-account-details-row";
   detailsRow.id = `settings-account-reset-${++resetDetailsSequence}`;

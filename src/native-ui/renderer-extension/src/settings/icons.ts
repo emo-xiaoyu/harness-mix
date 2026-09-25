@@ -1,3 +1,6 @@
+// Central icon catalog for the Harness Mix settings dialog. Every page and
+// shared widget draws its glyphs through this module so names stay validated
+// and lucide bundles are imported from a single place.
 import type { IconNode } from "lucide";
 import createElement from "lucide/dist/esm/createElement.mjs";
 import Boxes from "lucide/dist/esm/icons/boxes.mjs";
@@ -34,7 +37,7 @@ import CircleHelp from "lucide/dist/esm/icons/circle-question-mark.mjs";
 import X from "lucide/dist/esm/icons/x.mjs";
 import Users from "lucide/dist/esm/icons/users.mjs";
 import Plus from "lucide/dist/esm/icons/plus.mjs";
-import Database from 'lucide/dist/esm/icons/database.mjs';
+import Database from "lucide/dist/esm/icons/database.mjs";
 import Palette from "lucide/dist/esm/icons/palette.mjs";
 import ShieldCheck from "lucide/dist/esm/icons/shield-check.mjs";
 import PawPrint from "lucide/dist/esm/icons/paw-print.mjs";
@@ -85,7 +88,7 @@ export const RENDERER_SETTINGS_ICON_NAMES = [
 
 export type RendererSettingsIconName = (typeof RENDERER_SETTINGS_ICON_NAMES)[number];
 
-const iconNodes = {
+const ICON_NODES: Readonly<Record<RendererSettingsIconName, IconNode>> = {
   settings: Settings,
   close: X,
   star: Star,
@@ -126,36 +129,38 @@ const iconNodes = {
   collaboration: Users,
   usage: ChartColumn,
   health: HeartPulse,
-} satisfies Record<RendererSettingsIconName, IconNode>;
+};
+
+const KNOWN_ICON_NAMES: ReadonlySet<string> = new Set(RENDERER_SETTINGS_ICON_NAMES);
 
 export function isRendererSettingsIconName(value: string): value is RendererSettingsIconName {
-  return (RENDERER_SETTINGS_ICON_NAMES as readonly string[]).includes(value);
+  return KNOWN_ICON_NAMES.has(value);
 }
 
 export function createRendererSettingsIcon(name: RendererSettingsIconName, size = 18): SVGElement {
-  const icon = createElement(iconNodes[name], {
+  const svg = createElement(ICON_NODES[name], {
     width: size,
     height: size,
     "aria-hidden": "true",
     focusable: "false",
   });
-  icon.classList.add("harnessmix-settings-icon");
-  return icon;
+  svg.classList.add("harnessmix-settings-icon");
+  return svg;
 }
 
 export function createRendererSettingsBrandIcon(size = 22, ownerDocument?: Document): HTMLImageElement {
   const doc = ownerDocument ?? (typeof document !== "undefined" ? document : undefined);
   if (!doc) throw new Error("Document is required to create icon element");
-  const icon = doc.createElement("img");
-  icon.src = harnessMixLogoUrl;
-  icon.alt = "";
-  icon.width = size;
-  icon.height = size;
-  icon.draggable = false;
-  icon.setAttribute("aria-hidden", "true");
-  icon.style.width = `${size}px`;
-  icon.style.height = `${size}px`;
-  icon.style.objectFit = "contain";
-  icon.classList.add("harnessmix-settings-icon");
-  return icon;
+  const logo = doc.createElement("img");
+  logo.src = harnessMixLogoUrl;
+  logo.alt = "";
+  logo.width = size;
+  logo.height = size;
+  logo.draggable = false;
+  logo.setAttribute("aria-hidden", "true");
+  logo.style.width = `${size}px`;
+  logo.style.height = `${size}px`;
+  logo.style.objectFit = "contain";
+  logo.classList.add("harnessmix-settings-icon");
+  return logo;
 }

@@ -1,3 +1,6 @@
+// Entry point that injects the "Harness Mix" settings launcher into the
+// Codex Desktop application header, right before the header's trailing slot.
+// Also exports the pure header-slot geometry picker used by contract tests.
 import { createRendererSettingsBrandIcon, createRendererSettingsIcon } from "./icons.js";
 import {
   DEFAULT_RENDERER_SETTINGS_MESSAGES,
@@ -53,17 +56,25 @@ export interface RendererSettingsContractInspection {
 }
 
 function measuredBounds(element: Element): RendererSettingsBounds {
-  const bounds = element.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
   return {
-    left: bounds.left,
-    right: bounds.right,
-    top: bounds.top,
-    bottom: bounds.bottom,
-    width: bounds.width,
-    height: bounds.height,
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
   };
 }
 
+function isVisiblyLaidOut(bounds: RendererSettingsBounds): boolean {
+  return bounds.width > 0 && bounds.height > 0;
+}
+
+// Picks the header slot that should carry the trigger: candidates must sit in
+// the right half of the header, hold more than one button (or be a structural
+// action group), and stay within the header box (1px tolerance on the edges).
+// The winner hugs the header's right edge most closely.
 export function selectRendererSettingsHeaderSlot<T>(
   header: RendererSettingsBounds,
   candidates: readonly RendererSettingsHeaderSlotCandidate<T>[],
@@ -96,15 +107,11 @@ export function inspectRendererSettingsContract(
   const headers = [
     ...ownerDocument.querySelectorAll<HTMLElement>(SETTINGS_APPLICATION_HEADER_SELECTOR),
   ];
-  const visibleHeaders = headers.filter((header) => {
-    const bounds = measuredBounds(header);
-    return bounds.width > 0 && bounds.height > 0;
-  });
+  const visibleHeaders = headers.filter((header) => isVisiblyLaidOut(measuredBounds(header)));
   const insertionPointCount = visibleHeaders.filter((header) =>
-    [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)].some((slot) => {
-      const bounds = measuredBounds(slot);
-      return bounds.width > 0 && bounds.height > 0;
-    }),
+    [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)].some((slot) =>
+      isVisiblyLaidOut(measuredBounds(slot)),
+    ),
   ).length;
   return {
     headerCount: headers.length,
@@ -113,6 +120,8 @@ export function inspectRendererSettingsContract(
   };
 }
 
+// Locates where the trigger belongs: the rightmost visible direct slot child
+// of the visible application header. The trigger is inserted before that slot.
 function findRendererSettingsHeaderInsertionPoint(
   ownerDocument: Document,
 ): RendererSettingsHeaderInsertionPoint | null {
@@ -120,15 +129,20 @@ function findRendererSettingsHeaderInsertionPoint(
   if (!header) return null;
 
   const headerBounds = measuredBounds(header);
-  if (headerBounds.width <= 0 || headerBounds.height <= 0) return null;
+  if (!isVisiblyLaidOut(headerBounds)) return null;
 
-  const endSlot = [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)]
-    .filter((slot) => {
-      const bounds = measuredBounds(slot);
-      return bounds.width > 0 && bounds.height > 0;
-    })
-    .toSorted((left, right) => measuredBounds(right).left - measuredBounds(left).left)[0];
+  const visibleSlots = [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)]
+    .filter((slot) => isVisiblyLaidOut(measuredBounds(slot)));
+  const endSlot = visibleSlots.toSorted(
+    (left, right) => measuredBounds(right).left - measuredBounds(left).left,
+  )[0];
   return endSlot ? { parent: header, before: endSlot } : null;
+}
+
+function makeFlexAndNonDrag(element: HTMLElement): void {
+  element.style.alignItems = "center";
+  element.style.justifyContent = "center";
+  element.style.setProperty("-webkit-app-region", "no-drag");
 }
 
 export function mountRendererSettingsTrigger(
@@ -157,8 +171,7 @@ export function mountRendererSettingsTrigger(
   button.setAttribute("aria-haspopup", "dialog");
   button.title = available ? messages.settingsButtonTitle : messages.settingsUnavailableTitle;
   button.style.display = "inline-flex";
-  button.style.alignItems = "center";
-  button.style.justifyContent = "center";
+  makeFlexAndNonDrag(button);
   button.style.height = "28px";
   button.style.padding = "0 12px";
   button.style.gap = "6px";
@@ -169,7 +182,6 @@ export function mountRendererSettingsTrigger(
   button.style.cursor = available ? "pointer" : "not-allowed";
   button.style.opacity = available ? "1" : "0.5";
   button.style.outlineOffset = "2px";
-  button.style.setProperty("-webkit-app-region", "no-drag");
   button.append(createRendererSettingsBrandIcon(24, ownerDocument));
 
   const brandLabel = ownerDocument.createElement("span");
@@ -187,8 +199,7 @@ export function mountRendererSettingsTrigger(
   updateButton.setAttribute("aria-haspopup", "dialog");
   updateButton.title = messages.updateAvailable;
   updateButton.style.display = "none";
-  updateButton.style.alignItems = "center";
-  updateButton.style.justifyContent = "center";
+  makeFlexAndNonDrag(updateButton);
   updateButton.style.height = "28px";
   updateButton.style.padding = "0 10px";
   updateButton.style.gap = "6px";
@@ -200,7 +211,6 @@ export function mountRendererSettingsTrigger(
   updateButton.style.opacity = available ? "1" : "0.5";
   updateButton.style.boxShadow = "0 1px 2px rgba(15, 23, 42, 0.18)";
   updateButton.style.outlineOffset = "2px";
-  updateButton.style.setProperty("-webkit-app-region", "no-drag");
   updateButton.append(createRendererSettingsIcon("updates", 15));
 
   const updateLabel = ownerDocument.createElement("span");
@@ -274,6 +284,8 @@ export function installRendererSettingsHeaderTrigger(options: {
   let updateAvailable = false;
   let disposed = false;
 
+  // Re-scans the header for a usable insertion slot, (re)creating and
+  // repositioning the trigger as the Desktop layout settles.
   const refresh = (): boolean => {
     if (disposed) return false;
     const insertionPoint = findRendererSettingsHeaderInsertionPoint(ownerDocument);

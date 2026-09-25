@@ -1,3 +1,7 @@
+// Default settings page registry: connections, collaboration, accounts,
+// integrations, session import, storage, usage, health, skins, pets, updates
+// and about. Also hosts the Updates/About page implementations.
+
 import type {
   UpdateCheckResult,
   UpdateInstallation,
@@ -56,28 +60,33 @@ export const HARNESSMIX_GITHUB_REPOSITORY_URL = "https://github.com/emo-xiaoyu/h
 export const HARNESSMIX_RELEASES_LATEST_URL = `${HARNESSMIX_GITHUB_REPOSITORY_URL}/releases/latest`;
 export const HARNESSMIX_NPM_MANUAL_UPDATE_COMMAND = "npm install -g harness-mix@latest";
 
-interface RendererUserAgentData {
+interface RendererUaHints {
   readonly platform?: string;
   readonly architecture?: string;
   readonly bitness?: string;
 }
 
-function rendererUserAgentData(navigator: Navigator): RendererUserAgentData | undefined {
-  return (navigator as Navigator & { userAgentData?: RendererUserAgentData }).userAgentData;
+function userAgentHints(navigator: Navigator): RendererUaHints | undefined {
+  return (navigator as Navigator & { userAgentData?: RendererUaHints }).userAgentData;
+}
+
+// Combines every platform signal we can reach into one blob for regex checks.
+function platformIdentity(window: Window | null | undefined): string {
+  const navigator = window?.navigator;
+  if (!navigator) return "";
+  const hints = userAgentHints(navigator);
+  return `${hints?.platform ?? ""} ${navigator.platform ?? ""} ${navigator.userAgent}`;
 }
 
 function isWindowsRenderer(window: Window | null | undefined): boolean {
-  const navigator = window?.navigator;
-  if (!navigator) return false;
-  const identity = `${rendererUserAgentData(navigator)?.platform ?? ""} ${navigator.platform ?? ""} ${navigator.userAgent}`;
-  return /windows|win32|win64/iu.test(identity);
+  return /windows|win32|win64/iu.test(platformIdentity(window));
 }
 
 function windowsInstallerDownloadUrl(window: Window | null | undefined, version: string): string {
   const navigator = window?.navigator;
-  const hints = navigator ? rendererUserAgentData(navigator) : undefined;
-  const identity = `${hints?.architecture ?? ""} ${hints?.platform ?? ""} ${navigator?.platform ?? ""} ${navigator?.userAgent ?? ""}`;
-  const architecture = /arm64|aarch64|\barm\b/iu.test(identity) ? "arm64" : "x64";
+  const hints = navigator ? userAgentHints(navigator) : undefined;
+  const fingerprint = `${hints?.architecture ?? ""} ${hints?.platform ?? ""} ${navigator?.platform ?? ""} ${navigator?.userAgent ?? ""}`;
+  const architecture = /arm64|aarch64|\barm\b/iu.test(fingerprint) ? "arm64" : "x64";
   return `https://github.com/emo-xiaoyu/harness-mix/releases/download/v${version}/harness-mix-${version}-windows-${architecture}.exe`;
 }
 
@@ -106,7 +115,7 @@ export interface RendererUpdateClient {
   readCurrentVersion?(): Promise<{ version: string }>;
 }
 
-function panelIconName(view: string): RendererSettingsIconName {
+function panelIconForView(view: string): RendererSettingsIconName {
   if (view === "failed" || view === "error") return "alert";
   if (view === "unavailable") return "unavailable";
   if (view === "current") return "check";
@@ -119,7 +128,7 @@ function createPanelHead(document: Document, view: string, title: string): HTMLE
   const label = document.createElement("strong");
   label.className = "settings-update-panel__title";
   label.textContent = title;
-  head.append(createRendererSettingsIcon(panelIconName(view), 16), label);
+  head.append(createRendererSettingsIcon(panelIconForView(view), 16), label);
   return head;
 }
 
@@ -130,49 +139,60 @@ function createPanelActions(document: Document, ...buttons: readonly HTMLElement
   return actions;
 }
 
+const INSTALLATION_LABELS: Readonly<Record<string, keyof RendererSettingsMessages>> = {
+  npm: "updateInstallationNpm",
+  "windows-installer": "updateInstallationWindowsInstaller",
+  "macos-dmg": "updateInstallationMacOsDmg",
+};
+
 function installationLabel(
   installation: UpdateInstallation | null,
   messages: RendererSettingsMessages,
 ): string {
-  if (installation === "npm") return messages.updateInstallationNpm;
-  if (installation === "windows-installer") {
-    return messages.updateInstallationWindowsInstaller;
-  }
-  if (installation === "macos-dmg") return messages.updateInstallationMacOsDmg;
-  return messages.updateInstallationUnknown;
+  const labelKey = installation === null ? undefined : INSTALLATION_LABELS[installation];
+  if (!labelKey) return messages.updateInstallationUnknown;
+  const text = messages[labelKey];
+  return typeof text === "string" ? text : messages.updateInstallationUnknown;
 }
 
 function isPendingStatus(status: UpdateStatus | null): boolean {
   return status !== null && status.phase !== "succeeded" && status.phase !== "failed";
 }
 
-function statusMessage(
+function phaseMessage(
   status: UpdateStatus | null,
   messages: RendererSettingsMessages,
 ): string | null {
   if (!status) return null;
-  if (status.phase === "succeeded") return messages.updateSucceeded;
-  if (status.phase === "failed") return status.error ?? messages.updateFailed;
-  if (status.phase === "waiting-for-exit") return messages.updateWaitingForExit;
-  if (status.phase === "installing") {
-    return status.installation === "npm" ? messages.updateInstallingNpm : messages.updateInstalling;
+  switch (status.phase) {
+    case "succeeded":
+      return messages.updateSucceeded;
+    case "failed":
+      return status.error ?? messages.updateFailed;
+    case "waiting-for-exit":
+      return messages.updateWaitingForExit;
+    case "installing":
+      return status.installation === "npm"
+        ? messages.updateInstallingNpm
+        : messages.updateInstalling;
+    case "restarting":
+      return messages.updateRestarting;
+    case "downloading":
+      return messages.updateDownloading;
+    default:
+      return messages.updatePreparing;
   }
-  if (status.phase === "restarting") return messages.updateRestarting;
-  if (status.phase === "downloading") return messages.updateDownloading;
-  return messages.updatePreparing;
 }
 
 function formatUpdateBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB"];
   let scaled = value;
-  let unit = "B";
-  for (const nextUnit of units) {
+  let unitIndex = 0;
+  while (unitIndex < units.length - 1 && scaled >= 1024) {
     scaled /= 1024;
-    unit = nextUnit;
-    if (scaled < 1024 || nextUnit === units.at(-1)) break;
+    unitIndex += 1;
   }
-  return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${unit}`;
+  return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 export function aboutPage(
@@ -197,6 +217,8 @@ export function aboutPage(
       const tagline = document.createElement("strong");
       tagline.className = "settings-about-tagline";
       tagline.textContent = messages.aboutTagline;
+
+      // Version placeholder + a shortcut into the Updates page.
       const versionRow = document.createElement("div");
       versionRow.className = "settings-about-version-row";
       const versionBadge = document.createElement("span");
@@ -214,6 +236,7 @@ export function aboutPage(
         updatesNavBtn?.click();
       });
       versionRow.append(versionBadge, checkUpdateBtn);
+
       const introduction = document.createElement("div");
       introduction.className = "settings-about-copy";
       for (const paragraphText of messages.aboutParagraphs) {
@@ -224,6 +247,7 @@ export function aboutPage(
       const starCallout = document.createElement("p");
       starCallout.className = "settings-about-star-callout";
       starCallout.textContent = messages.aboutStarCallout;
+
       const repositorySection = document.createElement("div");
       repositorySection.className = "settings-about-repository";
       const openSource = document.createElement("p");
@@ -241,8 +265,12 @@ export function aboutPage(
         repositoryUrl,
       );
       repositorySection.append(openSource, repository);
+
       panel.append(product, tagline, versionRow, introduction, starCallout, repositorySection);
       context.content.append(heading, panel);
+
+      // Prefer the cheap dedicated version read; fall back to a check request,
+      // and leave the placeholder version when no client exists at all.
       const client = getClient();
       const readVersion = client?.readCurrentVersion
         ? () => client.readCurrentVersion!()
@@ -281,8 +309,7 @@ export function updatesPage(
       heading.className = "settings-section-label";
       heading.textContent = messages.pageLabels.updates;
 
-      // Version summary: current, latest, and installation sit side by side so the
-      // comparison is readable without scrolling.
+      // Current / latest / installation side by side for an at-a-glance diff.
       const metadata = document.createElement("div");
       metadata.className = "settings-update-metadata";
       const createMetadataItem = (label: string): HTMLElement => {
@@ -304,14 +331,15 @@ export function updatesPage(
       panel.className = "settings-update-panel";
       panel.setAttribute("aria-live", "polite");
 
-      // Manual update stays visible directly under the status panel: automatic
-      // updates can fail for reasons local to the machine, and the fallback path
-      // should never be more than a glance away.
+      // Manual fallback block, kept directly under the status panel: when the
+      // automatic path breaks, the escape hatch stays one glance away.
       const controls = document.createElement("div");
       controls.className = "settings-update-controls";
       const manualTitle = document.createElement("div");
       manualTitle.className = "settings-update-manual-title";
       manualTitle.textContent = messages.updateManualTitle;
+
+      // npm command row with a copy button that flashes feedback.
       const manualNpm = document.createElement("div");
       manualNpm.className = "settings-update-manual";
       manualNpm.hidden = true;
@@ -346,6 +374,9 @@ export function updatesPage(
       });
       manualNpmCommandRow.append(manualNpmCommand, copyCommand);
       manualNpm.append(manualNpmDescription, manualNpmCommandRow);
+
+      // Windows installer block: a versioned direct download plus the
+      // generic Releases link.
       const manualWindowsInstaller = document.createElement("div");
       manualWindowsInstaller.className = "settings-update-manual";
       manualWindowsInstaller.hidden = true;
@@ -368,6 +399,7 @@ export function updatesPage(
         manualWindowsInstallerDescription,
         manualWindowsInstallerActions,
       );
+
       const actions = document.createElement("div");
       actions.className = "settings-update-actions";
       const releaseLink = document.createElement("a");
@@ -382,15 +414,13 @@ export function updatesPage(
       actions.append(releaseLink);
       controls.append(manualTitle, manualNpm, manualWindowsInstaller, actions);
 
-      // Release notes render below the fold, in the page scroller rather than a
-      // nested one.
+      // Release notes live in the page scroller, below everything else.
       const notes = document.createElement("div");
       notes.className = "settings-update-notes-section";
 
       context.content.append(heading, metadata, panel, controls, notes);
 
-      // Presentation-only: emphasise the manual path once the automatic one has
-      // visibly failed.
+      // Highlight the manual path once the automatic one has failed.
       const setManualFallback = (fallback: boolean): void => {
         manualNpmDescription.textContent = windows
           ? messages.updateWindowsNpmDescription
@@ -401,6 +431,7 @@ export function updatesPage(
           ? "settings-update-manual-description is-fallback"
           : "settings-update-manual-description";
       };
+
       let pollTimer: number | undefined;
       let pollAttempts = 0;
       let pending = false;
@@ -423,20 +454,18 @@ export function updatesPage(
       };
 
       const renderRequestFailure = (error: unknown): void => {
-        renderPendingStatus(
-          null,
-          error instanceof RendererUpdateRequestTimeoutError
-            ? messages.updateRequestTimeout
-            : error instanceof Error
-              ? error.message
-              : messages.updateFailed,
-          "failed",
-        );
+        const fallbackText = error instanceof RendererUpdateRequestTimeoutError
+          ? messages.updateRequestTimeout
+          : error instanceof Error
+            ? error.message
+            : messages.updateFailed;
+        renderPendingStatus(null, fallbackText, "failed");
       };
 
       const scheduleStatusPoll = (client: RendererUpdateClient, resetAttempts = false): void => {
         clearPoll();
         if (resetAttempts) pollAttempts = 0;
+        // ~4 minutes of 750ms polls before giving up on the status stream.
         if (pollAttempts >= 320) {
           renderPendingStatus(null, messages.updateRequestTimeout, "failed");
           return;
@@ -447,7 +476,7 @@ export function updatesPage(
             (signal) => runBoundedRendererUpdateRequest(() => client.readUpdateStatus(), signal),
             {
               success(result) {
-                const message = statusMessage(result.status, messages);
+                const message = phaseMessage(result.status, messages);
                 if (isPendingStatus(result.status)) scheduleStatusPoll(client);
                 if (message) renderPendingStatus(result.status, message);
               },
@@ -508,7 +537,7 @@ export function updatesPage(
               pending = false;
               renderPendingStatus(
                 result.status,
-                statusMessage(result.status, messages) ?? messages.updatePreparing,
+                phaseMessage(result.status, messages) ?? messages.updatePreparing,
               );
               if (isPendingStatus(result.status)) scheduleStatusPoll(client, true);
             },
@@ -539,12 +568,16 @@ export function updatesPage(
           );
         }
         if (result.releaseNotesUrl) releaseLink.href = result.releaseNotesUrl;
-        const operationMessage = statusMessage(result.status, messages);
+
+        const operationMessage = phaseMessage(result.status, messages);
         if (isPendingStatus(result.status)) {
           renderPendingStatus(result.status, operationMessage ?? messages.updatePreparing);
           scheduleStatusPoll(client, true);
           return;
         }
+
+        // A failed install of the very version we are offering is actionable:
+        // surface its error instead of pretending everything is current.
         const actionableStatus =
           result.status?.phase === "failed" && result.status.version === result.latestVersion
             ? result.status
@@ -554,19 +587,14 @@ export function updatesPage(
         panel.replaceChildren();
         setManualFallback(Boolean(result.error) || actionableStatus !== null);
         if (result.error || !result.updateAvailable || windows || actionableStatus) {
-          panel.append(
-            createPanelHead(
-              document,
-              view,
-              actionableStatus
-                ? (statusMessage(actionableStatus, messages) ?? messages.updateFailed)
-                : result.error
-                  ? messages.updateFailed
-                  : result.updateAvailable
-                    ? messages.updateWindowsManualRequired
-                    : messages.updateUpToDate,
-            ),
-          );
+          const headline = actionableStatus
+            ? (phaseMessage(actionableStatus, messages) ?? messages.updateFailed)
+            : result.error
+              ? messages.updateFailed
+              : result.updateAvailable
+                ? messages.updateWindowsManualRequired
+                : messages.updateUpToDate;
+          panel.append(createPanelHead(document, view, headline));
         }
         if (actionableStatus?.error) {
           const error = document.createElement("p");

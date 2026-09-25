@@ -68,11 +68,11 @@ button {
 }
 
 .harnessmix-settings-dialog {
-  width: min(1120px, calc(100vw - 48px));
-  height: min(780px, calc(100vh - 88px));
+  width: min(1200px, calc(100vw - 32px));
+  height: min(880px, calc(100vh - 48px));
   max-width: none;
-  max-height: calc(100vh - 88px);
-  margin-top: max(56px, calc((100vh - 780px) / 2));
+  max-height: calc(100vh - 48px);
+  margin-top: max(24px, calc((100vh - 880px) / 2));
   margin-inline: auto;
   margin-bottom: auto;
   padding: 0;
@@ -323,7 +323,7 @@ button {
 }
 
 .settings-page__content {
-  width: min(930px, calc(100% - 80px));
+  width: min(1040px, calc(100% - 48px));
   margin-inline: auto;
 }
 
@@ -1387,7 +1387,7 @@ button {
 
 .settings-about-panel {
   display: grid;
-  max-width: 720px;
+  max-width: 100%;
   gap: 18px;
   padding: 24px;
   background: var(--settings-panel);
@@ -1432,6 +1432,65 @@ button {
 .settings-collab-toggle input[type="checkbox"]:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.settings-collab-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  padding: 18px;
+}
+
+.settings-collab-controls .settings-collab-toggle {
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--settings-surface);
+  border-radius: 9px;
+}
+
+.settings-collab-controls .settings-update-summary { grid-column: 1 / -1; margin: 0; }
+
+@media (max-width: 760px) {
+  .settings-collab-controls { grid-template-columns: minmax(0, 1fr); }
+}
+
+.settings-collab-template-members {
+  color: var(--settings-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-collab-member-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 36px;
+  grid-template-areas: "harness model thinking remove" "name role role remove";
+  padding: 12px;
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border);
+  border-radius: 9px;
+}
+
+.settings-collab-member-row > :nth-child(1) { grid-area: harness; }
+.settings-collab-member-row > :nth-child(2) { grid-area: model; }
+.settings-collab-member-row > :nth-child(3) { grid-area: thinking; }
+.settings-collab-member-row > :nth-child(4) { grid-area: name; }
+.settings-collab-member-row > :nth-child(5) { grid-area: role; }
+.settings-collab-member-row > :nth-child(6) { grid-area: remove; }
+
+.settings-collab-member-field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--settings-muted);
+  font-size: 11px;
+}
+
+.settings-collab-member-field select,
+.settings-collab-member-row input { min-width: 0; width: 100%; }
+
+@media (max-width: 760px) {
+  .settings-collab-member-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 36px;
+    grid-template-areas: "harness harness remove" "model thinking remove" "name name remove" "role role remove";
+  }
 }
 
 .settings-about-product {

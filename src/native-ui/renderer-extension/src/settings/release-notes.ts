@@ -1,3 +1,8 @@
+// Minimal markdown renderer for release notes shown in the settings dialog.
+// It supports the small subset used by Harness Mix changelogs: ATX headings,
+// fenced code, blockquotes, lists (with indented translation continuations),
+// thematic breaks, paragraphs, and inline code/bold/links.
+
 const HEADING_PATTERN = /^(#{1,6})[ \t]+(.+?)\s*$/u;
 const BLOCKQUOTE_PATTERN = /^>[ \t]?(.*?)\s*$/u;
 const UNORDERED_ITEM_PATTERN = /^[-*][ \t]+(.+?)\s*$/u;
@@ -13,151 +18,144 @@ export function createReleaseNotesElement(
   document: ReleaseNotesDocument,
   markdown: string,
 ): HTMLElement {
-  const root = document.createElement("div");
-  root.className = "settings-update-notes";
-  appendReleaseNotesBlocks(document, root, markdown);
-  return root;
-}
-
-function appendReleaseNotesBlocks(
-  document: ReleaseNotesDocument,
-  root: HTMLElement,
-  markdown: string,
-): void {
+  const container = document.createElement("div");
+  container.className = "settings-update-notes";
   const lines = markdown.replaceAll("\r\n", "\n").split("\n");
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
+  let cursor = 0;
+  while (cursor < lines.length) {
+    const line = lines[cursor] ?? "";
     if (line.trim().length === 0) {
-      index += 1;
+      cursor += 1;
       continue;
     }
     const fence = FENCE_PATTERN.exec(line);
     if (fence) {
-      index = appendFencedCode(document, root, lines, index, fence[1] ?? "");
+      cursor = takeFencedCode(document, container, lines, cursor, fence[1] ?? "");
       continue;
     }
     const heading = HEADING_PATTERN.exec(line);
     if (heading?.[1] && heading[2]) {
       const tag = `h${heading[1].length}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
       const element = document.createElement(tag);
-      appendInline(document, element, heading[2]);
-      root.append(element);
-      index += 1;
+      appendInlineRuns(document, element, heading[2]);
+      container.append(element);
+      cursor += 1;
       continue;
     }
     if (BLOCKQUOTE_PATTERN.test(line)) {
-      index = appendBlockquote(document, root, lines, index);
+      cursor = takeBlockquote(document, container, lines, cursor);
       continue;
     }
     if (THEMATIC_BREAK_PATTERN.test(line)) {
-      root.append(document.createElement("hr"));
-      index += 1;
+      container.append(document.createElement("hr"));
+      cursor += 1;
       continue;
     }
     if (UNORDERED_ITEM_PATTERN.test(line)) {
-      index = appendList(document, root, lines, index, "ul", UNORDERED_ITEM_PATTERN);
+      cursor = takeList(document, container, lines, cursor, "ul", UNORDERED_ITEM_PATTERN);
       continue;
     }
     if (ORDERED_ITEM_PATTERN.test(line)) {
-      index = appendList(document, root, lines, index, "ol", ORDERED_ITEM_PATTERN);
+      cursor = takeList(document, container, lines, cursor, "ol", ORDERED_ITEM_PATTERN);
       continue;
     }
-    index = appendParagraph(document, root, lines, index);
+    cursor = takeParagraph(document, container, lines, cursor);
   }
+  return container;
 }
 
-function appendFencedCode(
+function takeFencedCode(
   document: ReleaseNotesDocument,
-  root: HTMLElement,
+  container: HTMLElement,
   lines: readonly string[],
   start: number,
   language: string,
 ): number {
   const body: string[] = [];
-  let index = start + 1;
-  while (index < lines.length && !FENCE_PATTERN.test(lines[index] ?? "")) {
-    body.push(lines[index] ?? "");
-    index += 1;
+  let cursor = start + 1;
+  while (cursor < lines.length && !FENCE_PATTERN.test(lines[cursor] ?? "")) {
+    body.push(lines[cursor] ?? "");
+    cursor += 1;
   }
-  if (index < lines.length) index += 1;
+  if (cursor < lines.length) cursor += 1;
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   if (language.length > 0) code.className = `language-${language}`;
   code.textContent = body.join("\n");
   pre.append(code);
-  root.append(pre);
-  return index;
+  container.append(pre);
+  return cursor;
 }
 
-function appendBlockquote(
+function takeBlockquote(
   document: ReleaseNotesDocument,
-  root: HTMLElement,
+  container: HTMLElement,
   lines: readonly string[],
   start: number,
 ): number {
-  const blockquote = document.createElement("blockquote");
-  const content: string[] = [];
-  let index = start;
-  while (index < lines.length) {
-    const match = BLOCKQUOTE_PATTERN.exec(lines[index] ?? "");
+  const quoted: string[] = [];
+  let cursor = start;
+  while (cursor < lines.length) {
+    const match = BLOCKQUOTE_PATTERN.exec(lines[cursor] ?? "");
     if (!match) break;
-    content.push(match[1] ?? "");
-    index += 1;
+    quoted.push(match[1] ?? "");
+    cursor += 1;
   }
+  const blockquote = document.createElement("blockquote");
   const paragraph = document.createElement("p");
-  appendInline(document, paragraph, content.join(" ").trim());
+  appendInlineRuns(document, paragraph, quoted.join(" ").trim());
   blockquote.append(paragraph);
-  root.append(blockquote);
-  return index;
+  container.append(blockquote);
+  return cursor;
 }
 
-function appendList(
+function takeList(
   document: ReleaseNotesDocument,
-  root: HTMLElement,
+  container: HTMLElement,
   lines: readonly string[],
   start: number,
   tag: "ul" | "ol",
-  pattern: RegExp,
+  itemPattern: RegExp,
 ): number {
   const list = document.createElement(tag);
-  let index = start;
-  while (index < lines.length) {
-    const item = pattern.exec(lines[index] ?? "");
+  let cursor = start;
+  while (cursor < lines.length) {
+    const item = itemPattern.exec(lines[cursor] ?? "");
     if (!item?.[1]) break;
     const entry = document.createElement("li");
-    appendInline(document, entry, item[1]);
-    index += 1;
+    appendInlineRuns(document, entry, item[1]);
+    cursor += 1;
 
     const continuationLines: string[] = [];
-    while (index < lines.length) {
-      const continuation = CONTINUATION_PATTERN.exec(lines[index] ?? "");
+    while (cursor < lines.length) {
+      const continuation = CONTINUATION_PATTERN.exec(lines[cursor] ?? "");
       if (!continuation?.[1]) break;
       continuationLines.push(continuation[1]);
-      index += 1;
+      cursor += 1;
     }
     if (continuationLines.length > 0) {
+      // Indented lines under a bullet carry the translated copy of that item.
       const continuation = document.createElement("span");
       continuation.className = "release-note-translation";
-      appendInline(document, continuation, continuationLines.join(" "));
+      appendInlineRuns(document, continuation, continuationLines.join(" "));
       entry.append(continuation);
     }
     list.append(entry);
   }
-  root.append(list);
-  return index;
+  container.append(list);
+  return cursor;
 }
 
-function appendParagraph(
+function takeParagraph(
   document: ReleaseNotesDocument,
-  root: HTMLElement,
+  container: HTMLElement,
   lines: readonly string[],
   start: number,
 ): number {
-  const paragraphLines: string[] = [];
-  let index = start;
-  while (index < lines.length) {
-    const current = lines[index] ?? "";
+  const collected: string[] = [];
+  let cursor = start;
+  while (cursor < lines.length) {
+    const current = lines[cursor] ?? "";
     if (
       current.trim().length === 0 ||
       FENCE_PATTERN.test(current) ||
@@ -169,23 +167,23 @@ function appendParagraph(
     ) {
       break;
     }
-    paragraphLines.push(current.trim());
-    index += 1;
+    collected.push(current.trim());
+    cursor += 1;
   }
   const paragraph = document.createElement("p");
-  paragraphLines.forEach((line, lineIndex) => {
-    appendInline(document, paragraph, line);
-    if (lineIndex < paragraphLines.length - 1) paragraph.append(document.createElement("br"));
+  collected.forEach((line, lineIndex) => {
+    appendInlineRuns(document, paragraph, line);
+    if (lineIndex < collected.length - 1) paragraph.append(document.createElement("br"));
   });
-  root.append(paragraph);
-  return index;
+  container.append(paragraph);
+  return cursor;
 }
 
-function appendInline(document: ReleaseNotesDocument, parent: HTMLElement, text: string): void {
-  let lastIndex = 0;
+function appendInlineRuns(document: ReleaseNotesDocument, parent: HTMLElement, text: string): void {
+  let consumed = 0;
   for (const match of text.matchAll(INLINE_PATTERN)) {
-    const index = match.index ?? 0;
-    if (index > lastIndex) parent.append(text.slice(lastIndex, index));
+    const at = match.index ?? 0;
+    if (at > consumed) parent.append(text.slice(consumed, at));
     if (match[2] !== undefined) {
       const code = document.createElement("code");
       code.textContent = match[2];
@@ -207,9 +205,9 @@ function appendInline(document: ReleaseNotesDocument, parent: HTMLElement, text:
         parent.append(link);
       }
     }
-    lastIndex = index + match[0].length;
+    consumed = at + match[0].length;
   }
-  if (lastIndex < text.length) parent.append(text.slice(lastIndex));
+  if (consumed < text.length) parent.append(text.slice(consumed));
 }
 
 function isSafeLink(href: string): boolean {

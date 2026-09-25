@@ -1,3 +1,7 @@
+// Connections settings page: a per-Host table of runtime components with an
+// inspector pane (errors, installation help, model defaults) plus the
+// Main/More agent grouping shared with the agent picker.
+
 import type { HarnessMixError, HarnessInspection } from "@harnessmix/shared-contracts";
 
 import {
@@ -99,18 +103,25 @@ function connectionStatusLabel(
   messages: RendererSettingsMessages,
   hasError = false,
 ): string {
+  // A component that exists but carries an error reports the error; one that
+  // was never installed still reports "Not installed".
   if (hasError && availability !== "notInstalled") return messages.connectionStatusError;
-  if (availability === "ready") return messages.connectionStatusReady;
-  if (availability === "checking") return messages.connectionStatusChecking;
-  if (availability === "notInstalled") return messages.connectionStatusNotInstalled;
-  if (availability === "unavailable" || availability === "error") {
-    return availability === "error"
-      ? messages.connectionStatusError
-      : messages.connectionStatusUnavailable;
+  switch (availability) {
+    case "ready":
+      return messages.connectionStatusReady;
+    case "checking":
+      return messages.connectionStatusChecking;
+    case "notInstalled":
+      return messages.connectionStatusNotInstalled;
+    case "unavailable":
+      return messages.connectionStatusUnavailable;
+    case "error":
+      return messages.connectionStatusError;
+    case "installing":
+      return messages.connectionStatusInstalling;
+    default:
+      return messages.connectionStatusUnsupported;
   }
-  return availability === "installing"
-    ? messages.connectionStatusInstalling
-    : messages.connectionStatusUnsupported;
 }
 
 function connectionStatusTone(
@@ -124,28 +135,29 @@ function connectionStatusTone(
   return "failed";
 }
 
-function diagnosticText(
+function buildDiagnosticsReport(
   hostId: string,
   item: Pick<ConnectionListItem, "name" | "availability" | "error">,
 ): string {
-  const error = item.error;
-  return [
+  const lines = [
     "harnessmix connection diagnostics",
     `host: ${hostId}`,
     `agent: ${item.name}`,
     `status: ${item.availability}`,
-    ...(error
-      ? [
-          `error.code: ${error.code}`,
-          `error.message: ${error.message}`,
-          `retryable: ${error.retryable}`,
-          ...(error.stage ? [`stage: ${error.stage}`] : []),
-          ...(error.durationMs !== undefined ? [`durationMs: ${error.durationMs}`] : []),
-          ...(error.diagnostic ? [`diagnostic: ${error.diagnostic}`] : []),
-          ...(error.stderrTail ? [`stderr:\n${error.stderrTail}`] : []),
-        ]
-      : []),
-  ].join("\n");
+  ];
+  const error = item.error;
+  if (error) {
+    lines.push(
+      `error.code: ${error.code}`,
+      `error.message: ${error.message}`,
+      `retryable: ${error.retryable}`,
+    );
+    if (error.stage) lines.push(`stage: ${error.stage}`);
+    if (error.durationMs !== undefined) lines.push(`durationMs: ${error.durationMs}`);
+    if (error.diagnostic) lines.push(`diagnostic: ${error.diagnostic}`);
+    if (error.stderrTail) lines.push(`stderr:\n${error.stderrTail}`);
+  }
+  return lines.join("\n");
 }
 
 function detailLine(document: Document, label: string, value: string): HTMLElement {
@@ -159,11 +171,13 @@ function detailLine(document: Document, label: string, value: string): HTMLEleme
   return line;
 }
 
+const COPY_FEEDBACK_RESTORE_MS = 2_000;
+
 function setCopyButtonLabel(button: HTMLButtonElement, label: string): void {
   button.replaceChildren(createRendererSettingsIcon("copy", 16), label);
 }
 
-function showCopyButtonFeedback(
+function flashCopyButtonFeedback(
   button: HTMLButtonElement,
   label: string,
   restoreLabel: string,
@@ -171,7 +185,7 @@ function showCopyButtonFeedback(
   setCopyButtonLabel(button, label);
   button.ownerDocument.defaultView?.setTimeout(() => {
     setCopyButtonLabel(button, restoreLabel);
-  }, 2_000);
+  }, COPY_FEEDBACK_RESTORE_MS);
 }
 
 function copyDiagnosticsToClipboard(
@@ -183,15 +197,16 @@ function copyDiagnosticsToClipboard(
 ): void {
   const clipboard = document.defaultView?.navigator.clipboard;
   if (!clipboard) {
-    showCopyButtonFeedback(button, messages.connectionCopyFailed, restoreLabel);
+    flashCopyButtonFeedback(button, messages.connectionCopyFailed, restoreLabel);
     return;
   }
   void clipboard.writeText(report).then(
-    () => showCopyButtonFeedback(button, messages.connectionCopied, restoreLabel),
-    () => showCopyButtonFeedback(button, messages.connectionCopyFailed, restoreLabel),
+    () => flashCopyButtonFeedback(button, messages.connectionCopied, restoreLabel),
+    () => flashCopyButtonFeedback(button, messages.connectionCopyFailed, restoreLabel),
   );
 }
 
+// Host ids look like "<transport>:<percent-encoded name>"; "local" is special.
 function connectionHostName(hostId: string, messages: RendererSettingsMessages): string {
   if (hostId === "local") return messages.connectionLocalHost;
   const separator = hostId.lastIndexOf(":");
@@ -248,6 +263,8 @@ function configureHostScroller(
   };
   const onLeft = (): void => scroll(-1);
   const onRight = (): void => scroll(1);
+  // Horizontal wheel anywhere over the tabs drives the same scroll, so the
+  // strip stays usable without the arrow buttons.
   const onWheel = (event: WheelEvent): void => {
     const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
     const maximum = maxScrollLeft();
@@ -469,7 +486,8 @@ function renderOneClickInstallSection(
     void diagnostics?.refresh();
   });
 
-  // If this harness does not have a CLI npm/pip install command (e.g. standalone IDEs/tools like Kiro, Cursor, CodeBuddy, Trae, ZCode)
+  // No CLI package exists for standalone tools (Kiro, Cursor, CodeBuddy,
+  // Trae, ZCode, ...) — guide the user through a manual install instead.
   if (!commandInfo) {
     const manualCard = document.createElement("div");
     manualCard.className = "settings-install-manual-card";
@@ -496,7 +514,7 @@ function renderOneClickInstallSection(
     return;
   }
 
-  // Harness has a CLI command:
+  // A real install command exists: show it with one-click / terminal / copy.
   const commandBox = document.createElement("div");
   commandBox.className = "settings-install-command-box";
   const commandLabel = document.createElement("span");
@@ -528,10 +546,9 @@ function renderOneClickInstallSection(
   copyBtn.append(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
 
   copyBtn.addEventListener("click", () => {
-    const text = commandInfo.command;
     const clipboard = document.defaultView?.navigator?.clipboard;
     if (clipboard) {
-      void clipboard.writeText(text).then(() => {
+      void clipboard.writeText(commandInfo.command).then(() => {
         copyBtn.replaceChildren(createRendererSettingsIcon("check", 15), messages.installCommandCopied);
         document.defaultView?.setTimeout(() => {
           copyBtn.replaceChildren(createRendererSettingsIcon("copy", 15), messages.copyInstallCommand);
@@ -548,6 +565,11 @@ function renderOneClickInstallSection(
     }
   });
 
+  const restoreInstallButton = (): void => {
+    installBtn.disabled = false;
+    installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+  };
+
   installBtn.addEventListener("click", () => {
     if (installBtn.disabled) return;
     installBtn.disabled = true;
@@ -557,12 +579,12 @@ function renderOneClickInstallSection(
 
     const run = async () => {
       if (!diagnostics?.installHarness) {
+        // No installer bridge: fall back to copying the command for the user.
         const text = commandInfo.command;
         await document.defaultView?.navigator?.clipboard?.writeText(text);
         feedback.className = "settings-install-feedback settings-feedback-warning";
         feedback.textContent = messages.oneClickInstallFailed;
-        installBtn.disabled = false;
-        installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+        restoreInstallButton();
         return;
       }
       try {
@@ -577,14 +599,12 @@ function renderOneClickInstallSection(
         } else {
           feedback.className = "settings-install-feedback settings-feedback-error";
           feedback.textContent = `${messages.oneClickInstallFailed} ${result.error ?? ""}`;
-          installBtn.disabled = false;
-          installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+          restoreInstallButton();
         }
       } catch (err: unknown) {
         feedback.className = "settings-install-feedback settings-feedback-error";
         feedback.textContent = `${messages.oneClickInstallFailed} ${err instanceof Error ? err.message : String(err)}`;
-        installBtn.disabled = false;
-        installBtn.replaceChildren(createRendererSettingsIcon("download", 15), messages.oneClickInstall);
+        restoreInstallButton();
       }
     };
     void run();
@@ -656,7 +676,6 @@ function renderModelConfigurationSection(
       const form = document.createElement("div");
       form.className = "settings-model-config-form";
 
-      // Model Select
       const modelField = document.createElement("div");
       modelField.className = "settings-model-config-field";
       const modelLabel = document.createElement("label");
@@ -676,7 +695,7 @@ function renderModelConfigurationSection(
       modelField.append(modelLabel, modelSelect);
       form.append(modelField);
 
-      // Thinking Select (if supported)
+      // Reasoning effort only appears when the selected model supports it.
       const thinkingField = document.createElement("div");
       thinkingField.className = "settings-model-config-field";
       const thinkingLabel = document.createElement("label");
@@ -717,7 +736,6 @@ function renderModelConfigurationSection(
       modelSelect.addEventListener("change", updateThinkingOptions);
       form.append(thinkingField);
 
-      // Buttons & Feedback
       const actions = document.createElement("div");
       actions.className = "settings-model-config-actions";
 
@@ -828,7 +846,7 @@ function renderConnectionInspector(
     copy.type = "button";
     copy.className = "settings-command-button settings-command-button--secondary";
     setCopyButtonLabel(copy, messages.connectionCopyDetails);
-    const report = diagnosticText(hostId, item);
+    const report = buildDiagnosticsReport(hostId, item);
     copy.addEventListener("click", () => {
       copyDiagnosticsToClipboard(document, copy, report, messages, messages.connectionCopyDetails);
     });
@@ -928,12 +946,10 @@ function connectionItems(
   ];
 }
 
-// Lets another surface (currently: the Agent picker's error indicator, see
-// renderer-agent-picker.ts) ask the Connections page to focus a specific
-// Agent's row the next time it mounts, instead of falling back to "the
-// first Agent that needs attention". Consumed once, then cleared — if the
-// requested Agent isn't present under whichever Host tab is selected by
-// default, this silently falls through to the existing fallback below.
+// Another surface (today: the Agent picker's error indicator) can ask the
+// Connections page to focus one Agent the next time it mounts. The request is
+// consumed once; if the Agent lives under a different default Host tab it
+// silently falls through to the regular "first needy item" fallback.
 let pendingFocusAgent: string | null = null;
 
 export function requestConnectionsPageFocus(agentKey: string): void {
@@ -1015,31 +1031,30 @@ export function createConnectionsSettingsPage(
       let disposeHostScroller = (): void => undefined;
 
       const diagnostics = getDiagnostics();
+
+      const setRefreshBusy = (busy: boolean): void => {
+        refresh.disabled = busy;
+        refresh.replaceChildren(
+          createRendererSettingsIcon("diagnose", 16),
+          busy ? messages.connectionRefreshing : messages.connectionRefresh,
+        );
+      };
+
       const runRefresh = (): void => {
         if (pending || !diagnostics) return;
         pending = true;
-        refresh.disabled = true;
-        refresh.replaceChildren(
-          createRendererSettingsIcon("diagnose", 16),
-          messages.connectionRefreshing,
-        );
+        setRefreshBusy(true);
         void context.runLatest(() => diagnostics.refresh(), {
           success() {
             pending = false;
-            refresh.disabled = false;
-            refresh.replaceChildren(
-              createRendererSettingsIcon("diagnose", 16),
-              messages.connectionRefresh,
-            );
+            setRefreshBusy(false);
             render(diagnostics.snapshot());
           },
           failure(error) {
             pending = false;
-            refresh.disabled = false;
-            refresh.replaceChildren(
-              createRendererSettingsIcon("diagnose", 16),
-              messages.connectionRefresh,
-            );
+            setRefreshBusy(false);
+            // A diagnostics crash still has to surface somewhere: repaint
+            // every agent as errored so the failure is inspectable.
             const snapshot = diagnostics.snapshot();
             render({
               ...snapshot,
@@ -1114,6 +1129,7 @@ export function createConnectionsSettingsPage(
             selectedHostId = host.hostId;
             render(latestSnapshot);
           });
+          // Roving arrow-key focus across the Host tabs.
           tab.addEventListener("keydown", (event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
@@ -1178,6 +1194,7 @@ export function createConnectionsSettingsPage(
           renderConnectionInspector(document, inspector, item, selectedHost.hostId, messages, diagnostics);
         };
 
+        // The Renderer adapter row stays pinned above the groupable Agents.
         const pinnedItem = items.find((item) => item.key === "renderer-adapter");
         if (pinnedItem) {
           const row = createConnectionRow(
@@ -1191,8 +1208,7 @@ export function createConnectionsSettingsPage(
           rows.append(row);
         }
 
-        // Only real, switchable external Agents participate in the
-        // Main / More grouping — the Renderer adapter above stays pinned.
+        // Only real, switchable external Agents join the Main/More grouping.
         const groupableItems = items.filter(
           (item): item is ConnectionListItem & { agentSnapshot: RendererConnectionAgentSnapshot } =>
             item.agentSnapshot !== undefined,
@@ -1218,8 +1234,8 @@ export function createConnectionsSettingsPage(
         };
 
         let draggingAgent: ExternalRendererAgent | null = null;
-        // Assigned below only when there is at least one groupable Agent to
-        // show a More zone for; guarded everywhere it's read.
+        // Only created when there is at least one groupable Agent; every read
+        // is guarded by a null check.
         let moreZone: HTMLElement | null = null;
         const clearDropIndicators = (): void => {
           for (const row of rowElements.values()) row.dataset.connectionDropIndicator = "";
@@ -1372,8 +1388,8 @@ export function createConnectionsSettingsPage(
       };
 
       render(diagnostics?.snapshot() ?? null);
-      // Keep the Main / More grouping in sync with any other open picker or
-      // settings instance (e.g. the Agent picker's "Manage" shortcut).
+      // Keep the Main/More grouping in sync with other surfaces (e.g. the
+      // Agent picker's "Manage" shortcut).
       const unsubscribeGroup = groupPreference.subscribe(() =>
         render(diagnostics?.snapshot() ?? latestSnapshot),
       );

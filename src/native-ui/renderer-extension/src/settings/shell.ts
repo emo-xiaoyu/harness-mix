@@ -1,3 +1,6 @@
+// Settings dialog shell: a shadow-DOM <dialog> with brand header, sectioned
+// sidebar navigation and a page host. Pages mount into a fresh page scope per
+// activation; the shell never lets a broken page block navigation.
 import settingsCss from "./shell.css";
 import accountsCss from "./accounts.css";
 import skinMarketCss from "./skin-market.css";
@@ -43,7 +46,7 @@ export function isRendererSettingsDialogSupported(
   return typeof dialog.showModal === "function" && typeof dialog.close === "function";
 }
 
-function setActiveNavigation(
+function markCurrentNavButton(
   buttons: ReadonlyMap<string, HTMLButtonElement>,
   activePageId: string,
 ): void {
@@ -53,25 +56,18 @@ function setActiveNavigation(
   }
 }
 
-export function mountRendererSettingsShell(
-  registry?: RendererSettingsPageRegistry,
-  ownerDocument: Document = document,
-  messages: RendererSettingsMessages = DEFAULT_RENDERER_SETTINGS_MESSAGES,
-): RendererSettingsShell {
-  const resolvedRegistry = registry ?? createDefaultRendererSettingsRegistry(messages);
-  if (!ownerDocument.body) throw new Error("Renderer document body is unavailable");
-  if (ownerDocument.querySelector(`[${SETTINGS_SHELL_ATTRIBUTE}]`)) {
-    throw new Error("A harnessmix settings shell is already mounted");
-  }
-
-  const root = ownerDocument.createElement("div");
-  root.setAttribute(SETTINGS_SHELL_ATTRIBUTE, "v1");
-  root.lang = messages.locale;
-  root.style.colorScheme = RENDERER_SETTINGS_COLOR_SCHEME;
-  const shadow = root.attachShadow({ mode: "open" });
-  const style = ownerDocument.createElement("style");
-  style.textContent = `${settingsCss}\n${accountsCss}\n${skinMarketCss}\n${petMarketCss}`;
-
+// Builds the static dialog chrome (header, brand, close control) and returns
+// the handles the shell controller needs to wire behavior.
+function buildDialogChrome(
+  ownerDocument: Document,
+  messages: RendererSettingsMessages,
+): {
+  dialog: HTMLDialogElement;
+  frame: HTMLDivElement;
+  header: HTMLElement;
+  brandTitle: HTMLElement;
+  closeButton: HTMLButtonElement;
+} {
   const dialog = ownerDocument.createElement("dialog");
   dialog.className = "harnessmix-settings-dialog";
   const frame = ownerDocument.createElement("div");
@@ -106,12 +102,50 @@ export function mountRendererSettingsShell(
   closeButton.append(createRendererSettingsIcon("close", 18));
   headerActions.append(closeButton);
   header.append(brand, headerActions);
+  frame.append(header);
+  return { dialog, frame, header, brandTitle, closeButton };
+}
+
+function buildNavButton(
+  ownerDocument: Document,
+  icon: Parameters<typeof createRendererSettingsIcon>[0],
+  label: string,
+): HTMLButtonElement {
+  const button = ownerDocument.createElement("button");
+  button.type = "button";
+  button.className = "settings-nav-button";
+  button.append(createRendererSettingsIcon(icon, 17));
+  const text = ownerDocument.createElement("span");
+  text.textContent = label;
+  button.append(text);
+  return button;
+}
+
+export function mountRendererSettingsShell(
+  registry?: RendererSettingsPageRegistry,
+  ownerDocument: Document = document,
+  messages: RendererSettingsMessages = DEFAULT_RENDERER_SETTINGS_MESSAGES,
+): RendererSettingsShell {
+  const resolvedRegistry = registry ?? createDefaultRendererSettingsRegistry(messages);
+  if (!ownerDocument.body) throw new Error("Renderer document body is unavailable");
+  if (ownerDocument.querySelector(`[${SETTINGS_SHELL_ATTRIBUTE}]`)) {
+    throw new Error("A harnessmix settings shell is already mounted");
+  }
+
+  const root = ownerDocument.createElement("div");
+  root.setAttribute(SETTINGS_SHELL_ATTRIBUTE, "v1");
+  root.lang = messages.locale;
+  root.style.colorScheme = RENDERER_SETTINGS_COLOR_SCHEME;
+  const shadow = root.attachShadow({ mode: "open" });
+  const style = ownerDocument.createElement("style");
+  style.textContent = `${settingsCss}\n${accountsCss}\n${skinMarketCss}\n${petMarketCss}`;
+
+  const { dialog, frame, brandTitle, closeButton } = buildDialogChrome(ownerDocument, messages);
 
   const layout = ownerDocument.createElement("div");
   layout.className = "settings-layout";
   const sidebar = ownerDocument.createElement("aside");
   sidebar.className = "settings-sidebar";
-
   const navigation = ownerDocument.createElement("nav");
   navigation.className = "settings-nav";
   navigation.setAttribute("aria-label", messages.sectionsLabel);
@@ -122,7 +156,7 @@ export function mountRendererSettingsShell(
   page.append(pageContent);
   sidebar.append(navigation);
   layout.append(sidebar, page);
-  frame.append(header, layout);
+  frame.append(layout);
   dialog.append(frame);
   dialog.setAttribute("aria-labelledby", brandTitle.id);
   shadow.append(style, dialog);
@@ -144,11 +178,11 @@ export function mountRendererSettingsShell(
     try {
       cleanup?.();
     } catch {
-      // A contributed page cannot block shell navigation or disposal.
+      // A misbehaving contributed page must never break shell teardown.
     }
   };
 
-  const renderMountFailure = (): void => {
+  const showPageUnavailable = (): void => {
     pageContent.replaceChildren();
     const error = ownerDocument.createElement("div");
     error.className = "settings-page-error";
@@ -161,7 +195,8 @@ export function mountRendererSettingsShell(
     if (!definition) throw new Error(`Unknown settings page: ${pageId}`);
     navigationState.select(pageId);
     disposeActivePage();
-    setActiveNavigation(navigationButtons, pageId);
+    markCurrentNavButton(navigationButtons, pageId);
+    page.scrollTop = 0;
     pageContent.replaceChildren();
     const scope = new RendererSettingsPageScope();
     activeScope = scope;
@@ -175,31 +210,27 @@ export function mountRendererSettingsShell(
     } catch {
       scope.dispose();
       activeScope = null;
-      renderMountFailure();
+      showPageUnavailable();
     }
   };
 
-  const appendNavigationSection = (label: string): void => {
+  // Sidebar: "General" leads; a divider labelled "Other" appears before the
+  // updates/about entries; the GitHub star link closes the list.
+  const appendNavSectionLabel = (label: string): void => {
     const section = ownerDocument.createElement("div");
     section.className = "settings-nav-section-label";
     section.textContent = label;
     navigation.append(section);
   };
+  appendNavSectionLabel(messages.generalSection);
   let otherSectionAdded = false;
-  appendNavigationSection(messages.generalSection);
   for (const definition of resolvedRegistry.pages) {
     if ((definition.id === "updates" || definition.id === "about") && !otherSectionAdded) {
-      appendNavigationSection(messages.otherSection);
+      appendNavSectionLabel(messages.otherSection);
       otherSectionAdded = true;
     }
-    const button = ownerDocument.createElement("button");
-    button.type = "button";
-    button.className = "settings-nav-button";
+    const button = buildNavButton(ownerDocument, definition.icon, definition.label);
     button.dataset.pageId = definition.id;
-    button.append(createRendererSettingsIcon(definition.icon, 17));
-    const label = ownerDocument.createElement("span");
-    label.textContent = definition.label;
-    button.append(label);
     navigationButtons.set(definition.id, button);
     navigation.append(button);
   }
@@ -215,6 +246,7 @@ export function mountRendererSettingsShell(
   starLabel.textContent = messages.starOnGitHub;
   starLink.append(starLabel);
   navigation.append(starLink);
+
   const supported = isRendererSettingsDialogSupported(dialog);
   const focusActiveNavigation = (): void => {
     navigationButtons
@@ -227,6 +259,7 @@ export function mountRendererSettingsShell(
     const focusTarget = opener;
     opener = null;
     const closeGeneration = ++lifecycleGeneration;
+    // Restore focus asynchronously; skip when a new open already took over.
     const restoreFocus = (): void => {
       if (
         !disposed &&
@@ -240,14 +273,14 @@ export function mountRendererSettingsShell(
     ownerDocument.defaultView?.setTimeout(restoreFocus, 0);
   };
   const onNavigationClick = (event: MouseEvent): void => {
-    const target =
+    const clicked =
       event.target instanceof Element
         ? event.target.closest<HTMLButtonElement>("button[data-page-id]")
         : null;
-    const pageId = target?.dataset.pageId;
+    const pageId = clicked?.dataset.pageId;
     if (!pageId || pageId === navigationState.activePageId) return;
     activatePage(pageId);
-    target.focus();
+    clicked.focus();
   };
   const onCloseClick = (): void => api.close();
   const onDialogClick = (event: MouseEvent): void => {
@@ -320,9 +353,10 @@ export function installRendererSettingsShell(
   if (ownerWindow) {
     ownerWindow.__harnessmixSettingsShellV1 = shell;
   }
-  const dispose = shell.dispose.bind(shell);
+  // Keep the window bookkeeping in sync with the shell's lifetime.
+  const rawDispose = shell.dispose.bind(shell);
   shell.dispose = () => {
-    dispose();
+    rawDispose();
     if (ownerWindow && ownerWindow.__harnessmixSettingsShellV1 === shell) {
       delete ownerWindow.__harnessmixSettingsShellV1;
     }

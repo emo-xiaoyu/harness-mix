@@ -1,3 +1,8 @@
+/**
+ * Pets API client (catalog / community market / preview / install / select).
+ * Results are cast to the readonly shapes below; `normalizeRendererPetSelection`
+ * is the one defensive coercion for data arriving from storage.
+ */
 export interface RendererPetItem {
   readonly id: string;
   readonly displayName: string;
@@ -88,19 +93,15 @@ export interface RendererPetsClient {
 export function createRendererPetsClient(
   send: (method: string, params: unknown) => Promise<unknown>,
 ): RendererPetsClient {
+  const call = <T>(method: string, params: unknown): Promise<T> =>
+    send(method, params) as Promise<T>;
   return {
-    catalog: async () => (await send("harnessmix/pets/catalog", {})) as RendererPetCatalogResult,
-    community: async (query = {}) =>
-      (await send("harnessmix/pets/community", query)) as RendererPetCommunityResult,
-    preview: async (id: string) =>
-      (await send("harnessmix/pets/preview", { id })) as RendererPetPreviewResult,
-    install: async (params: RendererPetInstallParams) =>
-      (await send("harnessmix/pets/install", params)) as RendererPetInstallResult,
-    uninstall: async (id: string) =>
-      (await send("harnessmix/pets/uninstall", { id })) as { id: string; removed: boolean },
-    selection: async () =>
-      (await send("harnessmix/pets/selection", {})) as RendererPetSelection,
-    select: async (id: string | null) =>
-      (await send("harnessmix/pets/select", { id })) as RendererPetSelection,
+    catalog: () => call<RendererPetCatalogResult>("harnessmix/pets/catalog", {}),
+    community: (query = {}) => call<RendererPetCommunityResult>("harnessmix/pets/community", query),
+    preview: (id) => call<RendererPetPreviewResult>("harnessmix/pets/preview", { id }),
+    install: (params) => call<RendererPetInstallResult>("harnessmix/pets/install", params),
+    uninstall: (id) => call<{ id: string; removed: boolean }>("harnessmix/pets/uninstall", { id }),
+    selection: () => call<RendererPetSelection>("harnessmix/pets/selection", {}),
+    select: (id) => call<RendererPetSelection>("harnessmix/pets/select", { id }),
   };
 }

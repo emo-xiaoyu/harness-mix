@@ -1,3 +1,5 @@
+/** Update RPCs get both a timeout and abort handling so settings pages can
+ * cancel in-flight checks when the user navigates away. */
 export const RENDERER_UPDATE_REQUEST_TIMEOUT_MS = 15_000;
 
 export class RendererUpdateRequestTimeoutError extends Error {
@@ -14,36 +16,32 @@ export function runBoundedRendererUpdateRequest<T>(
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
-    const settle = (handler: () => void): void => {
+    const settle = (finish: () => void): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", abort);
-      handler();
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      finish();
     };
-    const timeout = setTimeout(() => {
+    const timer = setTimeout(() => {
       settle(() => reject(new RendererUpdateRequestTimeoutError()));
     }, timeoutMs);
-    const abort = (): void => {
+    const onAbort = (): void => {
       settle(() => reject(new Error("Update request was aborted")));
     };
 
-    const rejectRequest = (error: unknown): void => {
-      settle(() => reject(error));
-    };
-
     if (signal.aborted) {
-      abort();
+      onAbort();
       return;
     }
-    signal.addEventListener("abort", abort, { once: true });
+    signal.addEventListener("abort", onAbort, { once: true });
     try {
       void operation().then(
         (value) => settle(() => resolve(value)),
-        (error) => rejectRequest(error),
+        (error) => settle(() => reject(error)),
       );
     } catch (error) {
-      rejectRequest(error);
+      settle(() => reject(error));
     }
   });
 }

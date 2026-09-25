@@ -1,19 +1,19 @@
 import { projectIcon } from "../harness-mix-icons.js";
 
-// 设置页共享的 Harness 品牌图标：优先用真实品牌 SVG（projectIcon，含单色 mask 处理），
-// 找不到时回退为首字母圆角徽标，保证任何 id 都有一个可用的视觉锚点。
-
+// Shared brand mark for harnesses across the settings pages. When the real
+// branded SVG is unavailable (unknown id, masked artwork), fall back to a
+// rounded initial-letter badge so every harness keeps a recognizable anchor.
 export function createHarnessIconElement(
   ownerDocument: Document,
   harnessId: string,
   displayName: string,
   size = 16,
 ): HTMLElement {
-  const icon = projectIcon("harnesses", harnessId, size, ownerDocument);
-  if (icon) return icon;
+  const branded = projectIcon("harnesses", harnessId, size, ownerDocument);
+  if (branded) return branded;
   const badge = ownerDocument.createElement("span");
-  const label = (displayName || harnessId || "?").trim().slice(0, 1).toUpperCase();
-  badge.textContent = label;
+  const initial = (displayName || harnessId || "?").trim().slice(0, 1).toUpperCase();
+  badge.textContent = initial;
   badge.style.display = "inline-flex";
   badge.style.alignItems = "center";
   badge.style.justifyContent = "center";

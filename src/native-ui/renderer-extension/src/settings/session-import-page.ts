@@ -20,24 +20,29 @@ export type RendererImportedThreadOpener = (
   signal: AbortSignal,
 ) => Promise<void>;
 
+// Native session ids get long; show a short head+tail form with an ellipsis.
 function shortSessionId(value: string): string {
   return value.length <= 18 ? value : `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
-function createStatus(document: Document, message: string, error = false): HTMLElement {
+function buildStatusNotice(
+  document: Document,
+  message: string,
+  isError = false,
+): HTMLElement {
   const status = document.createElement("div");
-  status.className = error
+  status.className = isError
     ? "settings-session-import-status is-error"
     : "settings-session-import-status";
-  status.setAttribute("role", error ? "alert" : "status");
-  status.append(createRendererSettingsIcon(error ? "alert" : "download", 18));
+  status.setAttribute("role", isError ? "alert" : "status");
+  status.append(createRendererSettingsIcon(isError ? "alert" : "download", 18));
   const copy = document.createElement("span");
   copy.textContent = message;
   status.append(copy);
   return status;
 }
 
-function createAccessibleText(document: Document, message: string): HTMLElement {
+function buildHiddenText(document: Document, message: string): HTMLElement {
   const text = document.createElement("span");
   text.className = "settings-visually-hidden";
   text.textContent = message;
@@ -55,6 +60,7 @@ export function createSessionImportSettingsPage(
     icon: "session-import",
     mount(context: RendererSettingsPageMountContext) {
       const document = context.content.ownerDocument;
+
       const header = document.createElement("div");
       header.className = "settings-session-import-header";
       const heading = document.createElement("h2");
@@ -136,7 +142,7 @@ export function createSessionImportSettingsPage(
         readonly candidate: HarnessSessionImportCandidate;
       }> = [];
 
-      const updateImportActions = (): void => {
+      const syncBusyState = (): void => {
         listControls.setBusy(importingId !== null, importingId !== null);
         for (const button of sourceButtons) button.disabled = importingId !== null;
         for (const { button, candidate } of actions) {
@@ -158,7 +164,7 @@ export function createSessionImportSettingsPage(
         listControls.setTotal(0);
         candidates = [];
         actions = [];
-        const status = createStatus(document, messages.sessionImportUnavailable);
+        const status = buildStatusNotice(document, messages.sessionImportUnavailable);
         content.replaceChildren(status);
         if (focus) {
           status.tabIndex = -1;
@@ -173,7 +179,7 @@ export function createSessionImportSettingsPage(
           return;
         }
         actions = [];
-        const status = createStatus(
+        const status = buildStatusNotice(
           document,
           operation === "import" ? messages.sessionImportFailed : messages.sessionImportLoadFailed,
           true,
@@ -185,6 +191,8 @@ export function createSessionImportSettingsPage(
         }
       };
 
+      // Shown when a session imported fine but the Desktop could not open the
+      // resulting thread: expose the project path and a retry action.
       const renderOpenRecovery = (
         candidate: HarnessSessionImportCandidate,
         threadId: HostThreadId,
@@ -217,7 +225,7 @@ export function createSessionImportSettingsPage(
         const setCopyLabel = (label: string): void => {
           copyPath.replaceChildren(createRendererSettingsIcon("copy", 15), label);
         };
-        const showCopyFeedback = (label: string): void => {
+        const flashCopyFeedback = (label: string): void => {
           setCopyLabel(label);
           document.defaultView?.setTimeout(
             () => setCopyLabel(messages.sessionImportCopyProjectPath),
@@ -228,12 +236,12 @@ export function createSessionImportSettingsPage(
         copyPath.addEventListener("click", () => {
           const clipboard = document.defaultView?.navigator.clipboard;
           if (!clipboard) {
-            showCopyFeedback(messages.sessionImportPathCopyFailed);
+            flashCopyFeedback(messages.sessionImportPathCopyFailed);
             return;
           }
           void clipboard.writeText(candidate.cwd).then(
-            () => showCopyFeedback(messages.sessionImportPathCopied),
-            () => showCopyFeedback(messages.sessionImportPathCopyFailed),
+            () => flashCopyFeedback(messages.sessionImportPathCopied),
+            () => flashCopyFeedback(messages.sessionImportPathCopyFailed),
           );
         });
         path.append(cwd, copyPath);
@@ -272,12 +280,120 @@ export function createSessionImportSettingsPage(
         recovery.focus();
       };
 
+      const formatUpdatedAt = (value: number): string =>
+        `${messages.sessionImportUpdatedAt}: ${new Intl.DateTimeFormat(
+          messages.locale === "zh-CN" ? "zh-CN" : "en",
+          { dateStyle: "medium", timeStyle: "short" },
+        ).format(new Date(value))}`;
+
+      const candidateRow = (candidate: HarnessSessionImportCandidate): HTMLElement => {
+        const row = document.createElement("article");
+        row.className = "settings-session-import-row";
+        row.dataset.sessionImportId = candidate.nativeSessionId;
+
+        const copy = document.createElement("div");
+        copy.className = "settings-session-import-row__copy";
+        const title = document.createElement("strong");
+        title.textContent = candidate.title ?? messages.sessionImportUntitled;
+        const metadata = document.createElement("span");
+        metadata.textContent = formatUpdatedAt(candidate.updatedAt);
+        const cwd = document.createElement("code");
+        cwd.className = "settings-session-import-row__cwd";
+        cwd.textContent = candidate.cwd;
+        cwd.title = candidate.cwd;
+        const identity = document.createElement("span");
+        identity.textContent = `${messages.sessionImportSessionId}: ${shortSessionId(candidate.nativeSessionId)}`;
+        identity.title = candidate.nativeSessionId;
+        identity.setAttribute("aria-hidden", "true");
+        copy.append(
+          title,
+          metadata,
+          cwd,
+          identity,
+          buildHiddenText(
+            document,
+            `${messages.sessionImportSessionId}: ${candidate.nativeSessionId}`,
+          ),
+        );
+
+        const actionArea = document.createElement("div");
+        actionArea.className = "settings-session-import-row__action";
+        if (candidate.running !== false) {
+          const running = document.createElement("span");
+          running.className = "settings-session-import-running";
+          running.textContent =
+            candidate.running === null
+              ? messages.sessionImportRunningUnknown
+              : messages.sessionImportRunning;
+          running.title = messages.sessionImportRunningHint;
+          running.setAttribute("aria-hidden", "true");
+          actionArea.append(
+            running,
+            buildHiddenText(
+              document,
+              `${running.textContent}: ${messages.sessionImportRunningHint}`,
+            ),
+          );
+        }
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "settings-command-button";
+        action.dataset.sessionImportAction = "import";
+        action.addEventListener("click", () => {
+          if (candidate.running === true || importingId !== null || selectedHarness === null)
+            return;
+          const harnessId = selectedHarness;
+          const client = getClient();
+          if (!client) {
+            renderUnavailable(true);
+            return;
+          }
+          importingId = candidate.nativeSessionId;
+          refresh.disabled = true;
+          syncBusyState();
+          // Track whether the import itself committed: a failure after that
+          // point is an "open" failure and gets the recovery panel instead.
+          let committedThreadId: HostThreadId | null = null;
+          void context.runLatest(
+            async (signal) => {
+              const result = await client.importHarnessSession({
+                harnessId,
+                nativeSessionId: candidate.nativeSessionId,
+              });
+              committedThreadId = result.threadId;
+              if (!signal.aborted) await openImportedThread(result.threadId, signal);
+            },
+            {
+              success() {
+                importingId = null;
+                refresh.disabled = false;
+                syncBusyState();
+              },
+              failure(error) {
+                importingId = null;
+                syncBusyState();
+                refresh.disabled = false;
+                if (committedThreadId) {
+                  renderOpenRecovery(candidate, committedThreadId);
+                } else {
+                  renderFailure(error, "import");
+                }
+              },
+            },
+          );
+        });
+        actions.push({ button: action, candidate });
+        actionArea.append(action);
+        row.append(copy, actionArea);
+        return row;
+      };
+
       const renderCandidates = (): void => {
         actions = [];
         content.replaceChildren();
         if (candidates.length === 0) {
           content.append(
-            createStatus(
+            buildStatusNotice(
               document,
               listControls.params().query
                 ? messages.sessionImportNoMatches
@@ -289,109 +405,10 @@ export function createSessionImportSettingsPage(
         const list = document.createElement("div");
         list.className = "settings-session-import-list";
         for (const candidate of candidates) {
-          const row = document.createElement("article");
-          row.className = "settings-session-import-row";
-          row.dataset.sessionImportId = candidate.nativeSessionId;
-
-          const copy = document.createElement("div");
-          copy.className = "settings-session-import-row__copy";
-          const title = document.createElement("strong");
-          title.textContent = candidate.title ?? messages.sessionImportUntitled;
-          const metadata = document.createElement("span");
-          metadata.textContent = `${messages.sessionImportUpdatedAt}: ${new Intl.DateTimeFormat(
-            messages.locale === "zh-CN" ? "zh-CN" : "en",
-            { dateStyle: "medium", timeStyle: "short" },
-          ).format(new Date(candidate.updatedAt))}`;
-          const cwd = document.createElement("code");
-          cwd.className = "settings-session-import-row__cwd";
-          cwd.textContent = candidate.cwd;
-          cwd.title = candidate.cwd;
-          const identity = document.createElement("span");
-          identity.textContent = `${messages.sessionImportSessionId}: ${shortSessionId(candidate.nativeSessionId)}`;
-          identity.title = candidate.nativeSessionId;
-          identity.setAttribute("aria-hidden", "true");
-          copy.append(
-            title,
-            metadata,
-            cwd,
-            identity,
-            createAccessibleText(
-              document,
-              `${messages.sessionImportSessionId}: ${candidate.nativeSessionId}`,
-            ),
-          );
-
-          const actionArea = document.createElement("div");
-          actionArea.className = "settings-session-import-row__action";
-          if (candidate.running !== false) {
-            const running = document.createElement("span");
-            running.className = "settings-session-import-running";
-            running.textContent =
-              candidate.running === null
-                ? messages.sessionImportRunningUnknown
-                : messages.sessionImportRunning;
-            running.title = messages.sessionImportRunningHint;
-            running.setAttribute("aria-hidden", "true");
-            actionArea.append(
-              running,
-              createAccessibleText(
-                document,
-                `${running.textContent}: ${messages.sessionImportRunningHint}`,
-              ),
-            );
-          }
-          const action = document.createElement("button");
-          action.type = "button";
-          action.className = "settings-command-button";
-          action.dataset.sessionImportAction = "import";
-          action.addEventListener("click", () => {
-            if (candidate.running === true || importingId !== null || selectedHarness === null)
-              return;
-            const harnessId = selectedHarness;
-            const client = getClient();
-            if (!client) {
-              renderUnavailable(true);
-              return;
-            }
-            importingId = candidate.nativeSessionId;
-            refresh.disabled = true;
-            updateImportActions();
-            let committedThreadId: HostThreadId | null = null;
-            void context.runLatest(
-              async (signal) => {
-                const result = await client.importHarnessSession({
-                  harnessId,
-                  nativeSessionId: candidate.nativeSessionId,
-                });
-                committedThreadId = result.threadId;
-                if (!signal.aborted) await openImportedThread(result.threadId, signal);
-              },
-              {
-                success() {
-                  importingId = null;
-                  refresh.disabled = false;
-                  updateImportActions();
-                },
-                failure(error) {
-                  importingId = null;
-                  updateImportActions();
-                  refresh.disabled = false;
-                  if (committedThreadId) {
-                    renderOpenRecovery(candidate, committedThreadId);
-                  } else {
-                    renderFailure(error, "import");
-                  }
-                },
-              },
-            );
-          });
-          actions.push({ button: action, candidate });
-          actionArea.append(action);
-          row.append(copy, actionArea);
-          list.append(row);
+          list.append(candidateRow(candidate));
         }
         content.append(list);
-        updateImportActions();
+        syncBusyState();
       };
 
       const load = (): void => {
@@ -406,7 +423,7 @@ export function createSessionImportSettingsPage(
         listControls.setBusy(true);
         refresh.disabled = true;
         setRefreshLabel(true);
-        content.replaceChildren(createStatus(document, messages.sessionImportRefreshing));
+        content.replaceChildren(buildStatusNotice(document, messages.sessionImportRefreshing));
         const requestedHarness = selectedHarness;
         const pageParams = listControls.params();
         void context.runLatest(
@@ -417,7 +434,8 @@ export function createSessionImportSettingsPage(
               result.harnesses[0]?.harnessId ??
               null;
             if (signal.aborted) throw new Error("Session import selection changed");
-            // Keep the selector available even if one Harness's current native protocol is unsupported.
+            // Keep every source selectable even when one Harness's current
+            // native protocol is unsupported.
             sources = result.harnesses;
             selectedHarness = selected;
             if (selected !== requestedHarness) {

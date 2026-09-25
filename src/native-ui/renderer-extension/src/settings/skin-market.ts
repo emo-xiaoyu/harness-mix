@@ -12,6 +12,8 @@ import {
   type RendererSkinId,
 } from "./skin-runtime.js";
 
+// Per-locale card copy for the skins market. Skins are a strictly visual
+// layer; the safety note spells that out for users.
 const COPY = {
   en: {
     title: "Skins",
@@ -43,6 +45,7 @@ const COPY = {
   },
 } as const;
 
+// Miniature window mock drawn behind each skin card.
 function previewChrome(document: Document, skin: RendererSkinDefinition): HTMLElement {
   const preview = document.createElement("div");
   preview.className = "skin-preview";
@@ -96,7 +99,7 @@ export function createSkinSettingsPage(
       let selected = readActiveRendererSkin(document);
       const cards = new Map<RendererSkinId, HTMLElement>();
 
-      const renderSelection = (): void => {
+      const syncSelection = (): void => {
         for (const [id, card] of cards) {
           const active = id === selected;
           card.toggleAttribute("data-selected", active);
@@ -130,6 +133,7 @@ export function createSkinSettingsPage(
         const description = document.createElement("p");
         description.className = "skin-card__description";
         if (skin.sourceUrl) {
+          // Bundled theme: credit the upstream open-source project it came from.
           description.append(`${copy.included} `);
           const source = document.createElement("a");
           source.href = skin.sourceUrl;
@@ -158,7 +162,7 @@ export function createSkinSettingsPage(
         apply.dataset.skinAction = skin.id;
         apply.addEventListener("click", () => {
           selected = applyRendererSkin(skin.id, document);
-          renderSelection();
+          syncSelection();
         });
         footer.append(palette, apply);
         body.append(titleRow, description, footer);
@@ -166,7 +170,7 @@ export function createSkinSettingsPage(
         cards.set(skin.id, card);
         grid.append(card);
       }
-      renderSelection();
+      syncSelection();
       context.content.append(heading, introduction, safety, grid);
       return undefined;
     },
