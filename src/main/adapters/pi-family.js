@@ -149,22 +149,27 @@ function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes =
           onEvent: event => forwardEvent(process, event, emitEvent),
           onDiagnostic: (message) => diagnostic(message),
         }, collaboration);
-        const state = await process.command({ type: "get_state" });
-        let model = state?.model ? { id: state.model.id, name: state.model.name, provider: state.model.provider } : undefined;
-        // 应用草稿期选择的模型与思考档位（仍由原生程序执行切换）
-        if (thread.options?.model?.provider) {
-          model = await process.command({ type: "set_model", provider: thread.options.model.provider, modelId: thread.options.model.id })
-            .then((m) => ({ id: m.id ?? thread.options.model.id, name: m.name ?? thread.options.model.name, provider: m.provider ?? thread.options.model.provider }))
-            .catch(() => model);
+        try {
+          const state = await process.command({ type: "get_state" });
+          let model = state?.model ? { id: state.model.id, name: state.model.name, provider: state.model.provider } : undefined;
+          // 应用草稿期选择的模型与思考档位（仍由原生程序执行切换）
+          if (thread.options?.model) {
+            if (!thread.options.model.provider) throw new Error(`${name} 模型选择缺少原生 provider`);
+            const selected = await process.command({ type: "set_model", provider: thread.options.model.provider, modelId: thread.options.model.id });
+            model = { id: selected?.id ?? thread.options.model.id, name: selected?.name ?? thread.options.model.name, provider: selected?.provider ?? thread.options.model.provider };
+          }
+          if (thread.options?.thinking) await process.command({ type: "set_thinking_level", level: thread.options.thinking });
+          return {
+            process,
+            collaborationEnabled: !!collaboration,
+            nativeSessionId: state?.sessionId ?? thread.nativeSessionId,
+            nativeSessionFile: state?.sessionFile,
+            model,
+          };
+        } catch (error) {
+          process.stop();
+          throw error;
         }
-        if (thread.options?.thinking) await process.command({ type: "set_thinking_level", level: thread.options.thinking }).catch(() => {});
-        return {
-          process,
-          collaborationEnabled: !!collaboration,
-          nativeSessionId: state?.sessionId ?? thread.nativeSessionId,
-          nativeSessionFile: state?.sessionFile,
-          model,
-        };
       },
 
       async send(session, text, hooks, attachments) {

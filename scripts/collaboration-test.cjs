@@ -41,13 +41,16 @@ async function main() {
     // ACP 系交给适配器按会话目录动态解析；无对应档位的 Harness 保持原生默认
     assert.deepEqual(workerSessionOptions('claude'), { permissionMode: 'bypassPermissions' });
     assert.deepEqual(workerSessionOptions('antigravity'), { permissionMode: 'skip' });
-    assert.deepEqual(workerSessionOptions('pi'), { permissionMode: 'no-approve' });
+    assert.deepEqual(workerSessionOptions('pi'), {}, 'Pi 内置工具默认执行，no-approve 仅控制项目资源');
+    assert.deepEqual(workerSessionOptions('pi', true), {}, 'Pi 可作为团队成员，扩展交互仍由审批守卫停止');
+    assert.throws(() => workerSessionOptions('dsh', true), /没有已验证的原生免询问模式/);
     assert.deepEqual(workerSessionOptions('omp'), { permissionMode: 'yolo' }, 'OMP 免询问档是 --approval-mode yolo（no-approve 是 Pi 的旗标）');
     assert.deepEqual(workerSessionOptions('zcode'), { permissionMode: 'yolo' });
     assert.deepEqual(workerSessionOptions('codex-harness'), { turnPermissions: { approvalPolicy: 'never', sandboxPolicy: 'dangerFullAccess' } });
     assert.deepEqual(workerSessionOptions('codebuddy'), { workerPermissions: 'full' });
     assert.deepEqual(workerSessionOptions('qoder'), { workerPermissions: 'full' });
     assert.deepEqual(workerSessionOptions('grok'), { workerPermissions: 'full' });
+    assert.deepEqual(workerSessionOptions('grok', true), { workerPermissions: 'full-required' });
     assert.deepEqual(workerSessionOptions('dsh'), {}, 'DSH 走自有 Web Remote 审批，不设置 ACP 档位');
     assert.deepEqual(workerSessionOptions('kiro-cli'), {}, 'Kiro autopilot 不是 Host 权限档位');
     assert.deepEqual(workerSessionOptions('worker'), {});
@@ -75,14 +78,15 @@ async function main() {
     assert.deepEqual(parent.activeMentions, ['worker', 'reviewer'], '转义提及在真实发送路径中授权两个 Harness');
     assert.match(leadPrompt, /create a team member for each assigned Harness/, 'Lead 保留用户指定的跨 Harness 角色分工');
     assert.match(leadPrompt, /untrusted historical data[\s\S]*prior answer/);
-    assert.match(leadPrompt, /Recovery checkpoint:[\s\S]*interrupted-fixture \(worker\)[\s\S]*call list_delegations now/);
+    assert.match(leadPrompt, /Recovery checkpoint:[\s\S]*interrupted-fixture \(worker\)[\s\S]*list your delegations now/);
     assert.equal(rt.collaboration.jobs.get('interrupted-fixture').status, 'interrupted', 'Prompt injection never auto-resumes interrupted work');
     rt.collaboration.jobs.delete('interrupted-fixture');
     assert.ok(!JSON.stringify(rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id)).includes('[Harness Mix collaboration]'), 'Routing guidance stays out of displayed user text');
     const init = await transport.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     assert.ok(init.capabilities.tools);
     const catalog = await transport.request('tools/list', {});
-    assert.equal(catalog.tools.length, 16);
+    assert.equal(catalog.tools.length, 17);
+    assert.ok(catalog.tools.some(tool => tool.name === 'session_info'), 'CLI 身份自检工具进入目录');
     assert.ok(catalog.tools.some(tool => tool.name === 'review_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'apply_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'create_agent_team'));
@@ -103,11 +107,6 @@ async function main() {
       assert.equal(assistant.reviewId, undefined);
       assert.equal(assistant.reviewOwnerThreadId, parent.id);
     }
-    const waitingChild = rt.threads.find(t => t.id === jobs[0].childId);
-    waitingChild && pending.get(waitingChild.id).s.emit({ kind: 'approval', requestId: 'native-approval', method: 'confirm', title: 'Allow test?' });
-    assert.equal(rt.collaboration.view(jobs[0]).display_status, 'waiting_approval');
-    await wait(() => rt.core.getItemsForTurn(rt.execution.lastTurn(parent.id).id).some(item => item.type === 'tool_call' && String(item.output).includes('waiting_approval')));
-    pending.get(jobs[0].childId).s.emit({ kind: 'interaction-responded', requestId: 'native-approval' });
     finish(jobs[0].childId, 'first-result');
     await wait(() => jobs[0].status === 'completed');
     const before = Date.now();
@@ -928,6 +927,69 @@ async function main() {
       await wait(() => twJob2.status === 'cancelled');
       assert.equal(twJob2.status, 'cancelled', '用户显式停止 Lead 回合仍级联取消团队成员作业');
     } finally { await twRt.close(); }
+
+    // ---- CLI 前端：无 collaborationTools 的 harness 也能当 lead（双措辞注入） ----
+    let cliLeadPrompt = '';
+    const cliLead = { manifest: { id: 'clilead', name: 'CliLead', capabilities: {} },
+      async open(input) { return { emit: input.emit, collaborationEnabled: false }; },
+      async send(session, text) { cliLeadPrompt = text; }, async cancel() {}, async close() {} };
+    rt.adapters.set('clilead', cliLead); rt.status.clilead = { available: true };
+    const cliThread = await rt.createThread({ harnessId: 'clilead', cwd: root });
+    await rt.send(cliThread.id, '#worker 审查 src/ 的改动');
+    assert.ok(rt.execution.isRunning(cliThread.id), '无 MCP harness 的 lead 回合正常启动（旧门槛已撤销）');
+    assert.deepEqual(cliThread.activeMentions, ['worker']);
+    assert.match(cliLeadPrompt, /\[Harness Mix collaboration\]\nYou are the lead coordinator\./);
+    assert.match(cliLeadPrompt, /no collaboration MCP tools; drive collaboration by running the Harness Mix CLI/);
+    assert.match(cliLeadPrompt, new RegExp('collaboration-cli\\.cjs" --thread ' + cliThread.id));
+    assert.match(cliLeadPrompt, /"delegate <agent>"/, 'CLI 措辞给出具体命令');
+    assert.doesNotMatch(cliLeadPrompt, /call delegate_to_agent/, 'CLI 措辞不得引导调用不存在的 MCP 工具');
+    assert.match(leadPrompt, /call delegate_to_agent/, 'MCP lead 的措辞保持工具名（回归锚点）');
+    assert.doesNotMatch(leadPrompt, /collaboration-cli/, 'MCP lead 不注入 CLI 指令');
+    // 成员信封双措辞：按子会话能力选形
+    const fakeTeam = { id: 't-cli', name: 'T', goal: 'g', owner: parent.id, members: [], tasks: [], messages: [], history: [] };
+    const fakeMember = { id: 'm1', name: 'M', role: 'r', agent: 'worker' };
+    const fakeTask = { id: 'tk1', title: 'T1' };
+    rt.sessions.set('child-mcp', { collaborationEnabled: true });
+    rt.sessions.set('child-cli', { collaborationEnabled: false });
+    assert.match(rt.collaboration.teamEnvelope(fakeTeam, fakeMember, fakeTask, 'base', 'child-mcp'), /get_team_state/);
+    const cliEnvelope = rt.collaboration.teamEnvelope(fakeTeam, fakeMember, fakeTask, 'base', 'child-cli');
+    assert.match(cliEnvelope, new RegExp('collaboration-cli\\.cjs" --thread child-cli'));
+    assert.match(cliEnvelope, /team state t-cli/, 'CLI 信封给出可直接执行的命令');
+    assert.match(rt.collaboration.messageEnvelope(fakeTeam, { fromName: 'M', kind: 'text', body: 'hi' }, 'child-cli'), /--thread child-cli/);
+    assert.match(rt.collaboration.messageEnvelope(fakeTeam, { fromName: 'M', kind: 'text', body: 'hi' }, 'child-mcp'), /send_team_message/);
+    rt.sessions.delete('child-mcp'); rt.sessions.delete('child-cli');
+    // 非 MCP 成员可入队（能力门槛已放宽），白名单仍在
+    parent.activeMentions.push('clilead');
+    const stranger = { manifest: { id: 'stranger', name: 'Stranger', capabilities: {} }, async open(i) { return { emit: i.emit }; }, async send() {}, async cancel() {}, async close() {} };
+    rt.adapters.set('stranger', stranger); rt.status.stranger = { available: true };
+    const cliTeam = await call('create_agent_team', { name: 'CT', goal: 'g', members: [
+      { name: 'A', role: 'r1', agent_type: 'clilead' },
+    ] });
+    assert.ok(cliTeam.team_id || cliTeam.id, '无 MCP harness 可成为团队成员');
+    await assert.rejects(call('create_agent_team', { name: 'CT2', goal: 'g', members: [
+      { name: 'B', role: 'r2', agent_type: 'stranger' },
+    ] }), /unselected Harness/, '未提及的 harness 仍被白名单拒绝');
+
+    // 原生策略即使在 yolo 档仍要求确认时，Team 成员应终止且不留下待点的审批卡。
+    const promptWorker = { manifest: { id: 'omp', name: 'Oh My Pi', capabilities: { approvals: true, collaborationTools: true } },
+      async open(input) { return { emit: input.emit }; },
+      async send(session) { session.emit({ kind: 'approval', requestId: 'native-confirm', title: 'Allow native tool?' }); await new Promise(resolve => { session.finish = resolve; }); },
+      async cancel(session) { session.finish?.(); }, async close() {} };
+    rt.adapters.set('omp', promptWorker); rt.status.omp = { available: true };
+    parent.activeMentions.push('omp');
+    const noPromptTeam = await call('create_agent_team', { name: 'No prompt', goal: 'Do work', members: [{ name: 'Worker', role: 'Work', agent_type: 'omp' }] });
+    const noPromptTask = await call('assign_team_task', { team_id: noPromptTeam.team_id, title: 'Native approval', description: 'Run tool', assignee: noPromptTeam.members[0].id });
+    const noPromptJob = await call('delegate_to_agent', { agent_type: 'omp', task: 'Run tool', isolation: 'shared', team_id: noPromptTeam.team_id, member_id: noPromptTeam.members[0].id, team_task_id: noPromptTask.task.id });
+    await wait(() => rt.collaboration.jobs.get(noPromptJob.task_id)?.status !== 'running');
+    const settledNoPromptJob = rt.collaboration.jobs.get(noPromptJob.task_id);
+    assert.ok(settledNoPromptJob.childId, '原生成员会话已创建');
+    assert.equal(rt.core.interactions.pending(settledNoPromptJob.childId)?.length ?? 0, 0, '原生审批不投影成等待用户点击的 Team 卡片');
+    assert.match(settledNoPromptJob.error, /原生策略仍要求确认/);
+    const oneOffPromptJob = await call('delegate_to_agent', { agent_type: 'omp', task: 'Run tool', isolation: 'shared' });
+    await wait(() => rt.collaboration.jobs.get(oneOffPromptJob.task_id)?.status !== 'running');
+    const settledOneOffJob = rt.collaboration.jobs.get(oneOffPromptJob.task_id);
+    assert.equal(rt.core.interactions.pending(settledOneOffJob.childId)?.length ?? 0, 0, '普通协作委派也不等待审批点击');
+    assert.match(settledOneOffJob.error, /原生策略仍要求确认/);
 
     console.log('PASS: real MCP stdio → authenticated Host → parallel native-session adapters → results/follow-up/cancellation, ownership and shared review');
   } finally { transport.stop(); await rt.close(); }

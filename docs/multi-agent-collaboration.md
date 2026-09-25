@@ -25,6 +25,19 @@
 
 `list_agents` 提供真实可用性。旧 `/delegate` 仍是独立的手动委派入口，其完成结果只回投父任务工具卡片，不自动调用父模型。
 
+## CLI 前端（任意 Harness 当 Lead）
+
+上述工具面之外，协作控制面还提供第二个前端：`src/main/host/collaboration-cli.cjs`。它和 MCP 桥（`collaboration-mcp.cjs`）一样，只是控制面 HTTP（loopback + 每线程 Bearer key）的客户端，因此**任何能执行 shell 命令的 Harness 都能当 Lead 与团队成员**——ZCode、grok、cursor、cline 等未接入 MCP 的 Harness 不再受「主代理协作工具」门槛限制。
+
+- **发现**：CLI 按自身 cwd 查平台数据目录下的 `collab-registry/` 实例注册表（Windows `%APPDATA%\harnessmix\collab-registry`；`HARNESS_MIX_COLLAB_REGISTRY_DIR` / `HARNESSMIX_DATA_DIR` 可覆盖；Host 随控制面启停维护，崩溃残留 7 天清扫），目录内唯一 lead 会话自动选用，多候选需 `--thread <id>`；`HARNESS_MIX_COLLAB_URL/KEY` 环境变量优先。Lead 协调指令与团队信封都内嵌了带绝对路径与线程号的完整命令行，模型不需要自行发现。
+- **命令面**：`whoami / agents / delegate / status / followup / cancel / review / apply / resume / delegations / plan / team create|assign|state|update|message|script`，与 MCP 工具一一对应（`run_team_script` 保持异步启动 + 完成唤醒一次的语义，CLI 同样不轮询）。长文本（任务、消息、描述、结果、脚本、计划、成员表）一律走 stdin，规避 Windows argv 引号与长度问题；`--format compact` 输出单行摘要。
+- **退出码**：0 命令成功（不代表子任务成功）；1 服务端拒绝；2 发现失败（无注册/歧义/坏 key）；3 用法错误。错误统一 `{"error":{code,message}}` 进 stderr。
+- **服务端强制不变**：白名单（仅本轮 `#` 显式选择的 Harness 可被委派）、Lead 回合存活检查、并发与每回合配额、隔离决策全部在控制面 `call()` 生效，CLI 不携带任何特权。
+- **受管技能**：Host 启动时把 `harness-mix-collaboration`（CLI 用法指南）按版本 + digest 原子播种到 `~/.agents/skills/` 与 `~/.claude/skills/`；用户改过的副本视为 conflict，不覆盖不引用。
+- **安全边界**：注册表含每线程 key，最坏暴露面是「冒充该 lead 线程调协作操作」，白名单与配额照常兜底。官方 Codex 线程不经 Host、不注入、不注册——CLI 是 Harness Mix 自有工具，任何会话主动运行它不构成官方线程被接管。设计全文见 [cli-collaboration-design.md](cli-collaboration-design.md)。
+
+设计文档：[cli-collaboration-design.md](cli-collaboration-design.md)。
+
 ## Agent Team（不是并行 SubAgent）
 
 Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`Task`、`Message` 提升为 Host Runtime 的持久化一级对象：
@@ -38,6 +51,8 @@ Agent Team 复用同一套原生 Harness Session，但把 `Team`、`Member`、`T
 7. 「中断团队」与原生停止按钮按可恢复中断处理：级联取消成员回合后，Host 向每个在跑成员的原生会话发起一次**有界收尾握手**——成员以纯文本自述「已完成 / 进行中 / 阻塞 / 下一步」，交接落在作业、团队任务与 lead 邮箱（`kind=handoff`，以成员身份呈现），`member_handoff` 进入回放时间轴。「继续协作」的 Lead 指令与 `resume_delegation` 的恢复提示词都会携带这些交接（标注为成员自述、以文件系统为准）。握手默认上限 90 秒（`handshakeTimeoutMs` 可调）；成员不回复或会话已删则静默放弃，不改变中断语义。任务卡上的「取消」与宿主关机不握手：前者语义是放弃，后者必须立即退出。握手期间 `resume_delegation` 会提示稍候。
 
 团队模板支持项目作用域：`<工作目录>/.harness-mix/teams/*.md`（Markdown + YAML frontmatter，声明 `name`、`description` 与 `members` 的 `name/role/agent`，成员必须显式指定 Harness，1-6 人）。解析顺序为**项目 > 用户 > 内置**——同名时文件版就近覆盖存储版，编成随仓库走、可进 PR 评审。文件按 mtime 即时热加载，坏文件跳过并记录告警，不影响其余模板与 # 菜单。会话内编曲器的 # 菜单按当前会话目录合并项目模板（条目标「项目」），设置 → 协作 仍管理用户与内置模板。协议面 `harnessmix/collaboration/team-template/list` 接受可选 `threadId` 以指定项目作用域。
+
+设置 → 协作 的模板编辑器置于模板列表上方，可为每位成员选择 Harness、原生模型与该模型支持的思考强度。项目文件模板的成员也可写 `model`、`provider`、`thinking`；未填写时沿用原生默认。模板选择会把这些配置绑定到本轮创建的 Team，成员首次启动与后续恢复都使用该配置。Agent Team 的 Lead 和成员须使用对应 Harness 实际支持的免询问或完全访问模式；没有已验证模式的 Harness 会在团队创建前被拒绝。Pi 内置工具在 RPC 模式下默认直接执行，因此可作为团队成员；其 `no-approve` 只控制项目资源加载，不是 YOLO 开关。动态 ACP 模式在原生会话握手后确认，若目录没有完全访问档或应用失败则拒绝派发；原生策略或 Pi 扩展若仍发起审批，成员回合会停止并报告原因，不替用户回答审批。普通一次性协作委派同样要求免询问档位，无法满足时拒绝派发。
 
 这与普通委派的区别是：普通委派仍是 Lead → worker → Lead；Agent Team 允许 teammate 围绕同一任务图直接交接、反馈和解锁依赖，同时每个 Harness 继续独立持有自己的模型、工具、权限、账户和原生历史。
 

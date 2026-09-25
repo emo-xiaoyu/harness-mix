@@ -7,6 +7,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 - The default official Codex account and every thread created with it must use Codex Desktop's stock app-server directly, even after another Harness has been used in the same Desktop session. Do not put official Codex thread execution requests, responses, notifications, sessions, models, tools, permissions, or credentials through the Harness Mix Shim, Host, Protocol Core, or Codex adapter. Explicit account-management actions may call the native Codex API, but must not take ownership of official threads.
 - Keep the stock Codex CLI as the Desktop app-server executable. Run Harness Mix as a separate, explicitly selected transport for other Harnesses and `Codex（协作）`; never switch the Desktop's global Codex CLI or app-server connection when the selected Harness changes.
 - Any UI integration must preserve the official Codex request path and behavior. A failure or restart of Harness Mix must not prevent a new default Codex thread or an existing official Codex thread from working. Do not claim native parity from unit tests alone: verify a restarted Desktop and a sequence that uses another Harness, then creates and resumes an official Codex thread.
+- The collaboration CLI (`collaboration-cli.cjs`) and its cwd discovery registry are Harness Mix's own tools and must stay quarantined from official Codex: official Codex threads are never injected with `HARNESS_MIX_*` env vars and never registered in the collaboration registry (`collab-registry/` under the platform data directory). Registry entries hold per-thread keys only; worst-case exposure is impersonating that lead thread's collaboration calls (whitelist, quotas and turn checks still enforced server-side). Never advertise, inject, or auto-run the CLI on official Codex paths.
 
 ## Project Structure & Module Organization
 
@@ -15,7 +16,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 - `src/main/adapters/` — one plugin per harness (`pi.js`, `omp.js`, `dsh.js`, `claude.js`, `antigravity.js`, `codex.js`, `opencode.js`, `grok.js`; Pi/OMP share `pi-family.js`, OpenCode uses native HTTP/SSE via `opencode-server.js`, Grok independently maps native stdio and `_x.ai/*` extensions), registered in `index.js`. New harnesses follow the manifest/factory/session shape documented in `README.md`.
 - `src/native-ui/` — TypeScript sources of the Codex Desktop integration: `renderer-extension/` (injected UI), `desktop-control/` (CDP controller), `shared-contracts/` (shared protocol contracts).
 - `src/assets/icons/` — harness and model icons, embedded at build time.
-- `scripts/` — verification tooling (`check.cjs`, `build-native.cjs`, `native-*-test.cjs`, `e2e-*.cjs`).
+- `scripts/` — verification tooling (`check.cjs`, `build-native.cjs`, `native-*-test.cjs`, `e2e-*.cjs`) and installer packaging under `release/` (`prepare-payload.cjs`, `node-runtime.cjs`, `windows/` Inno Setup setup, `macos/` dmg setup; see `docs/installers.md`).
 - `docs/images/` — Codex Desktop native UI screenshots used in the README. `output/` — build and test artifacts; do not commit.
 
 ## Build, Test, and Development Commands
@@ -23,6 +24,7 @@ Contributor guide for **Harness Mix** — a local kernel that drives native codi
 - `npm install` — install devDependencies (Electron for native smoke, esbuild).
 - `npm start` — launch native mode; restarts Codex Desktop with its stock CLI and a separate Harness Mix Host sidecar.
 - `npm run build:native` — rebuild the Renderer extension, Desktop controller and Rust binaries (requires a Rust toolchain) into `output/native-build/`.
+- `npm run dist:prepare` / `dist:windows` / `dist:macos` — assemble the installer payload and compile the per-platform double-click installers (see `docs/installers.md`).
 - `npm run check` — syntax-check every `.js`/`.cjs` under `src/` and `scripts/`; must pass before submitting.
 - `npm run test:core-all` — kernel test suite (contracts, projector, turn manager, adapters, replay, runtime, services).
 - `npm run e2e:native` — real Shim + Host protocol check; `npm run e2e:native:pi` / `:dsh` / `:claude` send live turns.

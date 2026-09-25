@@ -9,6 +9,7 @@ const { mergeThreadPage } = require('./thread-list');
 const { projectIdsForThread } = require('./codex-projects');
 const { terminateTree } = require('./process-utils');
 const { redact } = require('./redact');
+const { installCollaborationSkills } = require('../host/collaboration-skill');
 const { dataDirectory } = require('./platform');
 
 async function runNativeHost() {
@@ -67,6 +68,13 @@ async function runNativeHost() {
   });
   process.on('unhandledRejection', reason => writeCrash('unhandledRejection', reason));
   process.on('SIGBREAK', () => void close());
+  // 受管协作技能播种（best-effort）：给有原生 skill 系统的 harness 种 CLI 用法指南；
+  // 用户改过的副本标记 conflict 后跳过，不影响宿主启动
+  const seededSkills = await installCollaborationSkills().catch(error => {
+    traffic('skill-seed', `collaboration skill seeding failed: ${error.message}`);
+    return [];
+  });
+  for (const result of seededSkills) traffic('skill-seed', `${result.status} ${result.path}`);
   const ready = runtime.initialize();
   const write = message => { traffic('out', message); process.stdout.write(`${JSON.stringify(message)}\n`); };
   const internal = new Map();
@@ -219,6 +227,9 @@ async function runNativeHost() {
   official?.on('error', error => { console.error(error); void close(); });
   official?.on('exit', () => { void close(); });
   await ready;
+  // 线程索引加载完成后补发持久化外部线程的 thread/started：转正重发修复上线前
+  // 创建的会话没有这条宣告，Desktop 重启后侧栏 state db 里不会有它们
+  protocol.announcePersistedThreads();
   console.error(sidecar
     ? '[Harness Mix] external Harness sidecar ready; official account queries start on demand'
     : '[Harness Mix] official Codex passthrough + external Harness routes via HostRuntime/ProtocolCore');

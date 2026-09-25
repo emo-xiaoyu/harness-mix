@@ -25,6 +25,7 @@ const { nativeEnvironment } = require('./config');
 const { CodexAccountManager } = require('./codex-accounts');
 const { mergeThreadPage } = require('./thread-list');
 const { projectIdForThread, projectIdsForThread } = require('./codex-projects');
+const { workerSessionOptions } = require('../host/collaboration');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const PACKAGE_JSON_PATH = path.join(REPO_ROOT, 'package.json');
@@ -299,6 +300,19 @@ class NativeProtocol {
       }
     });
   }
+  // 启动补发：把已持久化的外部线程重新宣告给 Desktop。侧栏 state db 只登记
+  // 非 ephemeral 的 thread/started，修复（thread-persisted 重发）上线前转正的
+  // 会话从未被登记，重启后既不在 state db、也不会经本传输的 thread/list 合并
+  // 回到侧栏。宣告幂等：Desktop 收到重复 thread/started 只是覆盖登记。跳过
+  // ephemeral（尚未转正，state db 本就不登记）与 archived（thread/started 投影
+  // 不携带归档位，补发会把已归档会话复活成未归档）。与 thread/list 合并路径
+  // 一致使用无 turns 的列表投影，避免启动时整库回放回合。
+  announcePersistedThreads() {
+    for (const thread of this.runtime.threads) {
+      if (thread.ephemeral || thread.archived) continue;
+      this.emit({ method: 'thread/started', params: { thread: this.projectThread(thread, false) } });
+    }
+  }
   getQueue(threadId) {
     if (!this.queues.has(threadId)) this.queues.set(threadId, []);
     return this.queues.get(threadId);
@@ -485,7 +499,12 @@ class NativeProtocol {
     if (method === 'harnessmix/harness/session-import/sources') return this.runtime.history.sources();
     if (method === 'harnessmix/harness/session-import/list') return this.runtime.history.list(params);
     if (method === 'harnessmix/harness/session-import/import') return this.runtime.history.import(params);
-    if (method === 'harnessmix/collaboration/agents') return [...this.runtime.adapters.values()].map(a => ({ id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true }));
+    if (method === 'harnessmix/collaboration/agents') return [...this.runtime.adapters.values()].map(a => {
+      let teamReady = true;
+      try { workerSessionOptions(a.manifest.id, a.manifest.capabilities?.approvals === true); }
+      catch { teamReady = false; }
+      return { id: externalId(a.manifest.id), name: a.manifest.name, available: !!this.runtime.status[a.manifest.id]?.available, lead: a.manifest.capabilities?.collaborationTools === true, teamReady };
+    });
     if (method === 'harnessmix/collaboration/preferences') return this.runtime.collaboration.getPreferences();
     if (method === 'harnessmix/collaboration/preferences/save') return this.runtime.collaboration.setPreferences(params);
     if (method === 'harnessmix/collaboration/team-template/list') {
@@ -1273,4 +1292,4 @@ class NativeProtocol {
     this.queueNotifications.clear();
   }
 }
-module.exports = { NativeProtocol, decodeRoute, projectItem, externalId, routeModel };
+module.exports = { NativeProtocol, decodeRoute, projectItem, routeModel };

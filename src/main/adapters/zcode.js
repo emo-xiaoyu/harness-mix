@@ -22,12 +22,12 @@
 //   materialized to a temp file and sent as localPath instead.
 // - collaboration: the protocol has NO runtime MCP registration RPC and the
 //   plugin root (~/.zcode/cli/plugins) is the user's own native storage, which
-//   Harness Mix never rewrites — so ZCode joins multi-agent work as a
-//   dispatchable worker / Agent-Team member / /delegate target (all
-//   kernel-driven), but cannot take the `#` lead role yet. Lead-side wiring
-//   would need a harness-mix plugin installed via the sanctioned
-//   plugins/install RPC plus a PATH-resolved bridge shim; documented as the
-//   follow-up design.
+//   Harness Mix never rewrites — so ZCode never gets the MCP lead tools.
+//   ZCode still leads `#` teams: runtime injects the CLI-worded lead
+//   instruction (collaboration-cli.cjs drives the same control plane), and
+//   the harness-mix-collaboration skill is seeded into ~/.agents/skills,
+//   which ZCode's global skill scan picks up. Worker / Agent-Team member /
+//   /delegate target all stay kernel-driven.
 // - models arrive via state.updated patches {model:{available:[{providerId, modelId,...}]}}
 //   once the logged-in account materializes; session/setModel {sessionId, model}.
 // - server requests: session/requestRuntimePreferences (answer the fixed
@@ -49,8 +49,8 @@ const manifest = {
   name: 'ZCode',
   icon: 'zcode-color.svg',
   capabilities: {
-    // Dispatchable worker + Agent-Team member; the `#` lead role stays off
-    // until MCP injection exists (see the header note).
+    // Dispatchable worker + Agent-Team member + `#` lead (CLI frontend; see
+    // the header note — MCP lead tools are not injectable over this protocol).
     collaborationTools: true,
     plan: true, streaming: true, thinking: false, tools: true,
     approvals: true, questions: true, models: true, thinkingLevels: true,
@@ -766,9 +766,9 @@ function create() {
 
     async open({ thread, emit, diagnostic = () => {}, collaboration }) {
       // `collaboration` is accepted (worker/Agent-Team membership works through
-      // kernel-driven dispatch) but the lead-side MCP tools are not wired yet —
-      // see the header note; deliberately NOT setting collaborationEnabled
-      // keeps the `#`-lead gate honest until that lands.
+      // kernel-driven dispatch); the lead role runs over the CLI frontend.
+      // Deliberately NOT setting collaborationEnabled keeps runtime on the
+      // CLI-worded lead instruction — MCP tools are not injectable here.
       void collaboration;
       const launch = resolveLaunch();
       const session = attachSession(launch, { thread, emit, diagnostic });
@@ -783,6 +783,8 @@ function create() {
         if (thread.options?.permissionMode) await this.setPermissionMode(session, thread.options.permissionMode);
         await pushAccountConfig(session);
         await ensureModelCatalog(session).catch(() => {});
+        if (thread.options?.model) await this.setModel(session, thread.options.model);
+        if (thread.options?.thinking) await this.setThinkingLevel(session, thread.options.thinking);
         emit({ kind: 'session', nativeSessionId: session.state.sessionId });
         return session;
       } catch (error) {
@@ -918,7 +920,7 @@ function create() {
   };
 }
 
-module.exports = { manifest, create, resolveLaunch, modelView, usageView, handleNotification, trimStreamReplayOverlap };
+module.exports = { manifest, create, resolveLaunch, trimStreamReplayOverlap };
 
 // ZCode scans, per scope: .zcode/skills then .agents/skills (deeper workspace levels win).
 // https://zcode.z.ai/en/docs/skill

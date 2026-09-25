@@ -535,4 +535,4 @@ function settledTaskHandle(summary) {
   return { ...snapshot, then(onFulfilled, onRejected) { return Promise.resolve(snapshot).then(onFulfilled, onRejected); } };
 }
 
-module.exports = { parseScript, validateScript, executeScript, settledTaskHandle, ScriptSyntaxError, ScriptInterrupted };
+module.exports = { parseScript, validateScript, executeScript, settledTaskHandle, ScriptInterrupted };

@@ -83,6 +83,26 @@ async function main() {
   assert.match(expanded, /团队目标：修复登录超时/);
   assert.match(expanded, /- 实现者（Worker）：写代码/);
   assert.match(expanded, /- 审查者（Reviewer）：看代码/);
+  const configured = await rt.collaboration.saveTeamTemplate({
+    name: '模型配置团队', members: [{ name: '实现者', role: '写代码', agent: 'worker',
+      model: { id: 'native-model', name: 'Native Model', provider: 'example' }, thinking: 'high' }],
+  });
+  const configuredMention = await rt.collaboration.expandTeamTemplateMention(`#[模型配置团队](harness-mix://team-template/${configured.id}) 实现功能`, parent);
+  assert.match(configuredMention, /模型 Native Model，思考强度 high/);
+  const configuredTeam = await rt.collaboration.teamCall(parent.id, 'create_agent_team', {
+    name: '模型配置团队', goal: '实现功能', members: [{ name: '实现者', role: '写代码', agent_type: 'worker' }],
+  });
+  assert.deepEqual(configuredTeam.members[0].model, { id: 'native-model', name: 'Native Model', provider: 'example' });
+  assert.equal(configuredTeam.members[0].thinking, 'high', 'Host 从用户选中的模板绑定模型与思考强度');
+  await rt.collaboration.deleteTeamTemplate(configured.id);
+  delete parent.pendingTeamTemplate;
+  rt.adapters.set('pi', { ...worker, manifest: { id: 'pi', name: 'Pi', capabilities: { collaborationTools: true, approvals: true } } });
+  rt.status.pi = { available: true };
+  parent.activeMentions.push('pi');
+  const piTeam = await rt.collaboration.teamCall(parent.id, 'create_agent_team', {
+    name: 'Pi 团队', goal: '测试', members: [{ name: 'Pi', role: '执行', agent_type: 'pi' }],
+  });
+  assert.equal(piTeam.members[0].agent, 'pi', 'Pi 内置工具默认执行，可作为 Agent Team 成员');
   const fallbackGoal = await rt.collaboration.expandTeamTemplateMention(`#[发布模板](harness-mix://team-template/${fromTeam.id})`, parent);
   assert.match(fallbackGoal, /团队目标：发布模板/, '缺省目标回落到模板名');
   // Desktop 输入框会把未成链的纯文本提及序列化为 \#[名称]\(…\)：转义形式必须同样展开

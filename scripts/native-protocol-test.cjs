@@ -51,6 +51,23 @@ async function main() {
     throw new Error(`Unexpected official request: ${method}`);
   });
   try {
+    // 启动补发：持久化线程逐条重发 thread/started（无 turns 列表投影），
+    // ephemeral（未转正）与 archived（宣告不携带归档位，补发会复活）跳过
+    const announceFrom = events.length;
+    const persistedStub = { id: 'announce-persisted', harnessId: 'pi', title: 'Persisted session', cwd: 'E:/project', projectId: 'project-x', createdAt: 1000 };
+    const ephemeralStub = { ...persistedStub, id: 'announce-ephemeral', ephemeral: true };
+    const archivedStub = { ...persistedStub, id: 'announce-archived', archived: true };
+    runtime.threads.push(persistedStub, ephemeralStub, archivedStub);
+    try {
+      bridge.announcePersistedThreads();
+      const announced = events.slice(announceFrom).filter(event => event?.method === 'thread/started');
+      assert.equal(announced.length, 1, 'Only the persisted non-ephemeral thread is re-announced');
+      assert.equal(announced[0].params.thread.id, 'announce-persisted');
+      assert.equal(announced[0].params.thread.ephemeral, false);
+      assert.deepEqual(announced[0].params.thread.turns, [], 'Re-announcement uses the turn-free listing projection');
+    } finally {
+      for (const stub of [persistedStub, ephemeralStub, archivedStub]) runtime.threads.splice(runtime.threads.indexOf(stub), 1);
+    }
     const catalogModels = [{ id: 'shared', provider: 'a' }, { id: 'shared', provider: 'b' }, { id: 'unique', provider: 'a' }];
     runtime.catalogs.set('pi', { models: catalogModels, thinkingLevels: [{ id: 'high', label: 'High', default: true }, { id: 'low', label: 'Low' }] });
     const ref = model => ({ id: Buffer.from(JSON.stringify({ id: model.id, provider: model.provider })).toString('base64url') });

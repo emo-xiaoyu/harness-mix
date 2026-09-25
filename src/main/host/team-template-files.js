@@ -64,10 +64,16 @@ function validateTemplateMembers(members, resolveHarnessId) {
     // 文件模板允许引用当前未安装的 Harness（换机/重装后编成仍可保留），仅在实际
     // 展开为指令时才校验可用性
     const agent = resolveHarnessId(agentInput) || agentInput.toLowerCase();
+    const model = member?.model && typeof member.model === 'object'
+      ? { id: String(member.model.id ?? '').trim(), name: String(member.model.name ?? member.model.id ?? '').trim(), ...(member.model.provider ? { provider: String(member.model.provider).trim() } : {}) }
+      : (member?.model ? { id: String(member.model).trim(), name: String(member.model).trim(), ...(member.provider ? { provider: String(member.provider).trim() } : {}) } : null);
+    const thinking = String(member?.thinking ?? '').trim();
+    if (model && (!model.id || model.id.length > 256)) throw new Error('成员模型 ID 无效');
+    if (thinking.length > 80) throw new Error('成员思考强度 ID 无效');
     const key = name.toLowerCase();
     if (names.has(key)) throw new Error('成员名称不能重复');
     names.add(key);
-    return { name, role, agent };
+    return { name, role, agent, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
   });
 }
 

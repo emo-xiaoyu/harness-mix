@@ -186,7 +186,7 @@ if (process.argv.includes('--fixture')) {
     assert.deepEqual(qoderCatalog.thinkingLevels.map(o => o.id), ['xhigh', 'none']);
     assert.deepEqual(qoderCatalog.permissionModes.map(o => o.id), ['default', 'yolo']);
     // 协作 worker 免询问：ACP 系档位动态解析——会话声明了全访问档（yolo）就选中；
-    // 没有对应档位时保持原生默认且不阻断会话建立
+    // 一次性委派保留原生回落；Agent Team 的 full-required 拒绝静默回落。
     const yoloAdapter = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 2000,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--yolo-mode'] }) }).create();
     const yoloSession = await yoloAdapter.open({ thread: { cwd: process.cwd(), options: { workerPermissions: 'full' } }, emit: () => {} });
@@ -198,9 +198,10 @@ if (process.argv.includes('--fixture')) {
     let plainDiagnosis = '';
     const plainSession = await plainAdapter.open({ thread: { cwd: process.cwd(), options: { workerPermissions: 'full' } }, emit: () => {}, diagnostic: message => { plainDiagnosis = message; } });
     try {
-      assert.equal(plainSession.state.configOptions.find(c => c.id === 'mode').currentValue, 'default', 'No native full-access mode keeps the default');
+      assert.equal(plainSession.state.configOptions.find(c => c.id === 'mode').currentValue, 'default');
       assert.match(plainDiagnosis, /no native full-access permission mode/);
     } finally { await plainAdapter.close(plainSession); }
+    await assert.rejects(plainAdapter.open({ thread: { cwd: process.cwd(), options: { workerPermissions: 'full-required' } }, emit: () => {} }), /no native full-access permission mode/);
     // 进度事件重置 idle，heartbeat-only 不重置：心跳场景下 idle 应当照常起效。
     const heartbeatOnly = nativeAcp({ id: 'codebuddy', name: 'CodeBuddy', args: [], timeoutMs: 1000, turnIdleTimeoutMs: 80, turnPromptTimeoutMs: 60_000, cancelGraceMs: 1000,
       command: () => ({ command: process.execPath, args: [__filename, '--fixture', '--ignore-prompt', '--heartbeat'] }) }).create();
