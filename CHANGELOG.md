@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4 — 2026-09-26
+
+- Refined collaboration settings, native model and thinking controls, and session title handling across the Desktop integration.
+- Fixed Windows collaboration registry discovery so CI and newly created agent sessions wait for their initial registry entry reliably.
+- Updated all six native runtime packages to 0.3.4. Windows x64 ships rebuilt binaries; the other five remain source-only packages that build locally on their target platform.
+
 ## 0.3.3 — 2026-09-24
 
 - **Collaboration workers get native no-prompt permission modes.** `defaultWorkerPermissionMode` is replaced by `workerSessionOptions`: every dispatchable harness now maps to its own native full-access tier — Claude `bypassPermissions`, Antigravity `skip`, pi `no-approve`, OMP forked to `--approval-mode yolo` (its permission model diverged from pi's), ZCode `yolo`, Codex workers carry `turnPermissions` (`approvalPolicy: never` + `dangerFullAccess` sandbox) straight to the native API — while the ACP family (CodeBuddy/Qoder/Trae/Cursor/Cline/Grok) declares mode ids dynamically at session handshake, so a new `permission-modes.js` helper and the grok/native-acp adapters pick the declared full-access tier (by id or label hint) at session open. Harnesses without such a tier keep the native default, approvals still flow through `respond()` to the Desktop permission card, and failures record a diagnostic without blocking session creation — the Host never fabricates a permission decision. 协作子会话免打扰权限映射到各 Harness 原生自有的免询问档位，无档位保持默认，审批照走 Desktop 权限卡。
