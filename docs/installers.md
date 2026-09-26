@@ -18,6 +18,11 @@ Release 挂载双击安装包：`harness-mix-<版本>-windows-x64.exe`、
 - 捆绑的官方 Node.js 运行时（v24 系列，下载时校验 SHASUMS256），因此用户
   机器不需要预装 Node。
 
+完整安装包会比 npm 主包的 tarball 大得多：npm 在安装时另外下载生产依赖，
+安装包则把它们、平台原生程序和 Node 一起压进单个文件。Claude Agent SDK 的
+平台 CLI 尤其大；不能仅删除它而继续宣称 Claude 在未安装独立 CLI 的机器上可用。
+`lucide` 图标库只参与 Renderer 构建，不进入安装包的生产依赖。
+
 安装形态对应更新通道里的 `portable`：launcher 检测到非 git、非 npm 全局目录
 时跳过自动更新，只打一行日志（见 `src/main/native/updater.js`）。安装版升级
 = 重新运行新版安装器覆盖安装；升级前请先退出正在运行的 Harness Mix /
