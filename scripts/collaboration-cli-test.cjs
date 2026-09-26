@@ -123,8 +123,8 @@ async function main() {
     // 5) followup：复用子会话再派一条
     const followup = await runCli(['followup', job.task_id, '补一个回归测试'], { cwd: root });
     assert.equal(followup.code, 0, followup.stderr);
-    await wait(() => pending.size === 1);
-    const [again] = [...pending.values()];
+    await wait(() => pending.get(childSession.session.id)?.text.includes('补一个回归测试'));
+    const again = pending.get(childSession.session.id);
     again.session.emit({ kind: 'text-delta', text: '已补充' });
     again.session.emit({ kind: 'completed', finalAnswer: true });
     const after = await runCli(['status', job.task_id, '--wait-ms', '8000'], { cwd: root });
