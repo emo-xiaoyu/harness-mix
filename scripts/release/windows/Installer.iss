@@ -11,7 +11,6 @@
 #define AppName "Harness Mix"
 #define AppPublisher "Harness Mix"
 #define AppExe "{app}\runtime\node.exe"
-#define AppParams """{app}\scripts\launch-codex.cjs"""
 #ifndef PayloadRoot
 #define PayloadRoot "output/installer-payload/win32-x64/payload"
 #endif
@@ -56,8 +55,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Source: "{#PayloadRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{userprograms}\{#AppName}"; Filename: "{#AppExe}"; Parameters: "{#AppParams}"; WorkingDir: "{app}"; IconFilename: "{app}\resources\harness-mix.ico"
-Name: "{userdesktop}\{#AppName}"; Filename: "{#AppExe}"; Parameters: "{#AppParams}"; WorkingDir: "{app}"; IconFilename: "{app}\resources\harness-mix.ico"; Tasks: desktopicon
+Name: "{userprograms}\{#AppName}"; Filename: "{#AppExe}"; Parameters: """{app}\scripts\launch-codex.cjs"""; WorkingDir: "{app}"; IconFilename: "{app}\resources\harness-mix.ico"
+Name: "{userdesktop}\{#AppName}"; Filename: "{#AppExe}"; Parameters: """{app}\scripts\launch-codex.cjs"""; WorkingDir: "{app}"; IconFilename: "{app}\resources\harness-mix.ico"; Tasks: desktopicon
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
