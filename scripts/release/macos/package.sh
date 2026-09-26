@@ -98,6 +98,7 @@ if command -v create-dmg >/dev/null 2>&1; then
       --icon "$APP_NAME" 165 200 --app-drop-link 495 200 "$DMG" "$STAGING"; then
     echo "[Harness Mix] create-dmg 失败，回退 hdiutil"
     rm -f "$DMG"
+    rm -f "$ROOT/output/installers"/rw.*."${DMG##*/}"
     hdiutil create -volname "Harness Mix" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
   fi
 else

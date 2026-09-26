@@ -74,7 +74,9 @@ jobs:
         if: always()
         with:
           name: installer-${{ matrix.platform }}-${{ matrix.arch }}
-          path: output/installers/*
+          path: |
+            output/installers/harness-mix-*.exe
+            output/installers/harness-mix-*.dmg
           if-no-files-found: error
 
   release:
