@@ -10,6 +10,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 
 ARCH_ARG="${1:-}"
+MODE="${2:-}"
+if [ "$MODE" != "" ] && [ "$MODE" != "--online" ]; then
+  echo "不支持的选项：$MODE" >&2; exit 1
+fi
+SUFFIX=""
+if [ "$MODE" = "--online" ]; then SUFFIX="-online-download-deps"; fi
 case "$ARCH_ARG" in
   arm64|x64) ARCH="$ARCH_ARG" ;;
   "") ARCH="$(uname -m | sed 's/^x86_64$/x64/')" ;;
@@ -26,14 +32,15 @@ if [ "$ARCH" != "$HOST_ARCH" ]; then
 fi
 
 VERSION="$(node -p "require('./package.json').version")"
-PAYLOAD="$ROOT/output/installer-payload/darwin-$ARCH/payload"
-STAGING="$ROOT/output/installer-staging/darwin-$ARCH"
+PAYLOAD="$ROOT/output/installer-payload/darwin-$ARCH${MODE:+-online}/payload"
+STAGING="$ROOT/output/installer-staging/darwin-$ARCH${MODE:+-online}"
 APP_NAME="Harness Mix.app"
+if [ "$MODE" = "--online" ]; then APP_NAME="Harness Mix（联网下载依赖）.app"; fi
 APP="$STAGING/$APP_NAME"
 mkdir -p "$ROOT/output/installers"
-rm -f "$ROOT/output/installers/harness-mix-$VERSION-macos-$ARCH.dmg"
+rm -f "$ROOT/output/installers/harness-mix-$VERSION-macos-$ARCH$SUFFIX.dmg"
 
-node scripts/release/prepare-payload.cjs --platform darwin --arch "$ARCH"
+node scripts/release/prepare-payload.cjs --platform darwin --arch "$ARCH" ${MODE:+--online}
 
 rm -rf "$STAGING"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -41,12 +48,22 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 echo "[Harness Mix] 组装 $APP_NAME"
 ditto "$PAYLOAD" "$APP/Contents/Resources/app"
 
+if [ "$MODE" = "--online" ]; then
+cat > "$APP/Contents/MacOS/harness-mix" <<'LAUNCHER'
+#!/bin/bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP="$DIR/../Resources/app"
+exec "$APP/runtime/node" "$APP/scripts/release/online-bootstrap.cjs" --launch-macos "$APP" "$@"
+LAUNCHER
+else
 cat > "$APP/Contents/MacOS/harness-mix" <<'LAUNCHER'
 #!/bin/bash
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$DIR/../Resources/app/runtime/node" "$DIR/../Resources/app/scripts/launch-codex.cjs" "$@"
 LAUNCHER
+fi
 chmod +x "$APP/Contents/MacOS/harness-mix"
 
 ICONSET="$STAGING/harness-mix.iconset"
@@ -67,8 +84,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key><string>Harness Mix</string>
-    <key>CFBundleDisplayName</key><string>Harness Mix</string>
-    <key>CFBundleIdentifier</key><string>io.github.emo-xiaoyu.harness-mix</string>
+    <key>CFBundleDisplayName</key><string>Harness Mix${MODE:+（联网下载依赖）}</string>
+    <key>CFBundleIdentifier</key><string>io.github.emo-xiaoyu.harness-mix${MODE:+.online}</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleExecutable</key><string>harness-mix</string>
@@ -92,7 +109,7 @@ if ! codesign --verify --strict "$APP" 2>/dev/null; then
   echo "[Harness Mix] 提示：bundle 校验未通过（脚本入口 + ad-hoc 签名），不影响本机使用。"
 fi
 
-DMG="$ROOT/output/installers/harness-mix-$VERSION-macos-$ARCH.dmg"
+DMG="$ROOT/output/installers/harness-mix-$VERSION-macos-$ARCH$SUFFIX.dmg"
 if command -v create-dmg >/dev/null 2>&1; then
   if ! create-dmg --volname "Harness Mix" --window-size 660 400 --icon-size 128 \
       --icon "$APP_NAME" 165 200 --app-drop-link 495 200 "$DMG" "$STAGING"; then

@@ -12,11 +12,12 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../../..');
 
 function parseArgs(argv) {
-  const options = { arch: process.arch, skipPrepare: false };
+  const options = { arch: process.arch, skipPrepare: false, online: false };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === '--arch') options.arch = argv[++index];
     else if (flag === '--skip-prepare') options.skipPrepare = true;
+    else if (flag === '--online') options.online = true;
     else throw new Error(`未知参数：${flag}`);
   }
   if (!['x64', 'arm64'].includes(options.arch)) throw new Error(`不支持的架构：${options.arch}`);
@@ -40,23 +41,24 @@ function locateIscc() {
   throw new Error('未找到 Inno Setup 6（ISCC.exe）。请安装：winget install JRSoftware.InnoSetup 或 choco install innosetup，或用 HARNESS_MIX_ISCC 指定 ISCC.exe 路径。');
 }
 
-function assemblePayload(arch, skipPrepare) {
+function assemblePayload(arch, skipPrepare, online) {
+  const directory = `win32-${arch}${online ? '-online' : ''}`;
   if (skipPrepare) {
-    const existing = path.join(root, 'output', 'installer-payload', `win32-${arch}`, 'payload');
+    const existing = path.join(root, 'output', 'installer-payload', directory, 'payload');
     if (!fs.existsSync(path.join(existing, 'runtime', 'node.exe'))) {
       throw new Error(`--skip-prepare 需要已就绪的 payload：${existing}`);
     }
     return existing;
   }
   const prepare = path.join(root, 'scripts/release/prepare-payload.cjs');
-  const run = spawnSync(process.execPath, [prepare, '--platform', 'win32', '--arch', arch], { stdio: 'inherit', windowsHide: true });
+  const run = spawnSync(process.execPath, [prepare, '--platform', 'win32', '--arch', arch, ...(online ? ['--online'] : [])], { stdio: 'inherit', windowsHide: true });
   if (run.status !== 0) throw new Error(`payload 组装失败（exit ${run.status}）`);
-  return path.join(root, 'output', 'installer-payload', `win32-${arch}`, 'payload');
+  return path.join(root, 'output', 'installer-payload', directory, 'payload');
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const payloadRoot = assemblePayload(options.arch, options.skipPrepare);
+  const payloadRoot = assemblePayload(options.arch, options.skipPrepare, options.online);
   const iscc = locateIscc();
   const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   const outputDirectory = path.join(root, 'output', 'installers');
@@ -71,11 +73,12 @@ function main() {
     `/DArch=${options.arch}`,
     `/DArchAllowed=${arm64 ? 'arm64' : 'x64compatible'}`,
     `/DArch64Bit=${arm64 ? 'arm64' : 'x64compatible'}`,
+    `/DOnline=${options.online ? '1' : '0'}`,
     `/O${outputDirectory}`,
   ], { stdio: 'inherit', windowsHide: true });
   if (run.status !== 0) throw new Error(`ISCC 编译失败（exit ${run.status}）`);
 
-  const installer = path.join(outputDirectory, `harness-mix-${version}-windows-${options.arch}.exe`);
+  const installer = path.join(outputDirectory, `harness-mix-${version}-windows-${options.arch}${options.online ? '-online-download-deps' : ''}.exe`);
   if (!fs.existsSync(installer)) throw new Error(`ISCC 未产出预期的安装器文件：${installer}`);
   console.log(`[Harness Mix] Windows 安装器完成：${installer} (${(fs.statSync(installer).size / 1024 / 1024).toFixed(1)} MB)`);
 }

@@ -26,6 +26,7 @@ function parseArgs(argv) {
     out: null,
     skipDeps: false,
     skipRuntime: false,
+    online: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -34,6 +35,7 @@ function parseArgs(argv) {
     else if (flag === '--out') options.out = argv[++index];
     else if (flag === '--skip-deps') options.skipDeps = true;
     else if (flag === '--skip-runtime') options.skipRuntime = true;
+    else if (flag === '--online') options.online = true;
     else throw new Error(`未知参数：${flag}`);
   }
   if (!['win32', 'darwin', 'linux'].includes(options.platform)) throw new Error(`不支持的平台：${options.platform}`);
@@ -136,6 +138,24 @@ function installProductionDependencies(payload) {
   if (run.status !== 0) throw new Error(`payload 生产依赖安装失败（exit ${run.status}）`);
 }
 
+function bundleNpm(payload) {
+  const candidates = [
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm'),
+    path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm'),
+    process.env.HARNESS_MIX_NPM_ROOT,
+  ].filter(Boolean);
+  const npmRoot = candidates.find(candidate => fs.existsSync(path.join(candidate, 'bin/npm-cli.js')));
+  if (!npmRoot) throw new Error('联网版需要构建机上的 npm CLI；设置 HARNESS_MIX_NPM_ROOT 指向 npm 包目录');
+  const destination = path.join(payload, 'tools/npm');
+  fs.mkdirSync(destination, { recursive: true });
+  for (const name of ['bin', 'lib', 'node_modules', 'package.json', 'LICENSE']) {
+    const source = path.join(npmRoot, name);
+    if (!fs.existsSync(source)) throw new Error(`npm 包缺少 ${name}`);
+    fs.cpSync(source, path.join(destination, name), { recursive: true });
+  }
+  if (!fs.existsSync(path.join(destination, 'lib/cli.js'))) throw new Error('捆绑的 npm CLI 不完整');
+}
+
 function nativeBinaries(platform) {
   return platform === 'win32'
     ? ['harness-mix-shim.exe', 'harness-mix-appx.exe', 'harness-mix-secret.exe']
@@ -153,6 +173,7 @@ function verifyPayload(payload, platform) {
     'config/codex-desktop-compatibility.json',
     'resources/harness-mix.ico',
     platform === 'win32' ? 'runtime/node.exe' : 'runtime/node',
+    ...(fs.existsSync(path.join(payload, 'online-installer.json')) ? ['tools/npm/bin/npm-cli.js', 'scripts/release/online-bootstrap.cjs'] : []),
   ];
   const missing = required.filter(file => !fs.existsSync(path.join(payload, file)));
   if (missing.length) {
@@ -175,7 +196,7 @@ function directorySize(directory) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const out = options.out ? path.resolve(options.out) : path.join(root, 'output', 'installer-payload', `${options.platform}-${options.arch}`);
+  const out = options.out ? path.resolve(options.out) : path.join(root, 'output', 'installer-payload', `${options.platform}-${options.arch}${options.online ? '-online' : ''}`);
   const payload = path.join(out, 'payload');
   fs.rmSync(payload, { recursive: true, force: true });
   fs.mkdirSync(payload, { recursive: true });
@@ -193,7 +214,11 @@ async function main() {
   fs.copyFileSync(path.join(root, 'scripts/release/brand/harness-mix.ico'), path.join(payload, 'resources/harness-mix.ico'));
   writeStagedPackageJson(payload);
 
-  if (options.skipDeps) {
+  if (options.online) {
+    fs.writeFileSync(path.join(payload, 'online-installer.json'), JSON.stringify({ version: JSON.parse(fs.readFileSync(path.join(payload, 'package.json'))).version, platform: options.platform, arch: options.arch }) + '\n');
+    bundleNpm(payload);
+    console.log('[Harness Mix] 联网版：安装时再下载生产依赖');
+  } else if (options.skipDeps) {
     console.log('[Harness Mix] 跳过生产依赖安装（--skip-deps）');
   } else {
     console.log('[Harness Mix] 安装 payload 生产依赖…');

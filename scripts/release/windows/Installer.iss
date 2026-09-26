@@ -26,6 +26,9 @@
 #ifndef Arch64Bit
 #define Arch64Bit "x64compatible"
 #endif
+#ifndef Online
+#define Online "0"
+#endif
 
 [Setup]
 AppId={{09662B54-8C6E-4D7E-965D-80CC879A0D5C}
@@ -42,7 +45,11 @@ WizardStyle=modern
 DisableProgramGroupPage=yes
 Compression=lzma2/max
 SolidCompression=yes
+#if Online == "1"
+OutputBaseFilename=harness-mix-{#ProductVersion}-windows-{#Arch}-online-download-deps
+#else
 OutputBaseFilename=harness-mix-{#ProductVersion}-windows-{#Arch}
+#endif
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\resources\harness-mix.ico
 CloseApplications=no
@@ -60,3 +67,29 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{#AppExe}"; Parameters: """{app}\sc
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+
+#if Online == "1"
+[Code]
+procedure InitializeWizard;
+begin
+  WizardForm.Caption := 'Harness Mix — 安装时联网下载依赖';
+  WizardForm.WelcomeLabel2.Caption := '此精简版将在安装时联网下载运行依赖，可能需要下载数百 MB。请保持网络连接。安装失败后可重新运行安装包重试。';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  NodePath, BootstrapPath, AppPath: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  AppPath := ExpandConstant('{app}');
+  NodePath := AppPath + '\runtime\node.exe';
+  BootstrapPath := AppPath + '\scripts\release\online-bootstrap.cjs';
+  WizardForm.StatusLabel.Caption := '正在联网下载依赖，可能需要数百 MB…';
+  if not Exec(NodePath, '"' + BootstrapPath + '" --install "' + AppPath + '"', AppPath, SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+  begin
+    MsgBox('联网下载依赖失败。请检查网络连接，然后重新运行此安装包。', mbError, MB_OK);
+    RaiseException('Harness Mix 联网版依赖安装失败');
+  end;
+end;
+#endif
