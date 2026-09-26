@@ -5,6 +5,11 @@ Release 挂载双击安装包：`harness-mix-<版本>-windows-x64.exe`、
 `harness-mix-<版本>-macos-arm64.dmg` 等，按平台 × 架构各出一份。安装包面向
 不想接触 Node/npm 的用户；两种分发形态的运行时行为完全一致。
 
+同一版本还提供文件名含 **`online-download-deps`（安装时联网下载依赖）** 的精简版。
+它保留 Node、npm 和预构建程序，但不预装 `node_modules`；运行所需依赖与离线版
+相同。文件变小不代表总下载量变小：安装时仍可能下载数百 MB，且需要能访问 npm
+registry。网络受限时请选择不含 `online-download-deps` 的离线完整版。
+
 ## 安装包里是什么
 
 安装器不打包任何 GUI——Harness Mix 的界面本来就寄宿在官方 Codex Desktop
@@ -38,6 +43,9 @@ Codex Desktop，避免运行中的 node.exe 锁住文件。
   开始菜单快捷方式（可选桌面快捷方式）直接指向
   `runtime\node.exe scripts\launch-codex.cjs`
 - 未做代码签名：首次运行会有 SmartScreen 提示，选择“仍要运行”即可
+- 精简版：`npm run dist:windows -- --arch x64 --online`。安装欢迎页明确提示联网；
+  文件复制完成后用包内 Node/npm 下载生产依赖，下载失败会提示错误。检查网络后
+  重新运行同一安装包即可重试。安装过程中请勿断网或关闭安装器。
 
 ## macOS（.app + dmg）
 
@@ -50,11 +58,15 @@ Codex Desktop，避免运行中的 node.exe 锁住文件。
 - 二进制与 bundle 做 ad-hoc 签名（`codesign --sign -`）；dmg 优先用
   `create-dmg`（带 Applications 拖拽链接），缺失时回退 `hdiutil`
 - 未公证：首次打开需右键 → 打开，或在“系统设置 → 隐私与安全性”里放行
+- 精简版：`bash scripts/release/macos/package.sh arm64 --online`。`.app` 名称明确
+  标出“联网下载依赖”；首次打开会确认下载，并将运行文件和依赖安装在
+  `~/Library/Application Support/Harness Mix/online/<版本>-<架构>/`，不写入
+  `/Applications` 中的 `.app`。失败后再次打开即可重试；同版本的成功安装会复用。
 
 ## CI
 
 `.github/workflows/installers.yml` 在推送 `v*` 标签（或手动触发）时构建
-四份安装包并挂载到对应 Release：
+四份离线版和四份联网精简版安装包，并挂载到对应 Release：
 
 | 目标 | Runner |
 | --- | --- |

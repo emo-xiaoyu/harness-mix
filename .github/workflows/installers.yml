@@ -2,8 +2,16 @@ name: Installers
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+    paths:
+      - '.github/workflows/installers.yml'
+      - 'scripts/release/**'
+      - 'docs/installers.md'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -66,9 +74,18 @@ jobs:
         shell: pwsh
         run: npm run dist:windows -- --arch ${{ matrix.arch }}
 
+      - name: Build Windows online installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: npm run dist:windows -- --arch ${{ matrix.arch }} --online
+
       - name: Build macOS installer
         if: runner.os == 'macOS'
         run: bash scripts/release/macos/package.sh ${{ matrix.arch }}
+
+      - name: Build macOS online installer
+        if: runner.os == 'macOS'
+        run: bash scripts/release/macos/package.sh ${{ matrix.arch }} --online
 
       - uses: actions/upload-artifact@v4
         if: always()
