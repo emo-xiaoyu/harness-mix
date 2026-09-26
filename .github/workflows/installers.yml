@@ -69,31 +69,36 @@ jobs:
         if: runner.os == 'macOS'
         run: command -v create-dmg >/dev/null 2>&1 || brew install create-dmg
 
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: npm run dist:windows -- --arch ${{ matrix.arch }}
-
       - name: Build Windows online installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: npm run dist:windows -- --arch ${{ matrix.arch }} --online
-
-      - name: Build macOS installer
-        if: runner.os == 'macOS'
-        run: bash scripts/release/macos/package.sh ${{ matrix.arch }}
 
       - name: Build macOS online installer
         if: runner.os == 'macOS'
         run: bash scripts/release/macos/package.sh ${{ matrix.arch }} --online
 
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}-online
+          path: output/installers/*online-download-deps*
+          if-no-files-found: error
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: npm run dist:windows -- --arch ${{ matrix.arch }}
+
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        run: bash scripts/release/macos/package.sh ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}-offline
           path: |
-            output/installers/harness-mix-*.exe
-            output/installers/harness-mix-*.dmg
+            output/installers/harness-mix-*-windows-${{ matrix.arch }}.exe
+            output/installers/harness-mix-*-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   release:
