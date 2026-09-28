@@ -37,6 +37,7 @@ const HARNESS_ICONS = [
   { id: 'zcode', file: 'zcode-color.svg', label: 'ZCode' },
   { id: 'trae', file: 'trae-color.svg', label: 'Trae' },
   { id: 'cline', file: 'cline-color.svg', label: 'Cline' },
+  { id: 'kimi-code', file: 'kimi-code-moonshot.svg', label: 'Kimi Code' },
 ];
 
 const svgCache = new Map();

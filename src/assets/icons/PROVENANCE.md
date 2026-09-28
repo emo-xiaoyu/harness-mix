@@ -1,10 +1,13 @@
 # Icon provenance
 
-33 brand marks are bundled in this directory and read by `src/main/native/icons.js`.
+34 brand marks are bundled in this directory and read by `src/main/native/icons.js`.
 They exist so the UI can label the harnesses and models this project integrates with.
 Every mark remains a trademark of its owner; see the trademark note at the end.
 
-## Redistributed from lobehub/lobe-icons — 24 of 33 (MIT)
+`kimi-code-moonshot.svg` is the MoonshotAI mark supplied by the project user for the
+Kimi Code Harness entry. The separate `model-kimi.svg` remains the model-family icon.
+
+## Redistributed from lobehub/lobe-icons — 24 of 34 (MIT)
 
 `@lobehub/icons-static-svg` v1.95.0, `Copyright (c) 2023 LobeHub`.
 Source: https://github.com/lobehub/lobe-icons
@@ -49,7 +52,7 @@ Note that two local file names do not match the mark they contain: `workbuddy-co
 is the upstream *Yuanbao* mark, and `zcode-color.svg` is the upstream *Z.ai* mark.
 The upstream `<title>` element in those files still carries the original names.
 
-## Bundled from product brand marks — 8 of 33
+## Bundled from product brand marks — 8 of 34
 
 | local | known origin |
 | --- | --- |
@@ -61,7 +64,7 @@ The upstream `<title>` element in those files still carries the original names.
 | `model-astra.svg` | Drawn in this repository (gradient disc), not third-party artwork. |
 | `model-hunyuan.svg` | Drawn in this repository (rounded plate with a glyph), not third-party artwork. |
 
-## Unknown provenance — 1 of 33
+## Unknown provenance — 1 of 34
 
 `pinumber1_80899.svg` is a pi glyph exported by Adobe Illustrator 18.1.1; the file name
 matches the download naming of free icon sites. It is used as the Pi harness icon

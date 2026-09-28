@@ -15,12 +15,13 @@ const trae = require('./trae');
 const kiro = require('./kiro');
 const cursor = require('./cursor');
 const cline = require('./cline');
+const kimi = require('./kimi');
 
 /**
  * Adapter 注册表：Manifest + 工厂 + Adapter + Session。
  * 新增 Harness 时：实现同形状模块并加入此列表，Renderer 无需改动协议。
  */
-const REGISTRY = [antigravity, pi, omp, dsh, claude, codex, opencode, grok, openclaw, hermes, qoder, codebuddy, zcode, trae, kiro, cursor, cline];
+const REGISTRY = [antigravity, pi, omp, dsh, claude, codex, opencode, grok, openclaw, hermes, qoder, codebuddy, zcode, trae, kiro, cursor, cline, kimi];
 
 function buildAdapters(emit) {
   return REGISTRY.map(({ manifest, create }) => {
