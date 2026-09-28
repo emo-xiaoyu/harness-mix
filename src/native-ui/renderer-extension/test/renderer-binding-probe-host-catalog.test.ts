@@ -219,6 +219,7 @@ function installFakeBrowser(): void {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   const api = (
     globalThis.window as unknown as {
       __harnessmixRendererBindingProbeV1?: { dispose(): void };
@@ -654,6 +655,113 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
 
     await vi.waitFor(() => expect(claudeInspections).toBeGreaterThanOrEqual(2));
     expect(testState.renderedModelViews.at(-1)).not.toMatchObject({ status: "error" });
+  });
+
+  it.each(["resolve", "reject"] as const)("recovers a new draft when its replaced model client would %s", async (outcome) => {
+    installFakeBrowser();
+    testState.modelTarget = ["default"];
+    let resolveStale!: (value: ReturnType<typeof readyInspection>) => void;
+    let rejectStale!: (reason: Error) => void;
+    const stale = new Promise<ReturnType<typeof readyInspection>>((resolve, reject) => {
+      resolveStale = resolve;
+      rejectStale = reject;
+    });
+    let inspections = 0;
+    const originalHost = {
+      inspectHarness: vi.fn(({ harnessId }: { harnessId: string }) => {
+        if (harnessId !== "claude-code") return Promise.resolve(readyInspection());
+        inspections += 1;
+        return inspections <= 2 ? Promise.resolve(readyInspection("old-model")) : stale;
+      }),
+    };
+    const replacementHost = { inspectHarness: vi.fn(async () => readyInspection("new-model")) };
+    let selectedHost: typeof originalHost | typeof replacementHost = originalHost;
+    const modelControl = {
+      currentHostId: () => "host-a",
+      clientForHost: vi.fn(() => selectedHost),
+      inspectHarness: originalHost.inspectHarness,
+      inspectThread: vi.fn(),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"],
+      defaultAgent: "claude-code",
+    });
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined,
+      () => true,
+      modelControl as never,
+    );
+    await vi.waitFor(() => expect(inspections).toBeGreaterThanOrEqual(3));
+    await vi.waitFor(() => expect(probe.status().selections[0]?.modelView.status).toBe("loading"));
+
+    selectedHost = replacementHost;
+    if (outcome === "resolve") resolveStale(readyInspection("old-model"));
+    else rejectStale(new Error("old connection closed"));
+    await vi.waitFor(() => expect(probe.status().selections[0]?.modelView).toMatchObject({
+      status: "ready",
+      selected: "new-model",
+    }));
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer,
+      preventDefault,
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("recovers a new draft when the replaced model client never responds", async () => {
+    installFakeBrowser();
+    testState.modelTarget = ["default"];
+    let inspections = 0;
+    const originalHost = {
+      inspectHarness: vi.fn(({ harnessId }: { harnessId: string }) => {
+        if (harnessId !== "claude-code") return Promise.resolve(readyInspection());
+        inspections += 1;
+        return inspections <= 2
+          ? Promise.resolve(readyInspection("old-model"))
+          : new Promise<ReturnType<typeof readyInspection>>(() => undefined);
+      }),
+    };
+    const replacementHost = { inspectHarness: vi.fn(async () => readyInspection("new-model")) };
+    let selectedHost: typeof originalHost | typeof replacementHost = originalHost;
+    const modelControl = {
+      currentHostId: () => "host-a",
+      clientForHost: vi.fn(() => selectedHost),
+      inspectHarness: originalHost.inspectHarness,
+      inspectThread: vi.fn(),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "claude-code",
+    });
+    vi.useFakeTimers();
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined, () => true, modelControl as never,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inspections).toBeGreaterThanOrEqual(3);
+    expect(probe.status().selections[0]?.modelView.status).toBe("loading");
+    selectedHost = replacementHost;
+    await vi.advanceTimersByTimeAsync(15_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(probe.status().selections[0]?.modelView).toMatchObject({
+      status: "ready", selected: "new-model",
+    }));
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("reloads a same-Host empty Claude catalog on explicit refresh", async () => {

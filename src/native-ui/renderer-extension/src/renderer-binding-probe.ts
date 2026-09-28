@@ -1577,27 +1577,53 @@ export function installRendererBindingProbe(
     paintComposer(mounted);
     if (adapterStatus.state !== "ready") return;
     const generation = controller.beginModelRequest(mounted.composer);
+    let client: RendererModelClient | null = null;
+    const requestContextChanged = (): boolean =>
+      mounted.hostId !== requestHostId ||
+      modelControl !== requestModelControl ||
+      hostClientFrom(requestModelControl, requestHostId) !== client ||
+      activeModelHostId() !== requestHostId;
+    const retryChangedContext = (): boolean => {
+      if (!requestContextChanged()) return false;
+      // The old response or failure belongs to a replaced request manager.
+      // Start a new inspection so the composer does not remain loading.
+      if (activeModelHostId() !== requestHostId) {
+        syncActiveHost();
+        if (!isDraft) {
+          // A locked thread is rebound by syncActiveHost. If the route is
+          // unavailable, surface a retryable error instead of looping here.
+          if (mounted.hostId === requestHostId) {
+            mounted.modelView = { status: "error", error: "Harness Host changed while loading models" };
+            paintComposer(mounted);
+          }
+          return true;
+        }
+        if (!activeModelHostId()) {
+          mounted.modelView = { status: "error", error: "Harness Host is unavailable" };
+          paintComposer(mounted);
+          return true;
+        }
+      }
+      void loadExternalConfiguration(mounted);
+      return true;
+    };
     try {
       if (!requestModelControl || !requestHostId) {
         throw new Error("External configuration control is unavailable");
       }
-      const client = hostClientFrom(requestModelControl, requestHostId);
+      client = hostClientFrom(requestModelControl, requestHostId);
       if (!client) {
         throw new Error(`Renderer Model request manager is unavailable for Host ${requestHostId}`);
       }
-      const inspection = await client.inspectHarness({
-        harnessId: externalHarnessIds[agent],
-      });
-      if (
-        !isLiveModelRequest(mounted, generation) ||
-        controller.get(mounted.composer).agent !== agent ||
-        mounted.hostId !== requestHostId ||
-        modelControl !== requestModelControl ||
-        hostClientFrom(requestModelControl, requestHostId) !== client ||
-        activeModelHostId() !== requestHostId
-      ) {
-        return;
-      }
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const inspection = await Promise.race([
+        client.inspectHarness({ harnessId: externalHarnessIds[agent] }),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("Model catalog request timed out; retry loading models")), 15_000);
+        }),
+      ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      if (!isLiveModelRequest(mounted, generation) || controller.get(mounted.composer).agent !== agent) return;
+      if (retryChangedContext()) return;
       if (inspection.status !== "ready") throw new Error(inspection.error.message);
       const current = controller.get(mounted.composer);
       const previousModel = controller.modelForAgent(mounted.composer, agent);
@@ -1773,6 +1799,7 @@ export function installRendererBindingProbe(
       }
     } catch (error) {
       if (!isLiveModelRequest(mounted, generation)) return;
+      if (controller.get(mounted.composer).agent !== agent || retryChangedContext()) return;
       const selected = controller.modelForAgent(mounted.composer, agent);
       const selectedThinkingOptionId = controller.thinkingOptionForAgent(mounted.composer, agent);
       const selectedPermissionModeId = controller.permissionModeForAgent(mounted.composer, agent);
