@@ -3,6 +3,7 @@ import codexAgentIconUrl from "./assets/codex-agent.png";
 import grokAgentIconUrl from "./assets/grok-agent.png";
 import antigravityAgentIconUrl from "./assets/antigravity-agent.svg";
 import kiroAgentIconUrl from "./assets/kiro-agent.svg";
+import kimiCodeAgentIconUrl from "../../../assets/icons/kimi-code-moonshot.svg";
 import ompAgentIconUrl from "./assets/omp-agent.svg";
 import openCodeAgentIconUrl from "./assets/opencode-agent.png";
 import type { RendererAgent } from "./agent-selection-state.js";
@@ -25,6 +26,7 @@ export const RENDERER_AGENT_LABELS: Record<RendererAgent, string> = {
   trae: "Trae",
   "cursor-cli": "Cursor",
   cline: "Cline",
+  "kimi-code": "Kimi Code",
   "codex-harness": "Codex（Harness Mix 协作）",
 };
 
@@ -123,6 +125,8 @@ export function createRendererAgentIcon(
       return buildImageMark(antigravityAgentIconUrl, size, ownerDocument);
     case "kiro-cli":
       return buildImageMark(kiroAgentIconUrl, size, ownerDocument);
+    case "kimi-code":
+      return buildImageMark(kimiCodeAgentIconUrl, size, ownerDocument);
     default:
       return buildImageMark(grokAgentIconUrl, size, ownerDocument, true);
   }

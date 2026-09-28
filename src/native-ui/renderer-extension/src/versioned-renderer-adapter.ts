@@ -958,6 +958,7 @@ function transportModelIdForAgent(agent: RendererAgent): string | null {
   if (agent === "trae") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("trae") });
   if (agent === "cursor-cli") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("cursor-cli") });
   if (agent === "cline") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("cline") });
+  if (agent === "kimi-code") return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse("kimi-code") });
   if (agent === 'codex-harness') return encodeHarnessPluginRoute({ harnessId: harnessIdSchema.parse(agent) });
   return null;
 }
@@ -1023,6 +1024,7 @@ export function modelSelectionForAgent(
     case "trae":
     case "cursor-cli":
     case "cline":
+    case "kimi-code":
     case "codex-harness":
       transportModelId = pluginRouteCarrier(
         harnessIdSchema.parse(agent),

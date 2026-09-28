@@ -56,6 +56,7 @@ const HARNESS_INSTALL_URLS: Readonly<Record<ExternalRendererAgent, string>> = Ob
   trae: "https://www.trae.ai/",
   'cursor-cli': "https://cursor.com/docs/cli/installation",
   cline: "https://docs.cline.bot/usage/cli-overview",
+  "kimi-code": "https://moonshotai.github.io/kimi-code/",
   'codex-harness': 'https://developers.openai.com/codex/',
 });
 

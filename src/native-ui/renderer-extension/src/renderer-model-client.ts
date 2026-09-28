@@ -39,11 +39,8 @@ import {
   threadCommandExecuteParamsSchema,
   threadCommandExecuteResultSchema,
   threadCommandsInspectParamsSchema,
-  threadDelegateParamsSchema,
-  threadDelegationResultSchema,
   threadHarnessSwitchParamsSchema,
   threadHarnessSwitchResultSchema,
-  threadMessageParamsSchema,
   threadModelSelectParamsSchema,
   threadPermissionModeSelectParamsSchema,
   threadThinkingSelectParamsSchema,
@@ -80,11 +77,8 @@ import {
   type ThreadCommandExecuteParams,
   type ThreadCommandExecuteResult,
   type ThreadCommandsInspectParams,
-  type ThreadDelegateParams,
-  type ThreadDelegationResult,
   type ThreadHarnessSwitchParams,
   type ThreadHarnessSwitchResult,
-  type ThreadMessageParams,
   type ThreadModelSelectParams,
   type ThreadPermissionModeSelectParams,
   type ThreadThinkingSelectParams,
@@ -120,8 +114,6 @@ export const THREAD_INSPECT_METHOD = "harnessmix/thread/inspect";
 export const HARNESS_COMMANDS_INSPECT_METHOD = "harnessmix/harness/commands/inspect";
 export const THREAD_COMMANDS_INSPECT_METHOD = "harnessmix/thread/commands/inspect";
 export const THREAD_COMMAND_EXECUTE_METHOD = "harnessmix/thread/command/execute";
-export const THREAD_DELEGATE_METHOD = "harnessmix/thread/delegate";
-export const THREAD_MESSAGE_METHOD = "harnessmix/thread/message";
 export const THREAD_MODEL_SELECT_METHOD = "harnessmix/thread/model/select";
 export const THREAD_THINKING_SELECT_METHOD = "harnessmix/thread/thinking/select";
 export const THREAD_PERMISSION_MODE_SELECT_METHOD = "harnessmix/thread/permission-mode/select";
@@ -318,8 +310,6 @@ const REQUEST_TIMEOUT_EXEMPT_METHODS: ReadonlySet<string> = new Set([
   THREAD_FORK_METHOD,
   THREAD_HARNESS_SWITCH_METHOD,
   THREAD_COMMAND_EXECUTE_METHOD,
-  THREAD_DELEGATE_METHOD,
-  THREAD_MESSAGE_METHOD,
   UPDATE_START_METHOD,
   CODEX_ACCOUNT_LOGIN_START_METHOD,
 ]);
@@ -434,18 +424,6 @@ export function createRendererModelClient(
       const params = threadHarnessSwitchParamsSchema.parse(input);
       const result = await manager.sendRequest(THREAD_HARNESS_SWITCH_METHOD, params);
       return threadHarnessSwitchResultSchema.parse(result);
-    },
-    // Cross-Harness collaboration: delegate a fresh subtask / follow up on an
-    // existing one; the wait chain rides on the parent thread's collaboration Turn.
-    async delegateThread(input: ThreadDelegateParams): Promise<ThreadDelegationResult> {
-      const params = threadDelegateParamsSchema.parse(input);
-      const result = await manager.sendRequest(THREAD_DELEGATE_METHOD, params);
-      return threadDelegationResultSchema.parse(result);
-    },
-    async messageThread(input: ThreadMessageParams): Promise<ThreadDelegationResult> {
-      const params = threadMessageParamsSchema.parse(input);
-      const result = await manager.sendRequest(THREAD_MESSAGE_METHOD, params);
-      return threadDelegationResultSchema.parse(result);
     },
     inspectHarness,
     async installHarness(input: { harnessId: string; terminal?: boolean | undefined }): Promise<{ success: boolean; command?: string; stdout?: string; stderr?: string; error?: string }> {

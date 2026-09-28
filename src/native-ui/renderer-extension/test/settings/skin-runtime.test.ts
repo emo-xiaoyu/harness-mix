@@ -80,6 +80,7 @@ describe("renderer skin runtime", () => {
       "styler-nocturne-studio",
       "styler-quiet-garden",
       "dream-gothic-void-crusade",
+      "retro-qq",
       "palette-catppuccin-latte",
       "palette-catppuccin-mocha",
       "palette-claude-desktop-dark",
@@ -94,9 +95,13 @@ describe("renderer skin runtime", () => {
       "palette-tokyo-night-light",
     ]);
     expect(RENDERER_SKINS[0]?.sourceUrl).toBeNull();
-    expect(RENDERER_SKINS.slice(1).every(({ sourceUrl }) => sourceUrl?.startsWith("https://github.com/"))).toBe(true);
-    expect(RENDERER_SKINS.slice(1).every((skin) => Boolean(skin.heroUrl) || skin.id.startsWith("palette-"))).toBe(true);
+    expect(RENDERER_SKINS.slice(1).every((skin) => skin.sourceUrl?.startsWith("https://github.com/") || skin.tagline !== undefined)).toBe(true);
+    expect(RENDERER_SKINS.slice(1).every((skin) => Boolean(skin.heroUrl) || skin.preview.startsWith("linear-gradient"))).toBe(true);
     expect(RENDERER_SKINS.filter((skin) => skin.id.startsWith("palette-")).every((skin) => skin.preview.startsWith("linear-gradient"))).toBe(true);
+    const retroQQ = RENDERER_SKINS.find(({ id }) => id === "retro-qq");
+    expect(retroQQ?.sourceUrl).toBeNull();
+    expect(retroQQ?.tagline?.["zh-CN"]).toBeTruthy();
+    expect(retroQQ?.tagline?.en).toBeTruthy();
     const miku = RENDERER_SKINS.find(({ id }) => id === "miku-488137");
     expect(miku?.logoUrl).toContain("logo.webp");
     expect(miku?.polaroidUrl).toContain("polaroid.webp");
@@ -155,6 +160,26 @@ describe("renderer skin runtime", () => {
     const storage = new MemoryStorage();
     storage.setItem(RENDERER_SKIN_STORAGE_KEY, "removed-theme");
     expect(readRendererSkin(storage)).toBe("native");
+  });
+
+  it("ships the bundled retro messenger skin as a visual-only structural overlay", () => {
+    const storage = new MemoryStorage();
+    const fixture = fakeDocument();
+
+    applyRendererSkin("retro-qq", fixture.document, storage);
+    const css = fixture.getStyle()?.textContent ?? "";
+    expect(fixture.attributes.get(RENDERER_SKIN_ATTRIBUTE)).toBe("retro-qq");
+    expect(storage.getItem(RENDERER_SKIN_STORAGE_KEY)).toBe("retro-qq");
+    expect(css).toContain('data-harness-mix-skin="retro-qq"]');
+    expect(css).toContain('"SimSun", "宋体", "NSimSun", "Microsoft YaHei", sans-serif');
+    expect(css).toContain("::-webkit-scrollbar-thumb");
+    expect(css).toContain("linear-gradient(180deg, #9FD3F7 0%, #6FB1E8 46%, #3E8ED5 100%)");
+    expect(css).toContain('[data-app-action-sidebar-thread-active="true"]');
+    expect(css).not.toContain("<script");
+
+    applyRendererSkin("native", fixture.document, storage);
+    expect(fixture.getStyle()).toBeNull();
+    expect(storage.getItem(RENDERER_SKIN_STORAGE_KEY)).toBeNull();
   });
 
   it("applies shared transparent header chrome and readable user messages to every custom skin", () => {

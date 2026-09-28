@@ -183,17 +183,6 @@ export type {
 // Thread lifecycle: delegate, switch, fork, usage -----------------------------
 
 export {
-  threadDelegateParamsSchema,
-  threadDelegationResultSchema,
-  threadMessageParamsSchema,
-} from "./thread-delegate.js";
-export type {
-  ThreadDelegateParams,
-  ThreadDelegationResult,
-  ThreadMessageParams,
-} from "./thread-delegate.js";
-
-export {
   harnessHandoffIncludesSchema,
   harnessHandoffIntentSchema,
   threadHarnessSwitchParamsSchema,

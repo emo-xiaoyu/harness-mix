@@ -174,6 +174,8 @@ export function rendererAgentForThreadOwnership(
       return "cursor-cli";
     case "cline":
       return "cline";
+    case "kimi-code":
+      return "kimi-code";
     case "codex-harness":
       return "codex-harness";
     default:

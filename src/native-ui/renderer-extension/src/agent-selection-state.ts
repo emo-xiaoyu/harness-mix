@@ -22,6 +22,7 @@ export const KNOWN_RENDERER_AGENTS = [
   "trae",
   "cursor-cli",
   "cline",
+  "kimi-code",
   "codex-harness",
 ] as const;
 export const DEFAULT_RENDERER_AGENTS = [
@@ -42,6 +43,7 @@ export const DEFAULT_RENDERER_AGENTS = [
   'cursor-cli',
   'kiro-cli',
   'cline',
+  'kimi-code',
   'codex-harness',
 ] as const;
 export type RendererAgent = (typeof KNOWN_RENDERER_AGENTS)[number];
@@ -86,6 +88,8 @@ export interface DraftComposerState {
   cursorThinkingOptionId?: HarnessThinkingOptionId;
   clineModel?: HarnessModelRef;
   clineThinkingOptionId?: HarnessThinkingOptionId;
+  kimiCodeModel?: HarnessModelRef;
+  kimiCodeThinkingOptionId?: HarnessThinkingOptionId;
   codexHarnessModel?: HarnessModelRef;
   codexHarnessThinkingOptionId?: HarnessThinkingOptionId;
   permissionModeByAgent?: Partial<Record<ExternalRendererAgent, HarnessPermissionModeId>>;
@@ -134,6 +138,7 @@ const AGENT_MODEL_SLOTS: Readonly<Record<ExternalRendererAgent, AgentModelSlot>>
   trae: { model: "traeModel", thinking: "traeThinkingOptionId" },
   "cursor-cli": { model: "cursorModel", thinking: "cursorThinkingOptionId" },
   cline: { model: "clineModel", thinking: "clineThinkingOptionId" },
+  "kimi-code": { model: "kimiCodeModel", thinking: "kimiCodeThinkingOptionId" },
   "codex-harness": { model: "codexHarnessModel", thinking: "codexHarnessThinkingOptionId" },
 };
 

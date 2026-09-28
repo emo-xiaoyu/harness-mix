@@ -443,6 +443,24 @@ describe("Renderer draft Agent controller", () => {
     expect(agents.rebindTarget(composer, reboundTarget)).toBe(liveState);
   });
 
+  it("keeps Kimi Code's native model, thinking and mode with its composer", async () => {
+    const agents = controller();
+    const composer = {};
+    const model = harnessModelRefSchema.parse({ id: 'kimi-code-k3' });
+    const thinking = harnessThinkingOptionIdSchema.parse('on');
+    const mode = harnessPermissionModeIdSchema.parse('plan');
+    await agents.switchAgent(composer, 'kimi-code', {
+      applyAgent: () => true,
+      clearPrewarm: async () => undefined,
+    });
+    agents.setExternalModel(composer, 'kimi-code', model);
+    agents.setExternalThinkingOption(composer, 'kimi-code', thinking);
+    agents.setExternalPermissionMode(composer, 'kimi-code', mode);
+    expect(agents.get(composer)).toMatchObject({ agent: 'kimi-code', kimiCodeModel: model,
+      kimiCodeThinkingOptionId: thinking, permissionModeByAgent: { 'kimi-code': mode } });
+    expect(agents.get({}).agent).toBe('codex');
+  });
+
   it("keeps a pending submission across a draft identity rebind", async () => {
     const composer = {};
     const agents = controller();

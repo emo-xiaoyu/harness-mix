@@ -71,7 +71,7 @@ describe("Renderer Agent icons", () => {
     expect(image.style.borderRadius).toBe("22.37%");
   });
 
-  it.each(["antigravity", "kiro-cli"] as const)(
+  it.each(["antigravity", "kiro-cli", "kimi-code"] as const)(
     "renders %s with the bundled SVG asset",
     (agent) => {
       const image = {
@@ -89,6 +89,7 @@ describe("Renderer Agent icons", () => {
 
       expect(createRendererAgentIcon(agent, 16, ownerDocument)).toBe(image);
       expect(image.src).toMatch(/^data:image\/svg\+xml,/);
+      if (agent === 'kimi-code') expect(decodeURIComponent(image.src)).toContain('MoonshotAI');
       expect(image.alt).toBe("");
       expect(image.draggable).toBe(false);
       expect(image.style.width).toBe("16px");

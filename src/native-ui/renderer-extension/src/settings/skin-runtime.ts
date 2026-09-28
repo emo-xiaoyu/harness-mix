@@ -31,7 +31,7 @@ export const RENDERER_SKIN_IDS = [
   "wuthering-tide", "naruto-hokage", "naruto-sasuke", "deepspace-dawn",
   "deepspace-star", "dragonball-nimbus", "dragonball-super-saiyan", "dalao-dianyan",
   "styler-gilded-grandeur", "styler-merry-big-top", "styler-nocturne-studio",
-  "styler-quiet-garden", "dream-gothic-void-crusade",
+  "styler-quiet-garden", "dream-gothic-void-crusade", "retro-qq",
   "palette-catppuccin-latte", "palette-catppuccin-mocha", "palette-claude-desktop-dark",
   "palette-claude-desktop-light", "palette-gruvbox-dark", "palette-gruvbox-light",
   "palette-nord-dark", "palette-nord-light", "palette-one-dark", "palette-one-light",
@@ -52,6 +52,10 @@ export interface RendererSkinDefinition {
   readonly preview: string;
   readonly focus: string;
   readonly dark: boolean;
+  // Original built-in skins carry their own card copy instead of upstream
+  // attribution; extraCss layers structural rules over the shared contract.
+  readonly tagline?: { readonly en: string; readonly "zh-CN": string };
+  readonly extraCss?: string;
 }
 
 const HEIGE_SOURCE_URL = "https://github.com/HeiGeAi/heige-codex-skin-studio";
@@ -71,7 +75,7 @@ function heroPreviewGradient(dark: boolean): string {
 function defineSkin(
   id: Exclude<RendererSkinId, "native">,
   name: string,
-  provenance: { readonly sourceName: string; readonly sourceUrl: string },
+  provenance: { readonly sourceName: string; readonly sourceUrl: string | null },
   fields: {
     readonly heroUrl: string | null;
     readonly palette: RendererSkinDefinition["palette"];
@@ -80,6 +84,8 @@ function defineSkin(
     readonly preview: string;
     readonly logoUrl?: string | null;
     readonly polaroidUrl?: string | null;
+    readonly tagline?: RendererSkinDefinition["tagline"];
+    readonly extraCss?: string;
   },
 ): RendererSkinDefinition {
   return Object.freeze({
@@ -94,6 +100,8 @@ function defineSkin(
     preview: fields.preview,
     focus: fields.focus,
     dark: fields.dark,
+    ...(fields.tagline ? { tagline: fields.tagline } : {}),
+    ...(fields.extraCss !== undefined ? { extraCss: fields.extraCss } : {}),
   });
 }
 
@@ -168,6 +176,131 @@ function paletteSkin(
   });
 }
 
+// Structural rules for the original retro instant-messenger skin. Same
+// attribute-scoped overlay contract as the shared template — colors and
+// chrome only, no layout or behavior changes beyond the skin layer.
+function retroQQExtraCss(): string {
+  const scope = `html[${RENDERER_SKIN_ATTRIBUTE}="retro-qq"]`;
+  const retroFont = `"SimSun", "宋体", "NSimSun", "Microsoft YaHei", sans-serif`;
+  return `
+${scope} :where(header, [data-pip-obstacle="app-shell-header"]) {
+  background: linear-gradient(180deg, #9FD3F7 0%, #6FB1E8 46%, #3E8ED5 100%) !important;
+  border-bottom: 1px solid #2F7BC4 !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 55%), 0 2px 5px rgb(31 84 138 / 28%) !important;
+}
+${scope} header,
+${scope} header :where(button, [role="button"], span, div) { color: #ffffff !important; }
+${scope} [data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child {
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  text-shadow: 0 1px 1px rgb(20 60 100 / 55%) !important;
+}
+${scope} [data-app-shell-page-header] > [data-app-shell-header-toolbar] > button[aria-haspopup="menu"] {
+  color: #ffffff !important;
+  text-shadow: 0 1px 1px rgb(20 60 100 / 45%) !important;
+}
+${scope} header button:not([data-harnessmix-settings-trigger] *):hover,
+${scope} [data-pip-obstacle="app-shell-header"] button:not([data-harnessmix-settings-trigger] *):hover,
+${scope} [data-app-shell-header-obstacle] button:not([data-harnessmix-settings-trigger] *):hover,
+${scope} [data-testid="app-shell-header-context-menu-surface"] button:not([data-harnessmix-settings-trigger] *):hover,
+${scope} [data-app-shell-header-toolbar] button:not([data-harnessmix-settings-trigger] *):hover {
+  background: rgb(255 255 255 / 24%) !important;
+  background-color: rgb(255 255 255 / 24%) !important;
+  border-radius: 3px !important;
+}
+${scope} header button:not([data-harnessmix-settings-trigger] *):active,
+${scope} [data-pip-obstacle="app-shell-header"] button:not([data-harnessmix-settings-trigger] *):active,
+${scope} [data-app-shell-header-obstacle] button:not([data-harnessmix-settings-trigger] *):active,
+${scope} [data-testid="app-shell-header-context-menu-surface"] button:not([data-harnessmix-settings-trigger] *):active,
+${scope} [data-app-shell-header-toolbar] button:not([data-harnessmix-settings-trigger] *):active {
+  background: rgb(255 255 255 / 38%) !important;
+  background-color: rgb(255 255 255 / 38%) !important;
+}
+${scope} [data-app-shell-tab-row] {
+  background: linear-gradient(180deg, #E9F3FC 0%, #D8EBFA 100%) !important;
+  border-bottom: 1px solid #A9CBE8 !important;
+}
+${scope} .app-shell-left-panel {
+  background: linear-gradient(180deg, #D8EAF9 0%, #EAF3FC 26%, #E3EFFB 100%) !important;
+  border-right: 1px solid #8FB8DC !important;
+}
+${scope} [data-app-action-sidebar-thread-active="true"] {
+  background: linear-gradient(180deg, #82C0EF 0%, #3D8FD6 100%) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%) !important;
+}
+${scope} [data-app-action-sidebar-thread-active="true"] :where(span, small, div) { color: #ffffff !important; }
+${scope} :where(
+  [data-response-annotation-conversation],
+  [data-local-conversation-final-assistant]:not(:has([data-response-annotation-conversation]))
+) {
+  background: #ffffff !important;
+  border: 1px solid #A8C8E4 !important;
+  border-radius: 6px !important;
+  box-shadow: 1px 2px 4px rgb(46 106 168 / 18%) !important;
+  backdrop-filter: none !important;
+  padding: 10px 12px 9px !important;
+  font-family: ${retroFont};
+  font-size: 13px;
+  line-height: 1.75;
+}
+${scope} [data-user-message-bubble] {
+  background: linear-gradient(180deg, #EAF6FF 0%, #D5EBFB 100%) !important;
+  border: 1px solid #9ECAED !important;
+  border-radius: 6px !important;
+  box-shadow: 1px 2px 4px rgb(46 106 168 / 18%) !important;
+  backdrop-filter: none !important;
+  font-family: ${retroFont};
+  font-size: 13px;
+}
+${scope} :where(
+  table,
+  [data-markdown-table]
+) {
+  background-color: #ffffff !important;
+  border: 1px solid #7EA9C9 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+${scope} :where(table th, [data-markdown-table] th) {
+  background-image: linear-gradient(180deg, #F2F8FD, #CFE5F8) !important;
+  border-bottom: 1px solid #7EA9C9 !important;
+  color: #16324E !important;
+}
+${scope} :where(.composer-surface-chrome, [data-codex-approval-surface]) {
+  background: #ffffff !important;
+  border: 1px solid #7F9DB9 !important;
+  border-radius: 3px !important;
+  box-shadow: inset 0 1px 2px rgb(127 157 185 / 28%) !important;
+  backdrop-filter: none !important;
+}
+${scope} .composer-surface-chrome :where(textarea, [contenteditable="true"]) {
+  background: #ffffff !important;
+  color: #16324E !important;
+  font-family: ${retroFont};
+}
+${scope} .composer-surface-chrome button {
+  background: linear-gradient(180deg, #FDFEFF 0%, #E3F0FC 48%, #C6DFF6 100%) !important;
+  border: 1px solid #6FA3D2 !important;
+  border-radius: 3px !important;
+  color: #16324E !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%) !important;
+}
+${scope} .composer-surface-chrome button:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #EAF5FF 48%, #D4E9FA 100%) !important;
+}
+${scope} ::-webkit-scrollbar { width: 13px; height: 13px; }
+${scope} ::-webkit-scrollbar-track { background: #F0F6FC; }
+${scope} ::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #B9D9F2 0%, #8FC1E9 100%);
+  border: 1px solid #7FAFD8;
+  border-radius: 2px;
+}
+${scope} ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, #A9CFEA 0%, #7FB4E2 100%);
+}`;
+}
+
 export const RENDERER_SKINS: readonly RendererSkinDefinition[] = Object.freeze([
   Object.freeze({
     id: "native", name: "Native Codex", sourceName: "OpenAI Codex", sourceUrl: null,
@@ -201,6 +334,23 @@ export const RENDERER_SKINS: readonly RendererSkinDefinition[] = Object.freeze([
   codexStylerSkin("styler-nocturne-studio", "夜曲工作室", nocturneStudioHero, ["#090b0d", "#34383a", "#e9a066", "#f5efe6"], "58% 46%"),
   codexStylerSkin("styler-quiet-garden", "静谧花园", quietGardenHero, ["#101612", "#364339", "#9fc29a", "#edf2e8"], "52% 50%"),
   dreamSkin("dream-gothic-void-crusade", "哥特虚空远征", gothicVoidCrusadeHero, ["#0d0d0e", "#b5a386", "#c8a55a", "#f3ead7"], "76% 45%"),
+  defineSkin(
+    "retro-qq",
+    "复古 QQ · 千禧蓝",
+    { sourceName: "Harness Mix Original", sourceUrl: null },
+    {
+      heroUrl: null,
+      palette: ["#EAF3FC", "#5FA8E0", "#0E6EBE", "#16324E"],
+      focus: "50% 50%",
+      dark: false,
+      preview: "linear-gradient(180deg, #7CB8E8 0 6%, #EAF3FC 6% 72%, #C9E2F6 72% 100%)",
+      tagline: {
+        en: "Original built-in homage to millennium-era instant messengers",
+        "zh-CN": "Harness Mix 原创 · 致敬千禧年即时通讯的经典蓝",
+      },
+      extraCss: retroQQExtraCss(),
+    },
+  ),
   paletteSkin("palette-catppuccin-latte", "Catppuccin · 拿铁", ["#EFF1F5", "#5C5F77", "#FE640B", "#4C4F69"], "#E6E9EF", false),
   paletteSkin("palette-catppuccin-mocha", "Catppuccin · 摩卡", ["#181825", "#A6ADC8", "#FAB387", "#CDD6F4"], "#1E1E2E", true),
   paletteSkin("palette-claude-desktop-dark", "Claude · 墨夜", ["#1A1918", "#A8A49C", "#CA7554", "#E8E4DC"], "#222120", true),
@@ -697,7 +847,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-harnessmix-settings-shell] {
   --settings-primary: ${accent}; --settings-primary-hover: color-mix(in srgb, ${accent} 82%, white);
   --settings-primary-text: ${surface};
 }
-${logoRules}${polaroidRules}
+${logoRules}${polaroidRules}${skin.extraCss ?? ""}
 @media (prefers-reduced-transparency: reduce) {
   html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.app-shell-left-panel, [data-response-annotation-conversation], .composer-surface-chrome, [data-user-message-bubble], [data-codex-approval-surface]) {
     background-color: ${surface} !important;

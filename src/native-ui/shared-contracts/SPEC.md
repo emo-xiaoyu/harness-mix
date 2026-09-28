@@ -175,15 +175,7 @@ trim 后非空，refine 消息 `"Identifier must not be empty or whitespace"`。
 - `threadCommandExecuteParamsSchema`：strict `{threadId, commandId, turnId?, arguments?: JsonObject}`。
 - `threadCommandExecuteResultSchema`：strict `{accepted: literal(true), turnId}`。
 
-## 14. thread-delegate
-
-- 任务文本：trim min1 max8000。
-- `threadDelegateParamsSchema`：strict `{threadId, harnessId, task}`。
-- `threadMessageParamsSchema`：strict `{threadId, childThreadId, task}`。
-- `threadDelegationResultSchema`：strict `{childThreadId, turn: loose{id, status: string}}`
-  （turn 投影细节由通知流承载，结果只带身份）。
-
-## 15. thread-harness-switch
+## 14. thread-harness-switch
 
 - `harnessHandoffIntentSchema`：enum("continue","execute-plan","review","reanalyze")。
 - `harnessHandoffIncludesSchema`：strict 五布尔 `{conversation, plan, evidence, files, unresolved}`。
@@ -192,7 +184,7 @@ trim 后非空，refine 消息 `"Identifier must not be empty or whitespace"`。
 - `threadHarnessSwitchResultSchema`：strict `{threadId, checkpointId: min1,
   phase?: enum("ready","rolled-back","cancelled"), fromHarnessId?: min1, toHarnessId?: min1}`。
 
-## 16. harness-permission-modes
+## 15. harness-permission-modes
 
 常量：ID ≤128、label ≤256、description ≤1024、目录 ≤32。
 非空文本基元：trim 非空，消息 `"Value must not be empty or whitespace"`。
@@ -206,7 +198,7 @@ trim 后非空，refine 消息 `"Identifier must not be empty or whitespace"`。
   （`"Default Permission Mode must exist in the catalog"`，path ["defaultModeId"]）。
 - `threadPermissionModeSelectParamsSchema`：strict `{threadId, permissionModeId}`。
 
-## 17. harness-models
+## 16. harness-models
 
 常量：`HARNESS_MODEL_REF_MAX_LENGTH=512`、`HARNESS_MODEL_LABEL_MAX_LENGTH=256`、
 `HARNESS_THINKING_OPTION_ID_MAX_LENGTH=128`、`THREAD_OWNERSHIP_LIST_MAX_LENGTH=100`。
@@ -275,7 +267,7 @@ trim 后非空，refine 消息 `"Identifier must not be empty or whitespace"`。
 - `threadOwnershipListResultSchema`：strict `{threads: ownership[] min1 max100}` +
   threadId 唯一 refine（`"Thread ownership-list results must be unique"`）。
 
-## 18. harness-session-import
+## 17. harness-session-import
 
 常量：ID ≤1024、cwd ≤16384、title ≤4096、单响应列表 ≤1000、默认分页 20、
 updatedAt ≤ 8_640_000_000_000_000（wire 界，非存储界）。
@@ -295,7 +287,7 @@ updatedAt ≤ 8_640_000_000_000_000（wire 界，非存储界）。
 - `harnessSessionImportParamsSchema`：strict `{harnessId: pluginId, nativeSessionId}`。
 - `harnessSessionImportResultSchema`：strict `{threadId: 非空 max1024 pipe hostThreadId}`。
 
-## 19. deepseek-modern-sessions
+## 18. deepseek-modern-sessions
 
 - 常量逐一等于 §18 对应值；额外 `DEEPSEEK_MODERN_HOST_THREAD_ID_MAX_LENGTH = 1024`。
 - `deepSeekModernSessionCandidateSchema` = `harnessSessionImportCandidateSchema`（同一 schema）。
@@ -304,7 +296,7 @@ updatedAt ≤ 8_640_000_000_000_000（wire 界，非存储界）。
 - `deepSeekModernSessionImportParamsSchema`：strict `{nativeSessionId}`；
   `...ImportResultSchema`：strict `{threadId: 非空 max1024 pipe hostThreadId}`。
 
-## 20. codex-accounts
+## 19. codex-accounts
 
 - accountId：min1 max256 regex `^[A-Za-z0-9._~-]+$`；非空文本基元：`z.string().trim().min(1)`。
 - `codexAccountPlanTypeSchema`：enum 16 值（free, go, plus, pro, prolite, team,
@@ -328,7 +320,7 @@ updatedAt ≤ 8_640_000_000_000_000（wire 界，非存储界）。
   strict `{accountId, outcome: enum("reset","nothingToReset","noCredit","alreadyRedeemed"),
   accountCredits?}`。
 
-## 21. updates
+## 20. updates
 
 - `UPDATE_ERROR_MAX_LENGTH = 500`；
   `UPDATE_SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u`。
@@ -351,7 +343,7 @@ updatedAt ≤ 8_640_000_000_000_000（wire 界，非存储界）。
 - `updateStartResultSchema`：strictObject `{status}`；
   `updateStatusResultSchema`：strictObject `{status | null}`。
 
-## 22. index（门面）
+## 21. index（门面）
 
 - 按 `index.ts` 现有导出清单**逐一重导**（值导出与类型导出均不可增删改名）。
 - 额外两个门面自有导出：

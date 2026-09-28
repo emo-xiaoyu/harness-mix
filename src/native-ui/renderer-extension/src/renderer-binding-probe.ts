@@ -116,6 +116,7 @@ const externalHarnessIds = {
   trae: harnessIdSchema.parse("trae"),
   'cursor-cli': harnessIdSchema.parse("cursor-cli"),
   cline: harnessIdSchema.parse("cline"),
+  "kimi-code": harnessIdSchema.parse("kimi-code"),
   'codex-harness': harnessIdSchema.parse('codex-harness'),
 } as const;
 
@@ -136,6 +137,7 @@ const externalAgents: readonly ExternalRendererAgent[] = [
   "trae",
   "cursor-cli",
   "cline",
+  "kimi-code",
   'codex-harness',
 ];
 type HarnessAvailability = Partial<Record<ExternalRendererAgent, RendererAgentAvailability>>;
@@ -501,7 +503,7 @@ export function restoredThreadOwnership(inspection: ThreadInspection): RestoredT
       inspection.effectivePermissionModeId ?? route.permissionModeId,
     );
   }
-  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'codebuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae' || inspection.harnessId === 'cursor-cli' || inspection.harnessId === 'cline') {
+  if (inspection.harnessId === "openclaw" || inspection.harnessId === "hermes" || inspection.harnessId === 'codex-harness' || inspection.harnessId === 'qoder' || inspection.harnessId === 'codebuddy' || inspection.harnessId === 'zcode' || inspection.harnessId === 'trae' || inspection.harnessId === 'cursor-cli' || inspection.harnessId === 'cline' || inspection.harnessId === 'kimi-code') {
     const harnessId = inspection.harnessId;
     const route = decodeHarnessPluginRoute(inspection.transportModelId);
     if (!route || route.harnessId !== harnessId) {
@@ -915,6 +917,7 @@ export function installRendererBindingProbe(
       trae: undefined,
       'cursor-cli': undefined,
       cline: undefined,
+      'kimi-code': undefined,
       'codex-harness': undefined,
     },
     webUi: Object.fromEntries(

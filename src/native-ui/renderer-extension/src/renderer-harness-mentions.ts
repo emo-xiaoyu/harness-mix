@@ -89,6 +89,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   'kiro-cli': 'Kiro CLI 智能编程',
   'cursor-cli': 'Cursor CLI 原生协同',
   cline: 'Cline 自主编程智能体',
+  'kimi-code': 'Kimi Code 原生编程智能体',
 };
 
 // Order matters: the first id fragment contained in an Agent id wins.
@@ -114,6 +115,7 @@ const AGENT_COLORS: Record<string, string> = {
   trae: '#0284c7',
   'cursor-cli': '#475569',
   cline: '#be185d',
+  'kimi-code': '#111827',
 };
 
 function getAgentColor(agentId: string): string {

@@ -1,4 +1,5 @@
 import {
+  decodeHarnessPluginRoute,
   harnessModelRefSchema,
   harnessPermissionModeIdSchema,
   harnessThinkingOptionIdSchema,
@@ -535,6 +536,7 @@ describe("current Codex Renderer Agent adapter", () => {
     );
     expect(modelSelectionForAgent(null, null, "grok")?.model).toBe(GROK_TRANSPORT_MODEL_ID);
     expect(modelSelectionForAgent(null, null, "opencode")?.model).toBe(OPENCODE_TRANSPORT_MODEL_ID);
+    expect(decodeHarnessPluginRoute(modelSelectionForAgent(null, null, 'kimi-code')?.model ?? '')?.harnessId).toBe('kimi-code');
     expect(modelSelectionForAgent(null, null, "codex")).toBeNull();
   });
 

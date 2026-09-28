@@ -132,7 +132,10 @@ export function createSkinSettingsPage(
         titleRow.append(title, current);
         const description = document.createElement("p");
         description.className = "skin-card__description";
-        if (skin.sourceUrl) {
+        if (skin.tagline) {
+          // Original built-in skin: its own copy instead of upstream credit.
+          description.textContent = `${skin.tagline[messages.locale]} · ${skin.dark ? copy.dark : copy.light}`;
+        } else if (skin.sourceUrl) {
           // Bundled theme: credit the upstream open-source project it came from.
           description.append(`${copy.included} `);
           const source = document.createElement("a");
