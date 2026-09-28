@@ -898,6 +898,11 @@ class NativeProtocol {
     if (method === 'harnessmix/thread/verification/configure') return this.runtime.configureVerification(params.threadId, params.policy);
     if (method === 'harnessmix/thread/verification/run') return this.runtime.runVerification(params.threadId);
     if (!thread) {
+      // 渲染层对当前打开线程轮询 usage/team 状态；官方 Codex 线程不属于本 Host，
+      // 抛「未实现」会让轮询方进入错误重试风暴（模型选择器转圈、侧栏图标闪烁）。
+      // 与 collaboration.inspectTeam 的无团队语义一致：返回良性的空态。
+      if (method === 'harnessmix/thread/usage/inspect') return { threadId: params.threadId, usage: null };
+      if (method === 'harnessmix/thread/team/inspect') return { team: null, snapshots: [] };
       if (method.startsWith('harnessmix/')) throw new Error(`Harness Mix does not implement ${method}`);
       return undefined;
     }
