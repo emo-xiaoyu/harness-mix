@@ -1069,6 +1069,10 @@ class HostRuntime {
     this.reviewMonitors.clear();
     for (const session of this.sessions.values()) await session.adapter.close(session).catch(() => {});
     await Promise.allSettled([...this.reviewTasks]);
+    // Native subagent events are projected asynchronously. Their import can
+    // save once for the new thread and again after its messages are applied.
+    // Wait for both steps before the final checkpoint and store teardown.
+    await Promise.allSettled([...this.nativeSubagentSync.values()]);
     clearTimeout(this.saveTimer); clearTimeout(this.broadcastTimer);
     await this.#save();
     await this.handoffs.close();

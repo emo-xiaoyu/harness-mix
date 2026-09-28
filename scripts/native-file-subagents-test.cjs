@@ -149,7 +149,39 @@ async function main() {
     assert.equal(child.messages.at(-1)?.text, 'Done');
     assert.ok(parent.tools.some(tool => tool.collaboration?.child_thread_id === child.id), 'parent card links to child');
     await runtime.cancel(parent.id);
-    await runtime.close();
+    const save = runtime.store.save.bind(runtime.store);
+    let releaseImport;
+    const imported = new Promise(resolve => { releaseImport = resolve; });
+    let delayNextSave = true;
+    runtime.store.save = (...args) => {
+      const saving = save(...args);
+      if (!delayNextSave) return saving;
+      delayNextSave = false;
+      return saving.then(() => imported);
+    };
+    parentEmit({ kind: 'native-subagent', nativeSessionId: 'parent-ui:qoder:closing-child',
+      title: 'Qoder · closing child', task: 'Check shutdown', status: 'success', messages: [
+        { info: { role: 'user' }, parts: [{ type: 'text', text: 'Check shutdown' }] },
+        { info: { role: 'assistant', time: { completed: 1 } }, parts: [{ type: 'text', text: 'Saved before close' }] },
+      ] });
+    for (let attempt = 0; attempt < 100 && !runtime.threads.some(item => item.nativeSessionId === 'parent-ui:qoder:closing-child'); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.ok(runtime.threads.some(item => item.nativeSessionId === 'parent-ui:qoder:closing-child'));
+    let closeSettled = false;
+    const closing = runtime.close().finally(() => { closeSettled = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(closeSettled, false, 'close waits for native child import to finish');
+    } finally {
+      releaseImport();
+      await closing;
+    }
+    const stored = await runtime.store.load();
+    const savedChild = stored.find(item => item.nativeSessionId === 'parent-ui:qoder:closing-child');
+    assert.equal(savedChild?.nativeMessageCount, 2);
+    assert.ok(savedChild?.coreState.items.some(item => item.type === 'agent_message' && item.content === 'Saved before close'),
+      'close persists the complete native child transcript');
     console.log('native file subagent tests passed');
   } finally {
     if (root.startsWith(os.tmpdir() + path.sep)) await fs.rm(root, { recursive: true, force: true });
