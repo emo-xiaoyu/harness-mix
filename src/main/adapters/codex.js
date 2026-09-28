@@ -182,6 +182,64 @@ function emitTool(item, session, emit, state = toolState(item)) {
   });
 }
 
+function nativeChildMessages(thread) {
+  const messages = [];
+  for (const turn of thread?.turns ?? []) {
+    const assistantParts = [];
+    for (const item of turn.items ?? []) {
+      if (item.type === 'userMessage') {
+        const parts = (item.content ?? []).filter(part => ['text', 'inputText'].includes(part.type))
+          .map(part => ({ type: 'text', text: part.text }));
+        messages.push({ info: { role: 'user', time: { created: 0 } }, parts });
+      } else if (item.type === 'agentMessage') {
+        assistantParts.push({ type: 'text', text: item.text ?? '' });
+      } else if (item.type === 'reasoning') {
+        const summary = Array.isArray(item.summary) ? item.summary.join('\n') : item.text;
+        if (summary) assistantParts.push({ type: 'reasoning', text: summary });
+      } else if (['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(item.type)) {
+        assistantParts.push({ type: 'tool', callID: item.id, tool: toolTitle(item),
+          state: { status: toolState(item) === 'error' ? 'error' : 'completed', input: toolInput(item), output: toolOutput(item) } });
+      }
+    }
+    if (assistantParts.length) messages.push({ info: { role: 'assistant', time: { completed: turn.status === 'completed' ? Date.now() : null } }, parts: assistantParts });
+  }
+  return messages;
+}
+
+async function syncNativeChildren(session) {
+  if (session.state.childSync || !session.state.nativeChildren?.size) return session.state.childSync;
+  session.state.childSync = (async () => {
+    for (const [id, child] of session.state.nativeChildren) {
+      try {
+        const response = await session.host.request('thread/read', { threadId: id, includeTurns: true });
+        const thread = response?.thread;
+        if (thread?.id !== id) continue;
+        const messages = nativeChildMessages(thread);
+        const lastTurn = thread.turns?.at(-1);
+        const status = child.status === 'failed' || lastTurn?.status === 'failed' ? 'failed'
+          : lastTurn?.status === 'completed' ? 'success' : 'running';
+        child.nativeStatus = status;
+        await session.emit({ kind: 'native-subagent', nativeSessionId: id,
+          title: child.title, task: child.task, status, messages });
+      } catch { /* Native child may not be readable until its first turn starts. */ }
+    }
+  })().finally(() => { session.state.childSync = null; });
+  return session.state.childSync;
+}
+
+function recordNativeChildren(item, session) {
+  if (item?.type !== 'collabAgentToolCall') return;
+  for (const id of item.receiverThreadIds ?? []) {
+    if (typeof id !== 'string' || !id || id === session.nativeSessionId) continue;
+    const isNew = !session.state.nativeChildren.has(id);
+    session.state.nativeChildren.set(id, { title: `Codex · ${item.tool || 'Agent'}`,
+      task: item.prompt || '', status: item.status });
+    if (isNew) void session.emit({ kind: 'native-subagent', nativeSessionId: id,
+      title: `Codex · ${item.tool || 'Agent'}`, task: item.prompt || '', status: 'running', messages: [] });
+  }
+  void syncNativeChildren(session);
+}
+
 function projectNotification(message, session, emit) {
   recordNative(manifest.id, message);
   const { method, params = {} } = message ?? {};
@@ -210,6 +268,7 @@ function projectNotification(message, session, emit) {
       break;
     case 'item/started': {
       const item = params.item;
+      recordNativeChildren(item, session);
       if (['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch', 'imageView', 'imageGeneration', 'subAgentActivity'].includes(item?.type)) {
         emitTool(item, session, emit, 'running');
       }
@@ -226,6 +285,7 @@ function projectNotification(message, session, emit) {
       break;
     case 'item/completed': {
       const item = params.item;
+      recordNativeChildren(item, session);
       if (item?.type === 'agentMessage' && !session.state.itemText.has(item.id) && item.text) {
         emit({ kind: 'text-delta', text: item.text, nativeRef });
       } else if (item?.type === 'reasoning' && Array.isArray(item.summary) && item.summary.length) {
@@ -370,11 +430,11 @@ function queueRequest(message, session, emit) {
 
 function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort, cwd } = {}) {
   const session = {
-    host, nativeSessionId, model, cwd,
+    host, nativeSessionId, model, cwd, emit,
     pendingApprovals: new Map(),
     state: {
       turn: null, compaction: null, nativeTurnId: null, usage: undefined, effort,
-      itemText: new Map(), reasoningItems: new Set(), toolOutput: new Map(),
+      itemText: new Map(), reasoningItems: new Set(), toolOutput: new Map(), nativeChildren: new Map(), childSync: null,
     },
   };
   session.unwatch = host.watch(nativeSessionId, {
@@ -390,6 +450,10 @@ function attachSession(host, nativeSessionId, { emit, diagnostic, model, effort,
       session.pendingApprovals.clear();
     },
   });
+  session.childPoll = setInterval(() => {
+    if ([...session.state.nativeChildren.values()].some(child => child.nativeStatus !== 'success' && child.nativeStatus !== 'failed')) void syncNativeChildren(session);
+  }, 2000);
+  session.childPoll.unref?.();
   return session;
 }
 
@@ -722,6 +786,7 @@ function create() {
     },
 
     async close(session) {
+      clearInterval(session.childPoll);
       session.unwatch?.();
       if (session.state.nativeTurnId) {
         await session.host.request('turn/interrupt', { threadId: session.nativeSessionId, turnId: session.state.nativeTurnId }).catch(() => {});

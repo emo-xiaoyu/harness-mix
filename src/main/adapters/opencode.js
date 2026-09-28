@@ -6,6 +6,37 @@ const manifest = { id: 'opencode', name: 'OpenCode', icon: 'opencode-color.svg',
 } };
 const enc = encodeURIComponent;
 const route = (s, suffix = '') => `/session/${enc(s.nativeSessionId)}${suffix}`;
+async function syncNativeChildren(session) {
+  if (session.state.childSync || !session.state.nativeChildren.size) return session.state.childSync;
+  session.state.childSync = (async () => {
+    for (const [id, info] of session.state.nativeChildren) {
+      try {
+        const messages = await session.host.request('GET', `/session/${enc(id)}/message`);
+        if (!Array.isArray(messages)) continue;
+        const assistant = messages.filter(message => message.info?.role === 'assistant').at(-1);
+        const status = assistant?.info?.error ? 'failed'
+          : assistant?.info?.time?.completed || assistant?.info?.finish ? 'success' : 'running';
+        info.status = status;
+        await session.emit({ kind: 'native-subagent', nativeSessionId: id,
+          title: info.title || 'OpenCode 子代理', task: info.title || '', status, messages });
+      } catch { /* Child transcript may be unavailable until its first message. */ }
+    }
+  })().finally(() => { session.state.childSync = null; });
+  return session.state.childSync;
+}
+
+async function discoverNativeChildren(session) {
+  try {
+    const sessions = await session.host.request('GET', '/session');
+    if (!Array.isArray(sessions)) return;
+    for (const child of sessions) {
+      if (child?.parentID !== session.nativeSessionId || !child.id || child.id === session.nativeSessionId) continue;
+      if (!session.state.nativeChildren.has(child.id) && child.time?.created < session.state.turnStartedAt - 2000) continue;
+      session.state.nativeChildren.set(child.id, child);
+    }
+    await syncNativeChildren(session);
+  } catch { /* Some OpenCode versions do not expose the session catalog. */ }
+}
 function projectPart(session, part, emit) {
   const state = session.state;
   if (state.userMessages.has(part.messageID)) return;
@@ -26,6 +57,12 @@ function askNext(session, id) {
 }
 function projectEvent(session, event, emit) {
   const p = event.properties || {};
+  if (event.type === 'session.created' && session.state.active && p.info?.parentID === session.nativeSessionId && p.info.id) {
+    session.state.nativeChildren.set(p.info.id, p.info);
+    void session.emit({ kind: 'native-subagent', nativeSessionId: p.info.id,
+      title: p.info.title || 'OpenCode 子代理', task: p.info.title || '', status: 'running', messages: [] });
+    void syncNativeChildren(session);
+  }
   if ((p.sessionID || p.part?.sessionID || p.info?.sessionID) !== session.nativeSessionId) return;
   const state = session.state;
   if (event.type === 'message.updated' && p.info?.role === 'user') state.userMessages.add(p.info.id);
@@ -63,20 +100,25 @@ function create() {
       const servers = require('./managed-mcp').nativeServers(managedMcp, collaboration);
       const overlay = servers.length ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: Object.fromEntries(servers.map(s => [s.name, { type: 'local', command: [s.command, ...s.args], environment: s.env }])) }) } } : undefined;
       const host = await new OpenCodeServer(thread.cwd, overlay).start();
+      let session;
       try {
         // Read the model catalog, never provider credentials or auth files.
         const [catalog, agents] = await Promise.all([host.request('GET', '/api/model'), host.request('GET', '/agent')]);
         const models = catalog.data.filter(m => m.enabled).map(m => ({ id: m.id, provider: m.providerID, name: m.name, contextWindow: m.limit.context, images: m.capabilities.input.includes('image'), efforts: m.variants.map(v => v.id) }));
         const info = thread.restore ? await host.request('GET', `/session/${enc(thread.nativeSessionId)}`) : await host.request('POST', '/session', { title: thread.title });
-        const session = { host, emit, nativeSessionId: info.id, cwd: thread.cwd, collaborationEnabled: !!collaboration, model: info.model ? { id: info.model.id, provider: info.model.providerID } : undefined,
-          state: { active: false, agent: info.agent, models, agents: agents.filter(a => !a.hidden && a.mode !== 'subagent'), text: new Map(), parts: new Map(), userMessages: new Set(), permissions: new Map(), questions: new Map() } };
+        session = { host, emit, nativeSessionId: info.id, cwd: thread.cwd, collaborationEnabled: !!collaboration, model: info.model ? { id: info.model.id, provider: info.model.providerID } : undefined,
+          state: { active: false, agent: info.agent, models, agents: agents.filter(a => !a.hidden && a.mode !== 'subagent'), text: new Map(), parts: new Map(), userMessages: new Set(), permissions: new Map(), questions: new Map(), nativeChildren: new Map(), childSync: null } };
         await host.subscribe(e => projectEvent(session, e, emit), error => { if (session.state.active) { void adapter.cancel(session).catch(() => {}); emit({ kind: 'error', message: error.message }); } });
+        session.childPoll = setInterval(() => {
+          if ([...session.state.nativeChildren.values()].some(child => child.status !== 'success' && child.status !== 'failed')) void syncNativeChildren(session);
+        }, 2000);
+        session.childPoll.unref?.();
         if (thread.options?.model) await adapter.setModel(session, thread.options.model);
         if (thread.options?.thinking) await adapter.setThinkingLevel(session, thread.options.thinking);
         if (thread.options?.permissionMode) await adapter.setPermissionMode(session, thread.options.permissionMode);
         emit({ kind: 'session', nativeSessionId: info.id, model: session.model });
         return session;
-      } catch (error) { await host.close(); throw error; }
+      } catch (error) { clearInterval(session?.childPoll); await host.close(); throw error; }
     },
     async describeFor(session) { return describeSession(session); },
     async listModelsFor(session) { return session.state.models; },
@@ -106,11 +148,12 @@ function create() {
         if (command[1] === 'compact') return adapter.executeCommand(session, 'compact', hooks);
         if (matched) { suffix = '/command'; body = { command: command[1], arguments: command[2] || '', parts: parts.filter(p => p.type === 'file') }; }
       }
-      session.state.active = true; session.state.text.clear(); session.state.parts.clear();
+      session.state.active = true; session.state.turnStartedAt = Date.now(); session.state.text.clear(); session.state.parts.clear();
       try {
         const result = await session.host.request('POST', route(session, suffix), body, 30 * 60 * 1000);
         if (result.info?.error) throw new Error(result.info.error.data?.message || result.info.error.name || 'OpenCode turn failed');
         for (const part of result.parts || []) projectPart(session, part, hooks.emit);
+        await discoverNativeChildren(session);
         hooks.emit({ kind: 'usage', usage: await adapter.getContextUsage(session) });
         hooks.emit({ kind: 'completed', finalAnswer: true, nativeRef: { checkpointId: result.info?.id } });
       } finally { session.state.active = false; }
@@ -176,7 +219,7 @@ function create() {
         return { checkpointMap, session: await adapter.open({ thread: { ...source, nativeSessionId: info.id, restore: true }, emit: context.emit }) };
       } finally { await host.close(); }
     },
-    async close(session) { if (session.state.active) await adapter.cancel(session).catch(() => {}); await session.host.close(); },
+    async close(session) { clearInterval(session.childPoll); if (session.state.active) await adapter.cancel(session).catch(() => {}); await session.host.close(); },
   };
   return adapter;
 }

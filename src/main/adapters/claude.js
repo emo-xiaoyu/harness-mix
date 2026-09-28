@@ -81,6 +81,21 @@ function projectEvent(event) {
   } }));
 }
 
+function nativeSubagentMessages(rows) {
+  return rows.filter(row => row?.type === 'user' || row?.type === 'assistant').map(row => ({
+    info: { role: row.type, time: { completed: row.type === 'assistant' ? Date.now() : undefined } },
+    parts: (Array.isArray(row.message?.content) ? row.message.content : [{ type: 'text', text: row.message?.content }])
+      .flatMap(block => {
+        if (block?.type === 'text' && block.text) return [{ type: 'text', text: block.text }];
+        if (block?.type === 'thinking' && block.thinking) return [{ type: 'reasoning', text: block.thinking }];
+        if (block?.type === 'tool_use') return [{ type: 'tool', callID: block.id, tool: block.name,
+          state: { status: 'completed', input: block.input } }];
+        return [];
+      }),
+  }));
+}
+const nativeSubagentId = (sessionId, agentId) => `${sessionId}:agent:${agentId}`;
+
 function parsePlanLimitWindow(val) {
   if (!val || typeof val !== "object") return undefined;
   const utilization = val.utilization;
@@ -272,11 +287,32 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
     pendingApprovals: new Map(),
     // 注意：runtime 以浅拷贝保存 adapter session（{ adapter, ...session }），
     // 泵写入的可变状态必须放在共享引用的 state 容器内，拷贝内外才一致。
-    state: { turn: null, crashed: false, lastUsage: undefined, latestPlanLimit: undefined, checkpointId: undefined },
+    state: { turn: null, crashed: false, lastUsage: undefined, latestPlanLimit: undefined, checkpointId: undefined,
+      nativeChildren: new Map() },
   };
 
   // Host 侧投影异常绝不能杀死原生事件泵：crashed 只保留给真正的原生流错误。
   const safeEmit = (mapped) => { try { emit(mapped); } catch { /* host projection must not kill the native pump */ } };
+
+  const syncNativeChildren = async () => {
+    if (typeof sdk.getSubagentMessages !== 'function') return;
+    for (const [agentId, child] of session.state.nativeChildren) {
+      if (child.syncing || (child.status === 'success' && child.synced)) continue;
+      child.syncing = true;
+      try {
+        const rows = await sdk.getSubagentMessages(child.parentSessionId, agentId, { dir: cwd });
+        if (!Array.isArray(rows) || !rows.length) continue;
+        safeEmit({ kind: 'native-subagent', nativeSessionId: nativeSubagentId(child.parentSessionId, agentId), title: child.title,
+          task: child.task, status: child.status, messages: nativeSubagentMessages(rows) });
+        if (child.status === 'success' && rows.some(row => row?.type === 'assistant')) child.synced = true;
+      } catch { /* Transcript may not have been flushed yet. */ }
+      finally { child.syncing = false; }
+    }
+  };
+  session.childPoll = setInterval(() => {
+    if ([...session.state.nativeChildren.values()].some(child => !child.synced)) void syncNativeChildren();
+  }, 2000);
+  session.childPoll.unref?.();
 
   session.query = sdk.query({
     prompt: input,
@@ -291,6 +327,26 @@ function spawnSession(sdk, { cwd, resumeId, newSessionId, permissionMode, modelI
       ...(isBypass ? { allowDangerouslySkipPermissions: true } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(process.env.HARNESS_MIX_CLAUDE_EXECUTABLE ? { pathToClaudeCodeExecutable: process.env.HARNESS_MIX_CLAUDE_EXECUTABLE } : {}),
+      hooks: {
+        SubagentStart: [{ hooks: [async (input) => {
+          if (input.agent_id && input.session_id) {
+            const child = { parentSessionId: input.session_id, title: `Claude · ${input.agent_type || 'Agent'}`,
+              task: input.agent_type || '', status: 'running' };
+            session.state.nativeChildren.set(input.agent_id, child);
+            safeEmit({ kind: 'native-subagent', nativeSessionId: nativeSubagentId(input.session_id, input.agent_id),
+              title: child.title, task: child.task, status: 'running', messages: [] });
+          }
+          return {};
+        }] }],
+        SubagentStop: [{ hooks: [async (input) => {
+          const child = session.state.nativeChildren.get(input.agent_id);
+          if (child) {
+            child.status = 'success';
+            void syncNativeChildren();
+          }
+          return {};
+        }] }],
+      },
       canUseTool: (toolName, toolInput, { signal, suggestions }) => {
         if (toolName !== 'AskUserQuestion') {
           const currentMode = normalizeClaudePermissionMode(session.permissionMode);
@@ -549,6 +605,7 @@ function create() {
     },
 
     async close(session) {
+      clearInterval(session.childPoll);
       for (const pending of session.pendingApprovals?.values() ?? []) {
         pending.resolve({ behavior: "deny", message: "会话已关闭" });
       }
@@ -564,4 +621,6 @@ module.exports = {
   manifest,
   create,
   projectEvent,
+  spawnSession,
+  nativeSubagentMessages,
 };

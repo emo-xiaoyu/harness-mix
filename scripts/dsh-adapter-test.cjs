@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { projectWireEvent, flattenCatalog } = require('../src/main/adapters/dsh');
+const { createDshSubagentBridge, messagesFromEvents, childStatus } = require('../src/main/adapters/dsh-subagents');
 
 // DSH Web Remote 投影单元测试：session/follow 帧 + $events waterfall + 模型目录。
 // 帧形状以 fixtures/dsh/*.jsonl（真实捕获）为准。
@@ -48,6 +49,47 @@ assert.ok(Math.abs(usage.contextPercent - 5) < 0.01, 'contextPercent 由原生�
 
 // 6. 审批 waterfall → approval 卡片；应答 → allowed-once / rejected / cancelled
 (async () => {
+const childEvents = [
+  { type: 'user/message', seq: 0, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '检查项目' }] } },
+  { type: 'tool/call', seq: 1, time: 2, data: { callId: 'tool-1', name: 'read', arguments: '{}' } },
+  { type: 'tool/result', seq: 2, time: 3, data: { message: { content: [{ type: 'tool-result', toolCallId: 'tool-1', content: [{ type: 'text', text: '文件内容' }] }] } } },
+  { type: 'assistant/message', seq: 3, time: 4, data: { message: { content: [{ type: 'text', text: '已检查' }] } } },
+  { type: 'turn/end', seq: 4, time: 5, data: { reason: { kind: 'completed' } } },
+];
+assert.equal(messagesFromEvents(childEvents).length, 2);
+assert.equal(messagesFromEvents(childEvents)[1].parts[0].state.status, 'completed');
+assert.equal(childStatus({ activity: 'inactive' }, childEvents), 'success');
+assert.equal(childStatus({ activity: 'running' }, childEvents), 'success', '驻留状态不等于任务进行中');
+assert.equal(childStatus({ activity: 'running' }, [...childEvents, { type: 'turn/start', seq: 5 }]), 'running');
+const projected = [];
+const childHost = {
+  async call(method, args) {
+    if (method === 'subagents/list') {
+      assert.equal(args.parentSessionId, 'parent-1');
+      return { entries: [{ kind: 'diagnostic', id: 'bad' }, { kind: 'child', id: 'child-1', activity: 'inactive', mode: 'one-shot', label: '检查项目' }] };
+    }
+    if (method === 'session/page') {
+      assert.deepEqual(args.request.address, { kind: 'subagent', parentSessionId: 'parent-1', childSessionId: 'child-1', mode: 'one-shot' });
+      return { records: childEvents.slice(0, 2).map(event => ({ type: 'event', event })), hasMore: false };
+    }
+    throw new Error(`unexpected ${method}`);
+  },
+  openStream(method, args, handlers) {
+    assert.equal(method, 'session/follow');
+    assert.deepEqual(args.request.address, { kind: 'subagent', parentSessionId: 'parent-1', childSessionId: 'child-1', mode: 'one-shot' });
+    queueMicrotask(() => handlers.onItem({ type: 'snapshot', cursor: 4, hasMore: true,
+      records: childEvents.slice(2).map(event => ({ type: 'event', event })) }));
+    return () => {};
+  },
+};
+const bridge = createDshSubagentBridge(childHost, 'parent-1', event => projected.push(event));
+await bridge.scan();
+await bridge.scan();
+bridge.close();
+assert.equal(projected.length, 1, '同一原生子会话不重复投影');
+assert.equal(projected[0].nativeSessionId, 'child-1');
+assert.equal(projected[0].status, 'success');
+assert.equal(projected[0].messages[1].parts.at(-1).text, '已检查');
 const { manifest, create } = require('../src/main/adapters/dsh');
 assert.equal(manifest.capabilities.approvals, true);
 assert.equal(manifest.capabilities.fork, true);

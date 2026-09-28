@@ -31,6 +31,24 @@ function fakeSession() {
   assert.ok(events.some(event => event.kind === 'usage' && event.usage.contextPercent === 25));
   assert.ok(events.some(event => event.kind === 'completed' && event.nativeRef.checkpointId === 'turn-1'));
 
+  const childEvents = [];
+  const childSession = fakeSession();
+  childSession.emit = event => childEvents.push(event);
+  childSession.state.nativeChildren = new Map();
+  childSession.host = { async request(method, params) {
+    assert.equal(method, 'thread/read');
+    assert.equal(params.threadId, 'codex-child');
+    return { thread: { id: 'codex-child', turns: [{ status: 'completed', items: [
+      { type: 'userMessage', content: [{ type: 'inputText', text: '检查实现' }] },
+      { type: 'agentMessage', text: '已检查' },
+    ] }] } };
+  } };
+  projectNotification({ method: 'item/completed', params: { item: { type: 'collabAgentToolCall', id: 'spawn-child',
+    tool: 'spawnAgent', prompt: '检查实现', receiverThreadIds: ['codex-child'], status: 'completed' } } }, childSession, childSession.emit);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(childEvents.filter(event => event.kind === 'native-subagent').at(-1)?.status, 'success');
+  assert.equal(childEvents.filter(event => event.kind === 'native-subagent').at(-1)?.messages[0].parts[0].text, '检查实现');
+
   const questionSession = fakeSession();
   const questions = [];
   const answer = queueRequest({ id: 7, method: 'item/tool/requestUserInput', params: {

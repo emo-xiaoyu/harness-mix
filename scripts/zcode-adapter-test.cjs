@@ -140,6 +140,16 @@ if (mode === 'app-server') {
         send({ id, result: { sessionId: params.sessionId, accepted: true, stateRevision: 3 } });
       } else if (method === 'session/events') {
         send({ id, result: { sessionId: params.sessionId, eventSeq: 0, events: [] } });
+      } else if (method === 'session/subagents') {
+        send({ id, result: { revision: 3, childSessionIds: ['native-child'], running: [],
+          ended: { total: 1, items: [{ childSessionId: 'native-child', agentId: 'agent_123',
+            toolCallId: 'spawn-1', subagentType: 'general', title: '回答测试', status: 'success' }] } } });
+      } else if (method === 'session/messages') {
+        assert.equal(params.sessionId, 'native-child');
+        send({ id, result: { messages: [
+          { info: { role: 'user', time: { created: 1 } }, parts: [{ type: 'text', text: '只回答测试' }] },
+          { info: { role: 'assistant', time: { created: 2, completed: 3 } }, parts: [{ type: 'text', text: '测试' }] },
+        ] } });
       } else if (method === 'session/close') {
         send({ id, result: { sessionId: params.sessionId } });
       } else if (id !== undefined) {
@@ -245,6 +255,9 @@ const zcode = require('../src/main/adapters/zcode');
     const usageEvent = events.find(event => event.kind === 'usage');
     assert.deepEqual(usageEvent.usage, { inputTokens: 30, outputTokens: 12, cachedInputTokens: 7, totalTokens: 42 });
     assert.ok(events.some(event => event.kind === 'completed' && event.finalAnswer === true));
+    const nativeChild = events.find(event => event.kind === 'native-subagent' && event.messages.length);
+    assert.equal(nativeChild?.nativeSessionId, 'native-child', '原生子会话通过 session/subagents 投影');
+    assert.equal(nativeChild.messages[1].parts[0].text, '测试', '子会话内容来自原生 session/messages');
     const context = await adapter.getContextUsage(session);
     // projectUsage 只认 tokens/contextUsedTokens；usedTokens 键永远匹配不上
     assert.deepEqual(context, { tokens: 1234, contextWindow: 200000 });

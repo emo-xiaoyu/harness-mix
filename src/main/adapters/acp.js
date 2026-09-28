@@ -1,6 +1,7 @@
 const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { JsonlProcess, cliSpawn } = require('../host/jsonl');
+const { createHermesSubagentBridge } = require('./hermes-subagents');
 
 const textOf = content => Array.isArray(content) ? content.map(c => c.text ?? c.content?.text ?? '').filter(Boolean).join('\n') : content?.text || '';
 function catalog(session) {
@@ -56,6 +57,7 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
       async open({ thread, emit, diagnostic = () => {}, collaboration, managedMcp = [] }) {
         const cli = command(args);
         const session = { cwd: thread.cwd, nativeSessionId: null, collaborationEnabled: !!collaboration,
+          environment: thread.environment || {},
           mcpServers: require('./managed-mcp').acpServers(managedMcp, collaboration),
           state: { configOptions: [], models: null, modes: null, commands: [], usage: undefined, loading: true }, pendingApprovals: new Map(), tools: new Map(), emit };
         session.process = new JsonlProcess(cli.command, cli.args, { cwd: thread.cwd }, {
@@ -122,6 +124,8 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
           if (thread.options?.thinking) await adapter.setThinkingLevel(session, thread.options.thinking);
           if (thread.options?.permissionMode) await adapter.setPermissionMode(session, thread.options.permissionMode);
           emit({ kind: 'session', nativeSessionId: session.nativeSessionId, model: session.model });
+          if (id === 'hermes') session.subagents = createHermesSubagentBridge({ parentId: session.nativeSessionId,
+            environment: session.environment, emit, diagnostic });
           return session;
         } catch (error) { session.process.stop(); throw error; }
       },
@@ -132,6 +136,7 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
         if (attachments?.images?.length && !session.state.agentCapabilities?.promptCapabilities?.image) throw new Error(`${name} 原生 ACP 不支持图片`);
         const prompt = [...(text ? [{ type: 'text', text }] : []), ...(attachments?.images || []).map(i => ({ type: 'image', data: i.data, mimeType: i.mime }))];
         const result = await session.process.request('session/prompt', { sessionId: session.nativeSessionId, prompt });
+        await session.subagents?.scan();
         hooks.emit({ kind: 'completed', finalAnswer: result.stopReason !== 'cancelled' });
       },
       async cancel(session) { session.process.notify('session/cancel', { sessionId: session.nativeSessionId }); },
@@ -181,7 +186,7 @@ function acpAdapter({ id, name, bin, args, executable = false, images = false, f
           return { session: await adapter.open({ thread: { ...source, nativeSessionId: result.sessionId, restore: true }, emit: context.emit, diagnostic: context.diagnostic }) };
         } finally { await adapter.close(probe); }
       },
-      async close(session) { session.process.stop(); },
+      async close(session) { session.subagents?.close(); session.process.stop(); },
     };
     return adapter;
   }

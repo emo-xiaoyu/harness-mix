@@ -2,6 +2,7 @@ const { randomUUID } = require("node:crypto");
 const { promises: fs } = require("node:fs");
 const path = require("node:path");
 const { DshWebHost, DSH_ROOT } = require("./dsh-web-host");
+const { createDshSubagentBridge } = require('./dsh-subagents');
 const { recordNative } = require("../harness-adapter/fixture-recorder");
 const { nativeAcp } = require('./native-acp');
 const { cliSpawn } = require('../host/jsonl');
@@ -247,6 +248,7 @@ function create() {
         session.nativeSessionId = created.sessionId;
       }
       const sessionId = session.nativeSessionId;
+      session.subagentBridge = createDshSubagentBridge(host, sessionId, emitEvent);
 
       // 审批/提问 waterfall 路由（agentId = sessionId）
       session.unwatch = host.onEvent((frame) => {
@@ -278,11 +280,13 @@ function create() {
               emitEvent({ kind: "session", nativeSessionId: sessionId });
             }
             snapshotSeen();
+            void session.subagentBridge.scan();
             return;
           }
           for (const mapped of projectWireEvent(value, session)) {
             emitEvent(mapped);
             if (mapped.kind === "completed") {
+              void session.subagentBridge.scan();
               session.state.turn?.resolve();
               session.state.turn = null;
             }
@@ -316,7 +320,8 @@ function create() {
         ...(text ? [{ type: "text", text }] : []),
         ...(attachments?.images ?? []).map((a) => ({ type: "image", mediaType: a.mime, data: a.data, name: a.name })),
       ];
-      await new Promise((resolve, reject) => {
+      session.subagentBridge?.watch();
+      try { await new Promise((resolve, reject) => {
         session.state.turn = { resolve, reject, answer: '' };
         session.host.call("session/prompt", {
           request: { requestId: randomUUID(), sessionId: session.nativeSessionId, mode: "queue", content },
@@ -324,7 +329,10 @@ function create() {
           session.state.turn = null;
           reject(error);
         });
-      });
+      }); } finally {
+        session.subagentBridge?.stopWatching();
+        void session.subagentBridge?.scan();
+      }
     },
 
     async cancel(session) {
@@ -422,6 +430,7 @@ function create() {
     },
 
     async close(session) {
+      session.subagentBridge?.close();
       for (const pending of session.pendingApprovals?.values() ?? []) pending.reject(new Error("会话已关闭"));
       session.pendingApprovals?.clear();
       try { session.cancelFollow?.(); } catch { /* 已断开 */ }

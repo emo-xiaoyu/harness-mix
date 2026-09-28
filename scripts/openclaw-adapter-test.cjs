@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { manifest, create, projectAgentEvent, projectApproval, applySessionDescription, planMcpReconcile, toOpenClawServerEntry, MCP_OWNED_PREFIX, THINKING_LEVELS } = require('../src/main/adapters/openclaw');
 const hermes = require('../src/main/adapters/hermes');
+const { createOpenClawSubagentBridge } = require('../src/main/adapters/openclaw-subagents');
 
 // OpenClaw Adapter 投影单元测试。帧形状以 Gateway 2026.5.12 实测捕获为准
 // （agent 流：{runId, stream, data, sessionKey, seq, ts}；审批广播：{id, request, createdAtMs, expiresAtMs}）。
@@ -278,7 +279,41 @@ const hermes = require('../src/main/adapters/hermes');
   assert.equal(compaction.tokensBefore, undefined, '压缩流形状未实测，不伪造 token 前后值');
 }
 
-// 10. Hermes 经 ACP 家族工厂接入，未文档化能力不声明
+// 10. Gateway task ledger 的真实父子会话键与 chat.history 投影；其他会话不可串入。
+{
+  const calls = [];
+  const events = [];
+  const childKey = 'agent:main:subagent:child-1';
+  let status = 'running';
+  const host = { async call(method, params) {
+    calls.push({ method, params });
+    if (method === 'tasks.list') return { tasks: [
+      { runtime: 'subagent', sessionKey: 'parent', childSessionKey: childKey, title: '检查代码', status },
+      { runtime: 'subagent', sessionKey: 'another-parent', childSessionKey: 'foreign-child', status: 'running' },
+      { runtime: 'cli', sessionKey: 'parent', childSessionKey: 'cli-child', status: 'running' },
+    ] };
+    if (method === 'chat.history') return { messages: [
+      { role: 'user', timestamp: 1, content: [{ type: 'text', text: '检查代码' }] },
+      { role: 'assistant', timestamp: 2, content: [{ type: 'text', text: '正在检查' }] },
+    ] };
+    throw new Error('unexpected ' + method);
+  } };
+  const bridge = createOpenClawSubagentBridge(host, 'parent', event => events.push(event), { intervalMs: 100000 });
+  await bridge.scan();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].nativeSessionId, childKey);
+  assert.equal(events[0].status, 'running');
+  assert.equal(events[0].messages[1].parts[0].text, '正在检查');
+  assert.deepEqual(calls.filter(call => call.method === 'chat.history').map(call => call.params.sessionKey), [childKey]);
+  await bridge.scan();
+  assert.equal(events.length, 1, '相同快照不重复投影');
+  status = 'completed';
+  await bridge.scan();
+  assert.equal(events.at(-1).status, 'success');
+  bridge.close();
+}
+
+// 11. Hermes 经 ACP 家族工厂接入，未文档化能力不声明
 {
   assert.equal(hermes.manifest.id, 'hermes');
   assert.equal(hermes.manifest.capabilities.streaming, true);

@@ -78,7 +78,7 @@ async function main() {
   const acp = acpServers(selected.servers, collab);
   assert.equal(acp.length, 2); assert.equal(acp[1].name, 'harness-mix'); assert.deepEqual(acp[0].env, []);
   assert.ok(namedServers(selected.servers, collab)['hm-user-probe']);
-  const catalog = await manager.catalog(); assert.equal(catalog.harnesses.length, 17);
+  const catalog = await manager.catalog(); assert.equal(catalog.harnesses.length, adapters.size);
   for (const a of adapters.values()) {
     const entry = catalog.harnesses.find(h => h.id === a.manifest.id);
     assert.equal(entry.mcp, a.manifest.integrations?.mcp === true);
@@ -96,6 +96,8 @@ async function main() {
   // Cline 官方文档：全局 ~/.cline/skills 与项目 .cline/skills。
   assert.deepEqual(manager.roots(adapters.get('cline'), { scope: 'global', cwd: null }), [path.join(home, '.cline/skills')]);
   assert.deepEqual(manager.roots(adapters.get('cline'), { scope: 'project', cwd: project }), [path.join(project, '.cline/skills')]);
+  assert.deepEqual(manager.roots(adapters.get('kimi-code'), { scope: 'global', cwd: null }), [path.join(home, '.agents/skills')]);
+  assert.deepEqual(manager.roots(adapters.get('kimi-code'), { scope: 'project', cwd: project }), [path.join(project, '.agents/skills')]);
   // Hermes documents no project-scope skills directory, so only its global root is managed.
   assert.deepEqual(manager.roots(adapters.get('hermes'), { scope: 'project', cwd: project }), []);
   assert.deepEqual(manager.roots(adapters.get('hermes'), { scope: 'global', cwd: null }), [path.join(home, '.hermes/skills')]);
@@ -119,7 +121,7 @@ async function main() {
   const globalOnly = await blocked.ensureSkillRoots({ cwd: 'relative-not-absolute' }, adapters.get('codex'), {});
   assert.equal(globalOnly.length, 1);
   // Exercise the real protocol dispatcher without starting native processes.
-  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'harnessmix/integrations/catalog', {})).harnesses.length, 17);
+  assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'harnessmix/integrations/catalog', {})).harnesses.length, adapters.size);
   assert.equal((await NativeProtocol.prototype.request.call({ runtime }, 'harnessmix/integrations/list', local)).skills.length, 3);
   console.log('integrations: scope precedence, persistence, native status projection, no credential fields, unsupported capabilities, skill install/disable/restore, links, and protocol PASS');
 }

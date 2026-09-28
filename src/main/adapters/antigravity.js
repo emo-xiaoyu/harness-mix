@@ -7,6 +7,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
 const { terminateTree, systemProxyEnv } = require('../native/process-utils');
+const { createAntigravitySubagentBridge } = require('./antigravity-subagents');
 
 const manifest = {
   id: 'antigravity',
@@ -821,6 +822,14 @@ function create(emit, options = {}) {
     ),
   );
 
+  function attachSubagents(session, emitEvent) {
+    if (!session.subagents && session.nativeSessionId) {
+      session.subagents = createAntigravitySubagentBridge({ parentId: session.nativeSessionId,
+        emit: emitEvent, diagnostic: session.diagnostic });
+    }
+    return session.subagents;
+  }
+
   return {
     manifest,
 
@@ -856,12 +865,15 @@ function create(emit, options = {}) {
         collaborationEnabled: !!collaboration,
         activeTurn: null,
         bridge: null,
+        subagents: null,
+        diagnostic,
         usage: undefined,
         pendingApprovals: new Map(),
       };
       if (thread.restore && thread.nativeSessionId) {
         emitEvent({ kind: 'session', nativeSessionId: thread.nativeSessionId, model });
       }
+      await attachSubagents(session, emitEvent)?.scan();
       return session;
     },
 
@@ -1062,6 +1074,7 @@ function create(emit, options = {}) {
           if (event.event === 'init') {
             session.nativeSessionId = event.conversation_id;
             emitEvent({ kind: 'session', nativeSessionId: event.conversation_id, model: session.model });
+            void attachSubagents(session, emitEvent)?.scan();
             return;
           }
 
@@ -1091,6 +1104,7 @@ function create(emit, options = {}) {
             }
 
             if (s.step_type === 'subagent') {
+              void attachSubagents(session, emitEvent)?.scan();
               sawTextSinceLastTool = false;
               const info = s.subagent_info || {};
               const subagents = Array.isArray(info.subagents) ? info.subagents : [];
@@ -1160,8 +1174,9 @@ function create(emit, options = {}) {
           if (event.event === 'result') {
             if (turn.resultSeen || turn.completed) return;
             const res = event.result || {};
-            if (res.conversation_id && !session.nativeSessionId) {
-              session.nativeSessionId = res.conversation_id;
+          if (res.conversation_id && !session.nativeSessionId) {
+            session.nativeSessionId = res.conversation_id;
+            void attachSubagents(session, emitEvent)?.scan();
             }
             if (res.usage) {
               const u = parseUsage(res.usage, session.model?.id, cachedQuota);
@@ -1400,6 +1415,7 @@ function create(emit, options = {}) {
     },
 
     async close(session) {
+      session.subagents?.close();
       await this.cancel(session);
     },
   };

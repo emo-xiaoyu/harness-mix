@@ -2,6 +2,7 @@ const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { JsonlProcess, cliSpawn } = require('../host/jsonl');
 const { pickFullAccessPermissionMode } = require('./permission-modes');
+const { createGrokSubagentBridge } = require('./grok-subagents');
 
 const textOf = content => Array.isArray(content) ? content.map(c => c.text ?? c.content?.text ?? '').filter(Boolean).join('\n') : content?.text || '';
 function catalog(session) {
@@ -48,6 +49,7 @@ function grokAdapter() {
             });
           },
           onEvent: event => {
+            session.subagents?.onEvent(event);
             if (event.method === '_x.ai/models/update') { session.state.models = event.params; return; }
             const isSessionEvent = event.method === 'session/update'
               || event.method === '_x.ai/session/update'
@@ -129,6 +131,7 @@ function grokAdapter() {
             else await adapter.setPermissionMode(session, mode).catch(error => diagnostic(`${name}: full-access permission mode ${mode} failed: ${error.message}`));
           }
           emit({ kind: 'session', nativeSessionId: session.nativeSessionId, model: session.model });
+          session.subagents = createGrokSubagentBridge({ cwd: session.cwd, parentId: session.nativeSessionId, emit, diagnostic });
           return session;
         } catch (error) { session.process.stop(); throw error; }
       },
@@ -144,6 +147,7 @@ function grokAdapter() {
         }
         const prompt = [...(text ? [{ type: 'text', text }] : []), ...(attachments?.images || []).map(i => ({ type: 'image', data: i.data, mimeType: i.mime }))];
         const result = await session.process.request('session/prompt', { sessionId: session.nativeSessionId, prompt });
+        await session.subagents?.scan();
         if (result._meta?.usage) { session.state.usage = projectUsage(result._meta.usage); hooks.emit({ kind: 'usage', usage: session.state.usage }); }
         hooks.emit({ kind: 'completed', finalAnswer: result.stopReason !== 'cancelled', nativeRef: { checkpointId: result._meta?.promptId } });
       },
@@ -206,7 +210,7 @@ function grokAdapter() {
           return { session: await adapter.open({ thread: { ...source, nativeSessionId: result.newSessionId, restore: true }, emit: context.emit, diagnostic: context.diagnostic }) };
         } finally { await adapter.close(probe); }
       },
-      async close(session) { session.process.stop(); },
+      async close(session) { session.subagents?.close(); session.process.stop(); },
     };
     return adapter;
   }

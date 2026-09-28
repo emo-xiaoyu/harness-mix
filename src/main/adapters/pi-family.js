@@ -4,6 +4,7 @@ const path = require('node:path');
 const { JsonlProcess, cliSpawn } = require("../host/jsonl");
 const { sessionUsage, latestUsage } = require('./pi-usage');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
+const { createPiSubagentBridge } = require('./pi-subagents');
 
 function toolText(content) {
   const text = Array.isArray(content) ? content.filter(b => b.type === 'text').map(b => b.text).join('\n') : String(content ?? '');
@@ -101,6 +102,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes =
 
   function forwardEvent(process, event, emit) {
     recordNative(manifest.id, event);
+    if (process.piSubagentBridge?.onEvent(event)) return;
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta' && event.assistantMessageEvent.delta) process.harnessMixAnswer = (process.harnessMixAnswer || '') + event.assistantMessageEvent.delta;
     if (event.type === 'message_end' && event.message?.role === 'assistant') {
       // 失败不在 message_end 定论：紧随其后的 agent_end 携带 willRetry，由它决定投影
@@ -149,6 +151,7 @@ function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes =
           onEvent: event => forwardEvent(process, event, emitEvent),
           onDiagnostic: (message) => diagnostic(message),
         }, collaboration);
+        process.piSubagentBridge = createPiSubagentBridge(process, thread.nativeSessionId, emitEvent, name);
         try {
           const state = await process.command({ type: "get_state" });
           let model = state?.model ? { id: state.model.id, name: state.model.name, provider: state.model.provider } : undefined;
@@ -315,11 +318,13 @@ function piFamily({ id, name, icon, bin, packageHint, aliases, permissionModes =
           }
           const state = await process.command({ type: 'get_state' });
           if (!state?.sessionId || state.sessionId === sourceThread.nativeSessionId) throw new Error(`${name} 未返回新的 Fork 会话`);
+          process.piSubagentBridge = createPiSubagentBridge(process, state.sessionId, emitEvent, name);
           return { session: { process, nativeSessionId: state.sessionId, nativeSessionFile: state.sessionFile, model: state.model } };
         } catch (error) { process.stop(); throw error; }
       },
 
       async close(session) {
+        session.process.piSubagentBridge?.close();
         session.process.stop();
       },
     };

@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { cliSpawn } = require("../host/jsonl");
 const { OpenClawGatewayHost, readGatewayConfig, OPENCLAW_CONFIG } = require("./openclaw-gateway");
+const { createOpenClawSubagentBridge } = require('./openclaw-subagents');
 const { recordNative } = require("../harness-adapter/fixture-recorder");
 
 // 静态思考档位仅作兜底（sessions.describe 失败时）；会话级权威目录来自 sessions.describe
@@ -343,6 +344,7 @@ function create() {
           if (!created?.key) created = await host.call("sessions.create", { key: baseKey, label }).catch(() => null);
           session.nativeSessionId = created?.key ?? `agent:main:${baseKey}`;
         }
+        session.subagentBridge = createOpenClawSubagentBridge(host, session.nativeSessionId, emitEvent);
 
         // 思考流开关：会话级 reasoningLevel=stream（2026.5.12 实测受理并回读持久化）。
         // 是否真正出流由 thinkingLevel≠off（用户档位）与上游模型/运行时支持决定。
@@ -361,6 +363,8 @@ function create() {
             const payload = frame.payload ?? {};
             if (payload.runId !== session.state.runId && payload.sessionKey !== session.nativeSessionId) return;
             for (const event of projectAgentEvent(payload, session)) emitEvent(event);
+            if (payload.stream === 'tool' && payload.data?.phase === 'result'
+              && payload.data?.name === 'sessions_spawn') void session.subagentBridge.scan();
             return;
           }
           // 审批广播：只归集显式携带本会话 sessionKey 的请求，不劫持其他客户端的审批
@@ -389,8 +393,10 @@ function create() {
         if (thread.options?.model) await adapter.setModel(session, thread.options.model);
         if (thread.options?.thinking) await adapter.setThinkingLevel(session, thread.options.thinking);
         emitEvent({ kind: "session", nativeSessionId: session.nativeSessionId, model: session.model });
+        void session.subagentBridge.scan();
         return session;
       } catch (error) {
+        session.subagentBridge?.close();
         try { session.unwatch?.(); } catch { /* 已断开 */ }
         await OpenClawGatewayHost.release();
         throw error;
@@ -436,6 +442,7 @@ function create() {
       session.state.lastError = null;
       try {
         const result = await session.host.call("agent.wait", { runId, timeoutMs: AGENT_TIMEOUT_MS }, AGENT_TIMEOUT_MS + 30_000);
+        await session.subagentBridge?.scan();
         // turn 结束后回读原生会话状态：生效模型、思考目录、token 用量（真实统计，不用估计值冒充）
         const modelBefore = session.model?.id;
         await refreshSessionState(session);
@@ -506,6 +513,7 @@ function create() {
     async getContextUsage(session) { return session.state.usage; },
 
     async close(session) {
+      session.subagentBridge?.close();
       for (const pending of session.pendingApprovals.values()) pending.reject?.(new Error("会话已关闭"));
       session.pendingApprovals.clear();
       try { session.unwatch?.(); } catch { /* 已断开 */ }

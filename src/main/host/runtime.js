@@ -9,7 +9,7 @@ const { buildAdapters } = require("../adapters");
 const { ReviewController } = require('../workspace/review-controller');
 const { ReviewStore } = require('../workspace/review');
 const { CoreSession } = require('./core-session');
-const { Collaboration, mentionedAgents, workerSessionOptions } = require('./collaboration');
+const { Collaboration, mentionedAgents } = require('./collaboration');
 const { SessionHistory } = require('./session-history');
 const { Integrations } = require('./integrations');
 const { buildHandoffContext, composeHandoffEnvelope } = require('./handoff');
@@ -28,7 +28,7 @@ const { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, remo
  * 仍由其原生程序维护，Adapter 只负责原生协议接入与事件转换。
  */
 class HostRuntime {
-  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000, delegationTimeoutMs = 30 * 60 * 1000 }) {
+  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000 }) {
     this.store = new ThreadStore(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
@@ -58,13 +58,10 @@ class HostRuntime {
     // （如协作长轮询后进程不再产生任何事件），回合会永远转圈；超过阈值无事件
     // 即按超时结算，让 UI 停转、审查快照收尾。等待用户审批的回合属合法静默。
     this.turnActivity = new Map();
+    this.nativeSubagentSync = new Map();
     this.stuckTurnMs = stuckTurnMs;
-    // /delegate 委派等待子任务结算的上限（对齐协作编排的 30 分钟），注入以便测试
-    this.delegationTimeoutMs = delegationTimeoutMs;
     this.watchdogTimer = setInterval(() => this.#sweepStuckTurns(), stuckSweepMs);
     this.watchdogTimer.unref?.();
-    // 跨 Harness 协作：parentThreadId -> { childId, toolCallId, cancelled }
-    this.delegations = new Map();
     this.collaboration = new Collaboration(this);
     this.history = new SessionHistory(this);
     this.integrations = new Integrations(this);
@@ -246,7 +243,6 @@ class HostRuntime {
       ? [...this.adapters.values()].filter(a => a.manifest.id !== thread.harnessId && this.status[a.manifest.id]?.available).map(a => a.manifest.name)
       : [];
     const hostCommands = [
-      { id: 'delegate', label: '/delegate', description: '委派子任务给其他 Harness：/delegate <Harness 名> <任务>', action: 'insert', text: '/delegate ' },
       { id: 'verify', label: '/verify', description: '立即运行当前任务的验证门禁', action: 'execute' },
       { id: 'gate', label: '/gate', description: '配置门禁：/gate required|advisory|off [--auto] [--clean] [-- 验证命令]', action: 'insert', text: '/gate required ' },
       { id: 'gate-required', label: '/gate-required', description: '启用强制验证门禁；未通过时禁止合并或推送', action: 'execute' },
@@ -361,6 +357,7 @@ class HostRuntime {
 
   async #send(threadId, text, { commandId, attachments, delegateOf, collaborationOf, isolated, turnPermissions, ticket }) {
     const thread = this.#requireThread(threadId);
+    if (thread.nativeReadOnly) throw new Error('原生子代理会话只读，请在父任务中继续协调');
     if (this.execution.isRunning(thread.id)) throw new Error("任务正在执行，请先停止或等待完成");
     // 不得在此按票据清理 cancelRequests：登记可能属于仍停留在 Turn 启动前阶段（会话
     // 打开/prompt 组装）的在途旧 send——删掉会让旧 send 错过下方的取消结算而继续投递，
@@ -383,11 +380,6 @@ class HostRuntime {
     }
     const typed = typeof text === "string" ? text.trim() : "";
     if (!typed && !prepared.images.length && !prepared.texts.length) throw new Error("请输入消息");
-    // Host 级协作指令：/delegate <harness> <任务>（委派链路不进入当前 Harness 的原生会话）
-    if (!commandId && !delegateOf && /^\/(delegate|委派)(\s|$)/.test(typed)) {
-      const { target, task } = parseDelegationCommand(typed);
-      return this.delegateTask({ fromThreadId: thread.id, harnessId: target, task, displayText: typed });
-    }
     // Host 级切换指令：/switch <harness> [备注]（原地换 Harness；会话历史保留，下条消息携带一次性上下文信封）
     if (!commandId && !delegateOf && !collaborationOf && /^\/(switch|切换)(\s|$)/.test(typed)) {
       if (/^\/(switch|切换)\s+(cancel|取消)\s*$/i.test(typed)) return this.cancelHarnessSwitch(thread.id);
@@ -547,116 +539,6 @@ class HostRuntime {
     }
   }
 
-  /**
-   * 跨 Harness 任务协作（委派 → 消息 → 等待）：
-   * 父线程起一个“协作 Turn”，委派进度以工具项投影；子任务在目标 Harness 的
-   * 原生会话中执行，父 Turn 保持活动直到子任务结算（中断父 Turn 级联取消子任务）。
-   * childThreadId 为空时新建子任务线程，否则向既有子任务发送跟进消息。
-   */
-  async delegateTask({ fromThreadId, harnessId, task, childThreadId, displayText }) {
-    const parent = this.#requireThread(fromThreadId);
-    if (parent.parentThreadId) throw new Error('协作子任务暂不支持继续委派');
-    if (this.execution.isRunning(parent.id)) throw new Error("任务正在执行，请先停止或等待完成");
-    if (parent.reviewPending) throw new Error('文件变更正在结算，请稍后委派');
-    if (typeof task !== 'string' || !task.trim()) throw new Error('委派任务不能为空');
-    let child = null;
-    if (childThreadId) {
-      child = this.#requireThread(childThreadId);
-      if (child.parentThreadId !== parent.id) throw new Error('只能跟进本任务创建的协作子任务');
-      if (this.execution.isRunning(child.id)) throw new Error('子任务仍在执行，请等待完成后再跟进');
-    } else {
-      const resolved = this.resolveHarnessId(harnessId);
-      if (!resolved) throw new Error(`未知 Harness：${harnessId}（可用：${[...this.adapters.values()].map(a => a.manifest.name).join('、')}）`);
-      harnessId = resolved;
-      const adapter = this.#requireAdapter(harnessId);
-      if (this.status[harnessId] && !this.status[harnessId].available) throw new Error(`${adapter.manifest.name} 不可用：${this.status[harnessId].detail || '未安装'}`);
-    }
-    // 首个真实输入让预热（ephemeral）线程转正为持久会话（广播契约与 send 路径一致）
-    if (parent.ephemeral) {
-      delete parent.ephemeral;
-      for (const listener of this.listeners) listener({ type: "thread-persisted", thread: parent });
-    }
-    parent.messages.push({ id: randomUUID(), role: "user", text: displayText ?? task, at: Date.now() });
-    parent.updatedAt = Date.now();
-    delete parent.error;
-    const turn = this.execution.turnStarted(parent, displayText ?? task);
-    const toolCallId = `delegate:${randomUUID()}`;
-    const targetName = child ? (this.adapters.get(child.harnessId)?.manifest.name ?? child.harnessId) : (this.adapters.get(harnessId)?.manifest.name ?? harnessId);
-    this.#applyEvent({ threadId: parent.id, event: { kind: 'tool', toolCallId, title: `Agent 协作 · ${targetName}`, state: 'running', input: task } });
-    await this.#save();
-    this.#broadcast();
-    const created = !child;
-    if (created) {
-      try {
-        child = await this.createThread({
-          harnessId, cwd: parent.cwd, title: `${parent.title} › ${task.trim().slice(0, 24)}`,
-          options: workerSessionOptions(harnessId),
-          parentThreadId: parent.id,
-        });
-      } catch (error) {
-        // 父 Turn 已启动：失败也要收平工具项与 Turn，不能留下悬挂运行态
-        this.#applyEvent({ threadId: parent.id, event: { kind: 'tool', toolCallId, state: 'error', output: `创建子任务失败：${error.message}` } });
-        this.#applyEvent({ threadId: parent.id, event: { kind: 'error', message: `Agent 协作失败：${error.message}` } });
-        await this.#save();
-        this.#broadcast();
-        throw error;
-      }
-    }
-    this.delegations.set(parent.id, { childId: child.id, toolCallId, cancelled: false });
-    void this.#awaitDelegation(parent, child, task.trim());
-    return { child, turn, created };
-  }
-
-  /** 委派等待链：子任务结算后把最终结果回投到父线程的协作工具项 */
-  async #awaitDelegation(parent, child, task) {
-    const delegation = this.delegations.get(parent.id);
-    let failure = null;
-    let answer = '';
-    try {
-      await this.send(child.id, task, { delegateOf: parent.id });
-      // Adapter 返回≠原生 Turn 完全结算（Pi 等非阻塞适配器收到 prompt ack 即返回，实际
-      // 执行由异步流驱动），有界等待至子任务真正空闲——对齐协作编排的 30 分钟上限，
-      // 超时主动取消子任务；已 wedge 的子任务由看门狗（stuckTurnMs）提前按 error 结算。
-      const until = Date.now() + this.delegationTimeoutMs;
-      while (this.execution.isRunning(child.id) && !delegation?.cancelled) {
-        if (Date.now() > until) {
-          await this.cancel(child.id);
-          failure = new Error(`子任务超过 ${Math.round(this.delegationTimeoutMs / 60000)} 分钟未结算，已自动取消`);
-          break;
-        }
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      if (!failure) {
-        const lastTurn = this.execution.lastTurn(child.id);
-        if (lastTurn?.status === 'error') failure = new Error(lastTurn.error || '子任务执行失败');
-        else answer = this.#turnFinalText(child.id);
-      }
-    } catch (error) { failure = error; }
-    const cancelled = delegation?.cancelled;
-    this.delegations.delete(parent.id);
-    // 取消路径已由 cancel() 结算父 Turn，迟到事件一律丢弃
-    if (cancelled || !this.execution.isRunning(parent.id)) return;
-    if (failure) {
-      this.#applyEvent({ threadId: parent.id, event: { kind: 'tool', toolCallId: delegation.toolCallId, state: 'error', output: `子任务失败：${failure.message}` } });
-      this.#applyEvent({ threadId: parent.id, event: { kind: 'error', message: `Agent 协作失败：${failure.message}` } });
-    } else {
-      this.#applyEvent({ threadId: parent.id, event: { kind: 'tool', toolCallId: delegation.toolCallId, state: 'done', output: answer || '（子任务未返回文本结果）' } });
-      this.#applyEvent({ threadId: parent.id, event: { kind: 'completed', finalAnswer: false } });
-    }
-    await this.#save();
-    this.#broadcast();
-  }
-
-  /** 子任务最后一轮的最终文本（优先 phase=final 的回复段） */
-  #turnFinalText(threadId) {
-    const turn = this.execution.lastTurn(threadId);
-    if (!turn) return '';
-    const items = this.core.getItemsForTurn(turn.id);
-    const messages = items.filter(i => i.type === 'agent_message');
-    const finals = messages.filter(i => i.phase === 'final');
-    return (finals.length ? finals : messages).map(i => i.content || '').join('\n').trim();
-  }
-
   /** 附件校验与分类：图片走各 Harness 原生协议（需 conversation.attachments 能力），文本文件由 Host 内联进 prompt */
   #prepareAttachments(thread, attachments) {
     const images = [], texts = [], meta = [];
@@ -716,14 +598,6 @@ class HostRuntime {
       ]);
     } catch {} finally { if (interrupt) this.collaboration.interruptOwners.delete(threadId); }
     const session = this.sessions.get(threadId);
-    // 跨 Harness 协作级联取消：先收尾父线程的协作工具项，再取消子任务
-    const delegation = this.delegations.get(threadId);
-    if (delegation) {
-      delegation.cancelled = true;
-      if (thread && this.execution.isRunning(thread.id)) this.#applyEvent({ threadId, event: { kind: 'tool', toolCallId: delegation.toolCallId, state: 'error', output: '已取消协作任务' } });
-      this.delegations.delete(threadId);
-      void Promise.race([this.cancel(delegation.childId), new Promise(r => setTimeout(r, 3_000))]).catch(() => {});
-    }
     if (session) await Promise.race([session.adapter.cancel(session), new Promise(r => setTimeout(r, 2_000))]).catch(() => {});
     if (thread?.reviewPending) {
       thread.reviewPending = false;
@@ -1230,6 +1104,7 @@ class HostRuntime {
 
   /** 惰性打开：任务首次使用时才拉起原生进程；restore 标记让 Adapter 走原生恢复路径 */
   async #ensureOpen(thread) {
+    if (thread.nativeReadOnly) throw new Error('原生子代理会话只读，请在父任务中继续协调');
     const existing = this.sessions.get(thread.id);
     if (existing) return existing;
     const adapter = this.#requireAdapter(thread.harnessId);
@@ -1319,6 +1194,16 @@ class HostRuntime {
     if (!event) return;
     const thread = this.threads.find((t) => t.id === threadId);
     if (!thread) return;
+    if (event.kind === 'native-subagent') {
+      const key = `${thread.id}:${event.nativeSessionId}`;
+      const previous = this.nativeSubagentSync.get(key) ?? Promise.resolve();
+      const pending = previous.catch(() => {}).then(() => this.#syncNativeSubagent(thread, event));
+      this.nativeSubagentSync.set(key, pending);
+      void pending.catch(() => {}).finally(() => {
+        if (this.nativeSubagentSync.get(key) === pending) this.nativeSubagentSync.delete(key);
+      });
+      return pending;
+    }
     // 原生 harness 自己生成的会话标题（DSH session/title 的 provider 源、Claude
     // summary 等）：线程未被用户/Desktop 显式命名时采纳为标题，不进 Core 投影
     if (event.kind === 'title') { this.#adoptNativeTitle(thread, event.title); return; }
@@ -1366,7 +1251,7 @@ class HostRuntime {
       const message = thread.messages.find(m => m.coreTurnId === turn.id);
       const ownedJobs = [...this.collaboration.jobs.values()].filter(job => job.owner === thread.id && job.status === 'running');
       if (ownedJobs.length) thread.reviewPending = true;
-      // Lead 回合自然结算：仅回收无团队归属的孤儿委派（/delegate 协作链，无人监督
+      // Lead 回合自然结算：仅回收无团队归属的孤儿委派（一次性 delegate_to_agent，无人监督
       // 会空转到超时）；团队持久成员跨 Lead 回合存活（信箱模型），由 run() 监督循环
       // 自行结算并在任务落定时唤醒空闲 Lead。用户显式中断走 runtime.cancel 的全量级联。
       const orphanChildren = ownedJobs.some(job => !job.teamId);
@@ -1403,13 +1288,78 @@ class HostRuntime {
     const thread = { id: randomUUID(), harnessId: candidate.harnessId, nativeSessionId: candidate.nativeSessionId,
       nativeSessionFile: candidate.nativeSessionFile, title: candidate.title || '导入的原生会话', cwd: candidate.cwd,
       createdAt: candidate.updatedAt, updatedAt: candidate.updatedAt, status: 'ready', connectionStatus: 'ready',
-      restore: true, options: {}, messages: candidate.messages || [], tools: [], pendingApprovals: [] };
+      restore: true, options: {}, messages: candidate.messages || [], tools: [], pendingApprovals: [],
+      ...(candidate.parentThreadId ? { parentThreadId: candidate.parentThreadId } : {}),
+      ...(candidate.nativeReadOnly ? { nativeReadOnly: true } : {}) };
     this.threads.unshift(thread);
     this.execution.threadCreated(thread);
     await this.#save();
     for (const listener of this.listeners) listener({ type: 'thread-created', thread });
     this.#broadcast();
     return thread;
+  }
+
+  async #syncNativeSubagent(parent, event) {
+    if (!event.nativeSessionId || !parent.nativeSessionId) return;
+    const nativeId = String(event.nativeSessionId);
+    let child = this.threads.find(t => t.harnessId === parent.harnessId && t.nativeSessionId === nativeId);
+    if (!child) child = await this.importNativeSession({ harnessId: parent.harnessId, nativeSessionId: nativeId,
+      parentThreadId: parent.id, nativeReadOnly: true, cwd: parent.cwd,
+      title: event.title || '原生子代理', updatedAt: Date.now(), messages: [] });
+    if (child._storageStub) this.store.hydrateInto(child);
+    if (child.parentThreadId !== parent.id || !child.nativeReadOnly) return;
+    const source = Array.isArray(event.messages) ? event.messages : [];
+    // A child can finish an assistant message without changing the message
+    // count or overall status. Keep its native cursor at that partial message.
+    if (child.nativeMessageCount === source.length && child.nativeSubagentStatus === event.status) return;
+    let cursor = child.nativeMessageCount ?? 0;
+    for (; cursor < source.length; cursor += 1) {
+      const native = source[cursor];
+      const role = native?.info?.role;
+      const content = (native?.parts ?? []).filter(part => part?.type === 'text' && part.ignored !== true)
+        .map(part => String(part.text ?? '')).join('\n\n').trim();
+      if (role === 'user') {
+        if (content) child.messages.push({ id: randomUUID(), role: 'user', text: content, at: native.info?.time?.created ?? Date.now() });
+      } else if (role === 'assistant') {
+        // ZCode may expose a streaming partial message. Replay it after its
+        // native completion so refreshes never duplicate or truncate turns.
+        if (!native.info?.time?.completed && !native.info?.finish && !native.info?.error) break;
+        this.execution.turnStarted(child, child.messages.at(-1)?.role === 'user' ? child.messages.at(-1).text : '', native.info?.time?.created ?? Date.now());
+        for (const [partIndex, part] of (native.parts ?? []).entries()) {
+          if (part?.type === 'text' && part.ignored !== true && part.text) {
+            this.execution.apply(child, { kind: 'text-delta', text: String(part.text), timestamp: Date.now() });
+          } else if (part?.type === 'reasoning' && part.text) {
+            this.execution.apply(child, { kind: 'thinking-delta', text: String(part.text), timestamp: Date.now() });
+          } else if (part?.type === 'tool') {
+            const state = part.state?.status === 'error' ? 'error'
+              : part.state?.status === 'completed' ? 'done' : 'running';
+            this.execution.apply(child, { kind: 'tool', toolCallId: part.callID || `native-tool-${cursor}-${partIndex}`,
+              title: part.tool || '工具', state, input: part.state?.input,
+              output: part.state?.output ?? part.state?.error, timestamp: Date.now() });
+          }
+        }
+        this.execution.apply(child, { kind: native.info?.error ? 'error' : 'completed',
+          ...(native.info?.error ? { message: String(native.info.error?.message ?? native.info.error?.name ?? '原生子代理失败') } : { finalAnswer: true }),
+          timestamp: native.info?.time?.completed ?? Date.now() });
+      }
+    }
+    child.nativeMessageCount = cursor;
+    child.updatedAt = Date.now();
+    const status = event.status;
+    const active = ['running', 'waiting', 'blocked'].includes(status);
+    child.status = active ? 'working' : 'ready';
+    if (this.execution.isRunning(parent.id) && child.nativeSubagentStatus !== status) {
+      this.emitCollaboration(parent.id, { kind: 'tool', toolCallId: `native-subagent:${parent.harnessId}:${nativeId}`,
+        title: event.title || '原生子代理', input: event.task || '',
+        state: active ? 'running' : status === 'success' ? 'done' : 'error',
+        collaboration: { operation: 'spawnAgent', parent_thread_id: parent.id,
+          child_thread_id: child.id, agent_type: parent.harnessId, task: event.task || event.title || '',
+          status: active ? 'running' : status === 'success' ? 'completed' : 'failed',
+          ...(status !== 'success' && !active ? { error: status } : {}) } });
+    }
+    child.nativeSubagentStatus = status;
+    await this.#save();
+    this.#broadcast();
   }
 
   emitCollaboration(threadId, event) { this.#applyEvent({ threadId, event }); }
@@ -1499,13 +1449,6 @@ function attachSession(adapter, session, threadId) {
   session.adapter = adapter;
   session.threadId = threadId;
   return session;
-}
-
-/** /delegate <harness> <任务> 指令解析（宿主级协作入口，支持中文别名；目标名解析见 resolveHarnessId） */
-function parseDelegationCommand(text) {
-  const match = /^\/(?:delegate|委派)\s+(\S+)\s+([\s\S]+)/.exec(text);
-  if (!match) throw new Error('用法：/delegate <harness> <任务>，例如 /delegate <目标 Harness> 审查 src/ 的改动');
-  return { target: match[1], task: match[2].trim() };
 }
 
 function parseVerificationCommand(text, previous) {

@@ -14,12 +14,13 @@ function nativeCommand(id, argv) {
     qoder: ['qodercli', 'HARNESS_MIX_QODER_EXECUTABLE', 'https://docs.qoder.com/cli/acp'],
     trae: ['traecli', 'HARNESS_MIX_TRAE_EXECUTABLE', 'https://github.com/bytedance/trae-agent'],
     cline: ['cline', 'HARNESS_MIX_CLINE_EXECUTABLE', 'https://docs.cline.bot/usage/cli-overview'],
+    'kimi-code': ['kimi', 'HARNESS_MIX_KIMI_EXECUTABLE', 'https://moonshotai.github.io/kimi-code/'],
   };
   if (!specs[id]) throw new Error(`Unknown native CLI: ${id}`);
   const [bin, variable, url] = specs[id];
   const override = process.env[variable] || (buddy ? process.env.HARNESS_MIX_WORKBUDDY_EXECUTABLE : undefined);
   if (id === 'trae' && !override) throw new Error('Trae 官方仓库未确认 ACP 服务入口；请设置已验证的 HARNESS_MIX_TRAE_EXECUTABLE，不会猜测 traecli acp serve');
-  const roots = cursor
+  const roots = id === 'kimi-code' ? [path.join(os.homedir(), '.kimi-code', 'bin')] : cursor
     ? [path.join(process.env.LOCALAPPDATA || os.homedir(), 'cursor-agent'), path.join(os.homedir(), '.local', 'bin')]
     : [path.join(process.env.LOCALAPPDATA || os.homedir(), 'Kiro-Cli'), path.join(os.homedir(), '.kiro', 'bin'), path.join(os.homedir(), '.local', 'bin')];
   const dirs = [...roots, path.join(process.env.APPDATA || os.homedir(), 'npm'), ...(process.env.PATH || '').split(path.delimiter).filter(Boolean)];

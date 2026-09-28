@@ -27,7 +27,7 @@
 //   instruction (collaboration-cli.cjs drives the same control plane), and
 //   the harness-mix-collaboration skill is seeded into ~/.agents/skills,
 //   which ZCode's global skill scan picks up. Worker / Agent-Team member /
-//   /delegate target all stay kernel-driven.
+//   delegate target all stay kernel-driven.
 // - models arrive via state.updated patches {model:{available:[{providerId, modelId,...}]}}
 //   once the logged-in account materializes; session/setModel {sessionId, model}.
 // - server requests: session/requestRuntimePreferences (answer the fixed
@@ -382,6 +382,7 @@ function attachSession(launch, { thread, emit, diagnostic }) {
       sessionId: null, active: false, turn: null, closed: false,
       models: [], usage: undefined, context: undefined, turnText: '',
       pending: new Map(), seenEvents: new Set(), afterSeq: 0, pollTimer: null, polling: false,
+      subagentTask: null, subagentStatuses: new Map(), subagentUnsupported: false,
       // 取消后到下一回合开始之间的 turn.completed/turn.failed 属于被停掉的旧回合，
       // 不得结算新回合（否则下一轮秒回空文本）
       suppressCompletions: false,
@@ -602,6 +603,73 @@ function settleTurn(session, error) {
   else turn.resolve();
 }
 
+// Native ZCode subagents are real, read-only child sessions. Query their own
+// protocol catalog instead of interpreting agent IDs printed in model text.
+async function syncNativeSubagents(session) {
+  if (session.state.closed || !session.state.sessionId || session.state.subagentUnsupported) return;
+  if (session.state.subagentTask) return session.state.subagentTask;
+  session.state.subagentTask = (async () => {
+    try {
+      let endedCursor;
+      for (let page = 0; page < 5; page += 1) {
+        const result = await session.proc.request('session/subagents', {
+          sessionId: session.state.sessionId, endedLimit: 100,
+          ...(endedCursor ? { endedCursor } : {}),
+        });
+        const children = [...(page === 0 ? result?.running ?? [] : []), ...(result?.ended?.items ?? [])];
+        for (const child of children) {
+          if (!child?.childSessionId) continue;
+          const previous = session.state.subagentStatuses.get(child.childSessionId);
+          const active = ['running', 'waiting', 'blocked'].includes(child.status);
+          // A new turn must not re-add every historical completed worker.
+          if (!active && previous === undefined && child.startedAt && session.state.turnStartedAt
+            && child.startedAt < session.state.turnStartedAt - 2000) continue;
+          // Running transcripts change without a status change; completed ones do not.
+          if (previous === child.status && !active) continue;
+          const summary = { kind: 'native-subagent', nativeSessionId: child.childSessionId,
+            title: child.title || child.subagentType || 'ZCode 子代理',
+            task: child.title || child.subagentType || '', status: child.status };
+          // Announce the clickable child before reading its possibly slow transcript.
+          await session.emit({ ...summary, messages: [] });
+          let messages = [];
+          let transcriptReady = false;
+          try {
+            messages = (await session.proc.request('session/messages', { sessionId: child.childSessionId }))?.messages ?? [];
+            transcriptReady = true;
+          } catch (error) {
+            // Completed children may have been unloaded from the app-server. Its
+            // native resume endpoint reopens them read-only for transcript access.
+            if (/Session is not active/i.test(String(error?.message))) {
+              try {
+                await session.proc.request('session/resume', { sessionId: child.childSessionId, workspace: workspaceIdentity(session.cwd) });
+                messages = (await session.proc.request('session/messages', { sessionId: child.childSessionId }))?.messages ?? [];
+                transcriptReady = true;
+              } catch { /* Retry after native storage finishes materializing. */ }
+            }
+          }
+          if (transcriptReady) await session.emit({ ...summary, messages });
+          if (transcriptReady) session.state.subagentStatuses.set(child.childSessionId, child.status);
+        }
+        endedCursor = result?.ended?.nextCursor;
+        if (!endedCursor) break;
+      }
+    } catch (error) {
+      // Older ZCode builds have no session/subagents method.
+      if (/Method not found|Unknown method|-32601/i.test(String(error?.message))) session.state.subagentUnsupported = true;
+    } finally { session.state.subagentTask = null; }
+  })();
+  return session.state.subagentTask;
+}
+
+function afterNativeSubagents(session, finish) {
+  let timer;
+  const timeout = new Promise(resolve => { timer = setTimeout(resolve, 5000); timer.unref?.(); });
+  void Promise.race([syncNativeSubagents(session), timeout]).finally(() => {
+    clearTimeout(timer);
+    finish();
+  });
+}
+
 function projectSessionEvent(session, payload, eventId) {
   if (!payload || typeof payload !== 'object') return;
   if (eventId !== undefined) {
@@ -653,23 +721,27 @@ function projectSessionEvent(session, payload, eventId) {
     case 'turn.started': {
       session.state.turnText = '';
       session.state.suppressCompletions = false;
+      session.state.turnStartedAt = Date.now();
       break;
     }
     case 'turn.completed': {
       if (session.state.suppressCompletions) break;
-      session.state.usage = usageView(payload);
-      emit({ kind: 'usage', usage: session.state.usage });
-      // SSE 在部分网络下只经拉取通道送达:若无流式 delta,补发完整回复
-      if (payload.response && !session.state.turnText) emit({ kind: 'text-delta', text: payload.response });
-      emit({ kind: 'completed', finalAnswer: true });
-      settleTurn(session, null);
+      afterNativeSubagents(session, () => {
+        session.state.usage = usageView(payload);
+        emit({ kind: 'usage', usage: session.state.usage });
+        if (payload.response && !session.state.turnText) emit({ kind: 'text-delta', text: payload.response });
+        emit({ kind: 'completed', finalAnswer: true });
+        settleTurn(session, null);
+      });
       break;
     }
     case 'turn.failed': {
       if (session.state.suppressCompletions) break;
       const message = payload.error?.message ?? 'ZCode 回合失败';
-      emit({ kind: 'error', message });
-      settleTurn(session, new Error(message));
+      afterNativeSubagents(session, () => {
+        emit({ kind: 'error', message });
+        settleTurn(session, new Error(message));
+      });
       break;
     }
     default:
@@ -740,6 +812,10 @@ function startEventPolling(session) {
         projectSessionEvent(session, payload, event.eventId);
       }
       if (maxSeq > session.state.afterSeq) session.state.afterSeq = maxSeq;
+      if (session.state.active && !session.state.subagentUnsupported && Date.now() - (session.state.lastSubagentPoll ?? 0) > 1500) {
+        session.state.lastSubagentPoll = Date.now();
+        void syncNativeSubagents(session);
+      }
     } catch { /* transient poll failure; the next tick retries */ }
     session.state.polling = false;
   }, 350);

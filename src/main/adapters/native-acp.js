@@ -4,6 +4,9 @@ const { AcpInteractions } = require('./acp-interactions');
 const { nativeCommand } = require('./native-acp-command');
 const { recordNative } = require('../harness-adapter/fixture-recorder');
 const { pickFullAccessPermissionMode } = require('./permission-modes');
+const { createNativeFileSubagentBridge } = require('./native-file-subagents');
+const { createKimiSubagentBridge } = require('./kimi-subagents');
+const { createCodeBuddySubagentBridge } = require('./codebuddy-subagents');
 
 const text = value => Array.isArray(value) ? value.map(text).filter(Boolean).join('\n') : value?.type === 'text' ? value.text || '' : value?.content ? text(value.content) : '';
 function extractToolOutput(tool, update) {
@@ -29,7 +32,7 @@ const options = list => (list || []).flatMap(o => Array.isArray(o.options) ? opt
 const finite = n => Number.isFinite(n) && n >= 0;
 function config(s, kind) {
   // qoder names its effort selector `reasoning_effort` and files it under the model category.
-  const ids = { model: ['model'], thinking: ['effortLevel', 'thought_level', 'reasoning_effort'], mode: ['mode'] }[kind];
+  const ids = { model: ['model'], thinking: ['effortLevel', 'thought_level', 'reasoning_effort', 'thinking'], mode: ['mode'] }[kind];
   return s.state.configOptions.find(o => ids.includes(o.id) || o.category === (kind === 'thinking' ? 'thought_level' : kind));
 }
 function catalog(s) {
@@ -271,6 +274,14 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
           if (thread.options?.permissionMode) await adapter.setPermissionMode(s, thread.options.permissionMode);
           else if (['full', 'full-required'].includes(thread.options?.workerPermissions)) await applyWorkerFullAccess(adapter, s, name, thread.options.workerPermissions === 'full-required');
           emit({ kind: 'session', nativeSessionId: s.nativeSessionId, model: s.model });
+          s.subagents = id === 'kimi-code'
+            ? createKimiSubagentBridge({ parentId: s.nativeSessionId, environment: s.environment, emit, diagnostic })
+            : id === 'codebuddy'
+            ? createCodeBuddySubagentBridge({ cwd: s.cwd, parentId: s.nativeSessionId,
+              environment: s.environment, emit, diagnostic })
+            : createNativeFileSubagentBridge({ vendor: id, cwd: s.cwd,
+              parentId: s.nativeSessionId, environment: s.environment, emit, diagnostic });
+          await s.subagents?.scan();
           return s;
         } catch (error) { await adapter.close(s); throw error; }
       },
@@ -298,7 +309,9 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
           }
         }
         if (attachments?.images?.length && (!manifest.capabilities.attachments || !s.state.agentCapabilities.promptCapabilities?.image)) throw new Error(`${name} native image input is not supported`);
-        s.active = true; s.tools.clear(); s.cancelRequested = false; s.turnAnswer = ''; s.turnProgressSeen = false; s.turnTextSeen = false;
+        s.active = true;
+        s.subagents?.resume();
+        s.tools.clear(); s.cancelRequested = false; s.turnAnswer = ''; s.turnProgressSeen = false; s.turnTextSeen = false;
         s.turnSettling = false; s.turnDrainWake = null;
         // 哪些事件代表“用户可见的进度”？只让这些重置 idle timer，
         // heartbeat / usage-only / plan 不算进度，否则 model API 挂起后
@@ -379,8 +392,12 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
             }
             if (buddy && result.stopReason !== 'cancelled' && !s.turnAnswer) throw new Error('CodeBuddy native turn completed without an assistant response');
             if (s.closed || s.fault) throw s.fault || new Error('Native session closed during turn');
+            await s.subagents?.settle(result.stopReason === 'cancelled' ? 'failed' : 'success');
             hooks.emit({ kind: 'completed', finalAnswer: result.stopReason !== 'cancelled',
               ...(result.userMessageId ? { nativeRef: { checkpointId: result.userMessageId } } : {}) });
+          } catch (error) {
+            await s.subagents?.settle('failed');
+            throw error;
           } finally {
             s.turnSettling = false; s.turnDrainWake = null; delete s.turnProgressSeen; delete s.turnTextSeen;
             clearTimeout(s.cancelTimer); clearTimeout(s.turnIdleTimer); clearTimeout(s.toolStuckTimer); delete s.touchTurn; s.active = false; s.interactions.close();
@@ -478,7 +495,7 @@ function nativeAcp({ id, name, args, aliases = [], command = argv => nativeComma
           return { session: await adapter.open({ thread: { ...source, nativeSessionId: result.sessionId, restore: true }, emit: context.emit, diagnostic: context.diagnostic }) };
         } finally { await adapter.close(probe); }
       },
-      async close(s) { if (!s || s.closed) return; s.closed = true; ++s.generation; clearTimeout(s.cancelTimer); clearTimeout(s.turnIdleTimer); clearTimeout(s.toolStuckTimer); delete s.touchTurn; s.interactions.close(); s.process?.stop(); },
+      async close(s) { if (!s || s.closed) return; s.closed = true; ++s.generation; s.subagents?.close(); clearTimeout(s.cancelTimer); clearTimeout(s.turnIdleTimer); clearTimeout(s.toolStuckTimer); delete s.touchTurn; s.interactions.close(); s.process?.stop(); },
     };
     return adapter;
   }
