@@ -44,6 +44,20 @@ const { getHarnessSvg } = require('../src/main/native/icons');
     assert.equal(events[0].nativeSessionId, `${parentId}:kimi:worker-1`);
     assert.equal(events[0].status, 'running');
     assert.equal(events[0].task, 'Investigate');
+    const partial = { type: 'context.append_loop_event', event: { type: 'content.part', part: { type: 'text', text: 'Part one' } } };
+    await fs.writeFile(file, [...rows, partial].map(row => JSON.stringify(row)).join('\n') + '\n');
+    await bridge.scan();
+    assert.equal(events.length, 1, 'an unfinished step must not advance the Host message cursor');
+    const continued = [
+      { type: 'context.append_loop_event', event: { type: 'content.part', part: { type: 'text', text: 'Part two' } } },
+      { type: 'context.append_loop_event', event: { type: 'step.end' } },
+    ];
+    await fs.writeFile(file, [...rows, partial, ...continued].map(row => JSON.stringify(row)).join('\n') + '\n');
+    await bridge.scan();
+    assert.equal(events.at(-1).messages.length, 3);
+    assert.deepEqual(events.at(-1).messages.at(-1).parts.map(part => part.text), ['Part one', 'Part two']);
+    await bridge.scan();
+    assert.equal(events.length, 2, 'unchanged native messages must not replay');
     await bridge.settle();
     assert.equal(events.at(-1).status, 'success');
   } finally { bridge.close(); await fs.rm(root, { recursive: true, force: true }); }

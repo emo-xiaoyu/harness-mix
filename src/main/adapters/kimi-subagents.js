@@ -2,32 +2,41 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-function kimiAgentMessages(rows) {
+function kimiAgentMessages(rows, { includeIncomplete = true } = {}) {
   const messages = [];
   let parts = [];
-  const flush = () => {
+  let startedAt = 0;
+  const timestamp = row => Date.parse(row?.time) || 0;
+  const flush = row => {
     if (!parts.length) return;
-    messages.push({ info: { role: 'assistant', time: { created: Date.now(), completed: Date.now() } }, parts });
+    messages.push({ info: { role: 'assistant', time: { created: startedAt, completed: timestamp(row) || startedAt } }, parts });
     parts = [];
+    startedAt = 0;
   };
   for (const row of rows) {
     if (row?.type === 'context.append_message' && row.message?.role === 'user') {
-      flush();
+      flush(row);
       const content = row.message.content;
       const blocks = Array.isArray(content) ? content.filter(p => p?.type === 'text' && typeof p.text === 'string').map(p => ({ type: 'text', text: p.text }))
         : typeof content === 'string' ? [{ type: 'text', text: content }] : [];
-      if (blocks.length) messages.push({ info: { role: 'user', time: { created: Date.parse(row.time) || Date.now() } }, parts: blocks });
+      if (blocks.length) messages.push({ info: { role: 'user', time: { created: timestamp(row) } }, parts: blocks });
     }
     const event = row?.type === 'context.append_loop_event' ? row.event : null;
     if (event?.type === 'content.part') {
+      if (!parts.length) startedAt = timestamp(row);
       if (event.part?.type === 'text' && typeof event.part.text === 'string') parts.push({ type: 'text', text: event.part.text });
       if (event.part?.type === 'think' && typeof event.part.think === 'string') parts.push({ type: 'reasoning', text: event.part.think });
     }
-    if (event?.type === 'tool.call' && event.toolCallId) parts.push({ type: 'tool', callID: event.toolCallId,
-      tool: event.toolName || event.name || '工具', state: { status: 'running', input: event.arguments } });
-    if (event?.type === 'step.end') flush();
+    if (event?.type === 'tool.call' && event.toolCallId) {
+      if (!parts.length) startedAt = timestamp(row);
+      parts.push({ type: 'tool', callID: event.toolCallId,
+        tool: event.toolName || event.name || '工具', state: { status: 'running', input: event.arguments } });
+    }
+    if (event?.type === 'step.end') flush(row);
   }
-  flush();
+  // The current step is still being appended to wire.jsonl. Importing it now
+  // would advance Host's message cursor and permanently drop later parts.
+  if (includeIncomplete) flush(rows.at(-1));
   return messages;
 }
 
@@ -57,7 +66,8 @@ function createKimiSubagentBridge({ parentId, environment = {}, emit, diagnostic
       try { agents = await fs.readdir(agentsRoot, { withFileTypes: true }); } catch { continue; }
       for (const agent of agents) {
         if (!agent.isDirectory() || agent.name === 'main' || !/^[\w.-]+$/.test(agent.name)) continue;
-        const messages = kimiAgentMessages(await readWire(path.join(agentsRoot, agent.name, 'wire.jsonl')));
+        const messages = kimiAgentMessages(await readWire(path.join(agentsRoot, agent.name, 'wire.jsonl')),
+          { includeIncomplete: settledStatus !== 'running' });
         if (!messages.length) continue;
         const status = settledStatus;
         const signature = JSON.stringify([status, messages]);
