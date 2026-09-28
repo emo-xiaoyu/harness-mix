@@ -28,7 +28,8 @@ const { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, remo
  * 仍由其原生程序维护，Adapter 只负责原生协议接入与事件转换。
  */
 class HostRuntime {
-  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000 }) {
+  constructor({ dataDirectory, observer = null, stuckTurnMs = 15 * 60 * 1000, stuckSweepMs = 60 * 1000,
+    delegationTimeoutMs = 30 * 60 * 1000 }) {
     this.store = new ThreadStore(dataDirectory);
     this.threads = [];
     this.sessions = new Map(); // threadId -> { adapter, ...session }
@@ -60,6 +61,7 @@ class HostRuntime {
     this.turnActivity = new Map();
     this.nativeSubagentSync = new Map();
     this.stuckTurnMs = stuckTurnMs;
+    this.delegationTimeoutMs = delegationTimeoutMs;
     this.watchdogTimer = setInterval(() => this.#sweepStuckTurns(), stuckSweepMs);
     this.watchdogTimer.unref?.();
     this.collaboration = new Collaboration(this);
