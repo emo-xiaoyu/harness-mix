@@ -128,6 +128,7 @@ function compactValue(item) {
   if (item === null || item === undefined) return '';
   if (Array.isArray(item)) return item.map(compactValue).join('\n');
   if (typeof item === 'object') {
+    if ('templates' in item) return item.templates.map(compactValue).join('\n');
     if ('task_id' in item) {
       const parts = [`[task ${String(item.task_id).slice(0, 8)}]`, item.display_status ?? item.status, item.agent_type ?? ''];
       if (item.attention) parts.push(`attention:${item.attention.type}`);
@@ -149,6 +150,12 @@ function compactValue(item) {
       return `[script ${String(item.script_id).slice(0, 8)}] ${item.status}${item.phase ? ` phase=${item.phase}` : ''} — ${snippet(item.note ?? '')}`;
     }
     if ('team_id' in item && 'phase' in item) return JSON.stringify(item);
+    if ('id' in item && 'members' in item && !('tasks' in item) && !('driver' in item)) {
+      const roster = (item.members ?? []).map(member =>
+        `${member.name}(${member.agent || 'unset'}${member.available === false ? ',unavailable' : ''})`).join(',');
+      return `template ${String(item.id).slice(0, 8)} "${item.name}"${item.builtin ? ' builtin' : ''} members=${roster}`
+        + (item.description ? ` — ${snippet(item.description)}` : '');
+    }
     if ('id' in item && 'members' in item) {
       return `team ${item.id} "${item.name}" ${item.status ?? ''} members=${(item.members ?? []).map(member => `${member.name}(${member.agent})`).join(',')} tasks=${(item.tasks ?? []).length}`;
     }
@@ -178,6 +185,8 @@ options:
 commands:
   whoami                            caller identity: thread, harness, cwd, role, whitelist
   agents                            list delegatable harnesses
+  templates                         list Agent Team templates (project .harness-mix/teams/ >
+                                    user > built-in, same-name project entries win)
   delegate <agent> [task]           start a subtask; --isolation auto|worktree|shared;
                                     team mode: --team <id> --member <id> --task-id <tid>
   delegations                       list this lead's durable child tasks (incl. interrupted)
@@ -202,6 +211,7 @@ async function buildRequest(command, opts, positionals) {
   switch (command) {
     case 'whoami': return ['session_info', { frontend: 'cli' }];
     case 'agents': return ['list_agents', {}];
+    case 'templates': return ['list_team_templates', {}];
     case 'delegations': return ['list_delegations', {}];
     case 'delegate': {
       const [agent] = positionals;

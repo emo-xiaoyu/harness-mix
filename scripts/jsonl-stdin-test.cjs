@@ -34,6 +34,28 @@ const { JsonlProcess } = require('../src/main/host/jsonl');
     await assert.rejects(pending, error => error.harnessExited === true && /进程已退出/.test(error.message));
     console.log('jsonl-stdin-test: pending requests reject with the harnessExited marker');
   }
+
+  // Pi UI events have both id and method. Only an untyped JSON-RPC frame is
+  // a client request; swallowing the typed frame hides Pi subagent widgets.
+  {
+    const frames = [
+      { type: 'extension_ui_request', id: 'pi-widget', method: 'setWidget', widgetKey: 'subagent-async' },
+      { jsonrpc: '2.0', id: 4, method: 'client/read', params: {} },
+    ];
+    const childCode = `for (const frame of ${JSON.stringify(frames)}) process.stdout.write(JSON.stringify(frame) + '\\n'); setTimeout(() => process.exit(0), 100);`;
+    const events = [];
+    const requests = [];
+    const proc = new JsonlProcess(process.execPath, ['-e', childCode], {}, {
+      onEvent(event) { events.push(event); },
+      onRequest(request) { requests.push(request); return {}; },
+    });
+    await new Promise(resolve => proc.child.on('exit', resolve));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].widgetKey, 'subagent-async');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, 'client/read');
+    console.log('jsonl-stdin-test: typed Pi UI events stay events; untyped JSON-RPC requests get replies');
+  }
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

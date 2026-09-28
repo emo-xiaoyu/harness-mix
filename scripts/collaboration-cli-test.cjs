@@ -99,6 +99,31 @@ async function main() {
     assert.match(agents.stdout, /worker Worker available=true/);
     assert.match(agents.stdout, /zlead ZLead available=true/);
 
+    // 2b) templates：项目模板（cwd 作用域）排在用户/内置之前，compact 与 json 双格式
+    await fs.mkdir(path.join(root, '.harness-mix', 'teams'), { recursive: true });
+    await fs.writeFile(path.join(root, '.harness-mix', 'teams', 'cli-squad.md'), [
+      '---',
+      'name: CLI 小队',
+      'description: 项目作用域模板冒烟',
+      'members:',
+      '  - name: 执行',
+      '    role: 完成被委派的工作',
+      '    agent: worker',
+      '---',
+      '',
+      '正文不参与解析。',
+      '',
+    ].join('\n'), 'utf8');
+    const templates = await runCli(['--format', 'compact', 'templates'], { cwd: root });
+    assert.equal(templates.code, 0, templates.stderr);
+    assert.match(templates.stdout, /template [\w-]+ "CLI 小队" members=执行\(worker\)/, templates.stdout);
+    assert.match(templates.stdout, /缺陷评审组/, '内置模板同样在列');
+    assert.ok(templates.stdout.indexOf('CLI 小队') < templates.stdout.indexOf('缺陷评审组'), '项目模板排在存储模板之前');
+    const templatesJson = JSON.parse((await runCli(['templates'], { cwd: root })).stdout);
+    const squad = templatesJson.templates.find(template => template.name === 'CLI 小队');
+    assert.equal(squad.members[0].agent, 'worker');
+    assert.equal(squad.members[0].available, true, '成员可用性按 harness 状态标注');
+
     // 3) delegate：任务文本走 stdin（Windows argv 引号/长度的规避路径）
     const delegation = await runCli(['delegate', 'worker'], { cwd: root, input: '检查 flaky 测试\n包含中文与 "引号"' });
     assert.equal(delegation.code, 0, delegation.stderr);

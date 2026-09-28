@@ -368,64 +368,6 @@ async function main() {
     assert.deepEqual(decodeRoute('harnessmix/opencode-native@m@perm'), { harnessId: 'opencode', model: { id: 'm' }, permissionModeId: 'perm' });
     assert.deepEqual(decodeRoute('harnessmix/grok-native@m@@think'), { harnessId: 'grok', model: { id: 'm' }, thinkingOptionId: 'think' });
     assert.throws(() => decodeRoute('harnessmix/omp-native@a@b@c@d'), /Invalid native Harness route/);
-    // ===== 跨 Harness 协作：委派 → 消息 → 等待 → 级联取消 =====
-    const childEmits = [];
-    let childSend;
-    const childAdapter = { manifest: { id: 'claude', name: 'Claude Code', aliases: ['claude', 'claude-code'], capabilities: { streaming: true, models: true, resume: true } },
-      async open(input) { childEmits.push(input.emit); return {}; },
-      async describe() { return { models: [], thinkingLevels: [], permissionModes: [] }; },
-      sendCalls: [], cancelCalls: 0,
-      async send(session, text, hooks) { this.sendCalls.push(text); await (childSend ?? (() => {}))(hooks); },
-      async cancel() { this.cancelCalls++; },
-      async close() {} };
-    runtime.adapters.set('claude', childAdapter); runtime.status.claude = { available: true };
-    // Host 级 /delegate 指令出现在命令目录中（insert 型，填入输入框）
-    const commandList = await bridge.request('harnessmix/thread/commands/inspect', { threadId });
-    assert.ok(commandList.commands.some(c => c.invocation === '/delegate' && c.argumentMode === 'text'), 'Host 级 /delegate 指令应出现在命令目录');
-    // 委派：协议入口创建子任务线程并挂起父线程协作 Turn
-    childSend = hooks => { hooks.emit({ kind: 'text-delta', text: '子任务结论' }); hooks.emit({ kind: 'completed', finalAnswer: true }); };
-    const delegated = await bridge.request('harnessmix/thread/delegate', { threadId, harnessId: 'claude-code', task: '审查代码' });
-    schemas.threadDelegationResultSchema.parse(delegated);
-    assert.equal(delegated.turn.status, 'inProgress', '委派后父线程协作 Turn 保持活动');
-    assert.ok(delegated.turn?.id, 'Delegation starts a parent collaboration Turn');
-    const childId = delegated.childThreadId;
-    const childThread = runtime.threads.find(t => t.id === childId);
-    assert.equal(childThread.parentThreadId, threadId, '子任务记录父任务归属');
-    assert.ok(events.some(e => e.method === 'thread/started' && e.params.thread.id === childId), 'Desktop 收到协作子任务的 thread/started');
-    assert.equal((await bridge.request('thread/read', { threadId: childId })).thread.parentThreadId, threadId, '子任务投影 parentThreadId');
-    assert.equal(includesThread(childThread, { parentThreadId: threadId }, runtime.threads), true, '父子归属查询匹配子任务');
-    assert.equal(includesThread(childThread, { ancestorThreadId: threadId }, runtime.threads), true, '祖先查询沿 parentThreadId 链匹配');
-    assert.equal(includesThread(storedThread, { parentThreadId: threadId }, runtime.threads), false, '普通线程不出现在子任务查询');
-    await wait(() => !runtime.execution.isRunning(threadId));
-    assert.deepEqual(childAdapter.sendCalls, ['审查代码'], '子任务收到委派任务');
-    const parentTurn = runtime.core.getItemsForTurn(delegated.turn.id);
-    const delegateTool = parentTurn.find(i => i.type === 'tool_call');
-    assert.equal(delegateTool.title, 'Agent 协作 · Claude Code');
-    assert.equal(delegateTool.status, 'completed', '子任务结算后协作工具项完成');
-    assert.ok(String(delegateTool.output).includes('子任务结论'), '协作工具项携带子任务最终答复');
-    // 消息链：向同一子任务跟进（复用既有子线程）
-    const followUp = await bridge.request('harnessmix/thread/message', { threadId, childThreadId: childId, text: '再检查一遍' });
-    schemas.threadDelegationResultSchema.parse(followUp);
-    await wait(() => !runtime.execution.isRunning(threadId));
-    assert.deepEqual(childAdapter.sendCalls, ['审查代码', '再检查一遍'], '跟进消息进入同一子任务');
-    assert.equal(followUp.childThreadId, childId);
-    // 循环防护：子任务不能继续委派
-    await assert.rejects(bridge.request('harnessmix/thread/delegate', { threadId: childId, harnessId: 'pi', task: 'x' }), /暂不支持继续委派/);
-    // 斜杠通道：/delegate 文本走同一委派链路
-    childSend = hooks => { hooks.emit({ kind: 'text-delta', text: '斜杠委派完成' }); hooks.emit({ kind: 'completed', finalAnswer: true }); };
-    const slashTurn = await bridge.request('turn/start', { threadId, input: [{ type: 'text', text: '/delegate claude 用斜杠通道' }] });
-    await wait(() => !runtime.execution.isRunning(threadId));
-    assert.deepEqual(childAdapter.sendCalls.at(-1), '用斜杠通道', '斜杠指令进入委派链路');
-    assert.equal(runtime.core.getItemsForTurn(slashTurn.turn.id).find(i => i.type === 'tool_call')?.status, 'completed');
-    await assert.rejects(bridge.request('turn/start', { threadId, input: [{ type: 'text', text: '/delegate' }] }), /用法：\/delegate/);
-    // 级联取消：中断父线程协作 Turn ⇒ 子任务被取消
-    childSend = () => new Promise(() => {}); // 子任务永不自行结算
-    const stuck = await bridge.request('harnessmix/thread/delegate', { threadId, harnessId: 'claude', task: '长跑任务' });
-    assert.ok(runtime.execution.isRunning(threadId), '父线程协作 Turn 等待子任务');
-    await bridge.request('turn/interrupt', { threadId });
-    await wait(() => !runtime.execution.isRunning(threadId) && !runtime.execution.isRunning(stuck.childThreadId));
-    assert.equal(childAdapter.cancelCalls, 1, '中断父线程级联取消子任务');
-    assert.equal(runtime.core.getTurn(stuck.turn.id).status, 'cancelled');
     // 瞬态 Fork / 后台元数据线程防护：拒绝 ephemeral / threadSource 请求，防止重命名/索引时静默派生会话
     await assert.rejects(bridge.request('thread/fork', { threadId, ephemeral: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);
@@ -581,6 +523,47 @@ async function main() {
     await wait(() => !runtime.execution.isRunning(steerThreadId));
 
     console.log('PASS: native protocol, external steering, command execution, message queue and Usage projection');
+    // ZCode 原生子代理：由真实 childSessionId 建立可点开的只读子线程，
+    // 父线程使用原生 collabAgentToolCall，恢复时保留 transcript。
+    let zcodeEmit;
+    runtime.adapters.set('zcode', { manifest: { id: 'zcode', name: 'ZCode', capabilities: { streaming: true, resume: true } },
+      async open(input) { zcodeEmit = input.emit; return {}; },
+      async describe() { return { models: [], thinkingLevels: [], permissionModes: [] }; },
+      async send() {}, async cancel() {}, async close() {} });
+    runtime.status.zcode = { available: true };
+    const zParent = await runtime.createThread({ harnessId: 'zcode', cwd: root, title: 'ZCode native children' });
+    zParent.messages.push({ id: 'native-parent-prompt', role: 'user', text: '并行回答', at: Date.now() });
+    const zTurn = runtime.execution.turnStarted(zParent, '并行回答');
+    const nativeChildEvent = { kind: 'native-subagent', nativeSessionId: 'native-zcode-child-1',
+      title: '回答测试', task: '回答测试', status: 'success', messages: [
+        { info: { role: 'user', time: { created: Date.now() } }, parts: [{ type: 'text', text: '只回答测试' }] },
+        { info: { role: 'assistant', time: { created: Date.now(), completed: Date.now() } }, parts: [
+          { type: 'reasoning', text: '先检查输入' },
+          { type: 'tool', callID: 'native-tool-1', tool: 'acceptance-report', state: { status: 'completed', input: { ok: true }, output: '通过' } },
+          { type: 'text', text: '测试' },
+        ] },
+      ] };
+    await zcodeEmit(nativeChildEvent);
+    await zcodeEmit(nativeChildEvent);
+    const zChildren = runtime.threads.filter(t => t.parentThreadId === zParent.id && t.nativeSessionId === 'native-zcode-child-1');
+    assert.equal(zChildren.length, 1, '重复原生目录快照不得创建重复子线程');
+    const zChild = zChildren[0];
+    const zRead = (await bridge.request('thread/read', { threadId: zChild.id })).thread;
+    assert.equal(zRead.source, 'subAgentThreadSpawn');
+    assert.equal(zRead.parentThreadId, zParent.id);
+    assert.equal(zRead.canAcceptDirectInput, false, '原生内部子会话在 Desktop 中只读');
+    assert.equal(zRead.turns.length, 1, '子线程展示原生 transcript');
+    assert.ok(zRead.turns[0].items.some(item => item.type === 'agentMessage' && item.text === '测试'));
+    assert.ok(zRead.turns[0].items.some(item => item.type === 'dynamicToolCall' && item.tool === 'acceptance-report'));
+    assert.ok(zRead.turns[0].items.some(item => item.type === 'reasoning' && item.summary.includes('先检查输入')));
+    assert.equal(includesThread(zChild, { parentThreadId: zParent.id, sourceKinds: ['subAgentThreadSpawn'] }, runtime.threads), true);
+    assert.ok((await bridge.request('thread/read', { threadId: zParent.id })).thread.turns.at(-1).items.some(item => item.type === 'collabAgentToolCall' && item.childThreadId === zChild.id));
+    const zIndex = await runtime.store.loadIndex();
+    assert.equal(zIndex.find(t => t.id === zChild.id)?.nativeReadOnly, true, '重启索引保留只读标记');
+    assert.equal((await runtime.store.load()).find(t => t.id === zChild.id)?.nativeMessageCount, 2, '原生 transcript 游标持久化');
+    await assert.rejects(runtime.send(zChild.id, 'x'), /只读/);
+    await zcodeEmit({ kind: 'completed', finalAnswer: true });
+    assert.equal(runtime.execution.lastTurn(zParent.id).id, zTurn.id);
   } finally { bridge.close(); await runtime.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

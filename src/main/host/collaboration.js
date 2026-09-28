@@ -164,6 +164,9 @@ function workerSessionOptions(agent, requireFullAccess = false) {
     case 'cursor-cli':
     case 'cursor':
     case 'cline':
+    case 'kimi-code':
+    case 'kimi':
+    case 'kimicode':
     case 'grok':
       return { workerPermissions: requireFullAccess ? 'full-required' : 'full' };
     default:
@@ -1148,6 +1151,12 @@ ${instruction}`;
     const rt = this.runtime;
     // whoami 类操作：任意时刻可用（不要求 lead turn 存活），供 CLI/桥自检身份
     if (name === 'session_info') return this.sessionInfo(principal, args.frontend ?? 'mcp');
+    // 模板清单同样任意时刻只读可用：以调用线程的 cwd 合并项目作用域文件模板
+    if (name === 'list_team_templates') {
+      const thread = rt.threads.find(t => t.id === principal);
+      if (!thread) throw new Error('Unknown session');
+      return { templates: await this.listTeamTemplates(thread.cwd) };
+    }
     const teamTools = TEAM_TOOL_NAMES;
     const participant = this.participant(principal, args.team_id);
     const owner = participant?.team.owner ?? principal;
@@ -1925,7 +1934,7 @@ ${instruction}`;
   }
 
   // teamMembers=false 时跳过团队持久成员作业：Lead 回合自然结算只回收无团队归属的
-  // 孤儿委派（/delegate 协作链）；用户显式中断/停止走默认全量级联。
+  // 孤儿委派（一次性 delegate_to_agent）；用户显式中断/停止走默认全量级联。
   async cancelOwner(owner, { interrupt = this.interruptOwners.has(owner), teamMembers = true } = {}) {
     const jobs = [...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running' && (teamMembers || !j.teamId));
     if (!jobs.length) return;

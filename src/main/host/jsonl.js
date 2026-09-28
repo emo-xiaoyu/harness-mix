@@ -60,7 +60,9 @@ class JsonlProcess {
     try { value = JSON.parse(line); }
     catch { this.hooks.onDiagnostic?.(`Non-JSON stdout: ${line.slice(0, 500)}`); return; }
     // Agent → Client 请求（JSON-RPC，带 method 和 id），需要回复
-    if (value.method !== undefined && value.id !== undefined) {
+    // Pi RPC extension_ui_request also carries id + method, but is an event
+    // handled by the Pi adapter, not a JSON-RPC request to answer here.
+    if (value.type === undefined && value.method !== undefined && value.id !== undefined) {
       Promise.resolve()
         .then(() => {
           if (!this.hooks.onRequest) throw new Error(`Unsupported native client request: ${value.method}`);

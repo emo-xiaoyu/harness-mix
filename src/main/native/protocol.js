@@ -73,6 +73,7 @@ const HARNESS_AUTH_INFO = {
   zcode: { name: 'ZCode', plan: 'ZCode AI', label: 'ZCode 账号与配置', loginCommand: null, configHint: 'ZCode 客户端或配置文件' },
   trae: { name: 'Trae', plan: 'Trae AI', label: 'Trae 账号与配置', loginCommand: null, configHint: 'Trae 客户端登录状态' },
   cline: { name: 'Cline', plan: 'Cline Providers', label: 'Cline CLI 认证', loginCommand: 'cline auth', configHint: '命令行 cline auth 或 ~/.cline/data 配置' },
+  'kimi-code': { name: 'Kimi Code', plan: 'Kimi Code', label: 'Kimi Code 认证', loginCommand: 'kimi login', configHint: '命令行 kimi login；凭据由 Kimi Code 自身管理' },
 };
 
 const MODEL_REF_ID = /^[A-Za-z0-9._~-]{1,512}$/;
@@ -371,7 +372,7 @@ class NativeProtocol {
         intent: thread.pendingHandoff.intent || 'continue',
         note: thread.pendingHandoff.note ?? null,
       } : null,
-      canAcceptDirectInput: true, historyMode: 'legacy', isPinned: false, extra: null,
+      canAcceptDirectInput: thread.nativeReadOnly !== true, historyMode: 'legacy', isPinned: false, extra: null,
       isolation: thread.isolation ?? 'shared',
       workspace: thread.workspace ? { mode: thread.workspace.mode, branch: thread.workspace.branch, root: thread.workspace.root } : null,
       turns: includeTurns ? this.runtime.core.turns.turnsForThread(thread.id).map(t => this.turn(t)) : [] };
@@ -1035,18 +1036,6 @@ class NativeProtocol {
       });
     }
     if (method === 'turn/interrupt') { await this.runtime.cancel(thread.id, { interrupt: true }); return {}; }
-    // 跨 Harness 任务协作：委派新子任务 / 跟进既有子任务，等待链由父线程协作 Turn 承载
-    if (method === 'harnessmix/thread/delegate' || method === 'harnessmix/thread/message') {
-      const task = params.task ?? params.text;
-      if (typeof task !== 'string' || !task.trim()) throw new Error('Delegation requires a non-empty task');
-      const { child, turn } = await this.runtime.delegateTask({
-        fromThreadId: thread.id,
-        harnessId: method === 'harnessmix/thread/delegate' ? (ALIASES[params.harnessId] || params.harnessId) : undefined,
-        childThreadId: method === 'harnessmix/thread/message' ? params.childThreadId : undefined,
-        task,
-      });
-      return { turn: this.turn(turn), childThreadId: child.id };
-    }
     if (method === 'thread/rollback') return { thread: this.projectThread(await this.runtime.rollbackThread(thread.id, params.numTurns)) };
     if (method === 'thread/name/set') { await this.runtime.renameThread(thread.id, params.name); return {}; }
     if (method === 'thread/archive' || method === 'thread/unarchive') {

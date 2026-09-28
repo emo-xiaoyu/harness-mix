@@ -20,12 +20,12 @@ lead 模型在会话内跑 shell 命令即可完成全部协作操作。
 4. 核心状态机（任务图、邮箱、worktree、审查门、白名单强制）**零改动**；CLI 只复用
    `Collaboration.call()` 分发路径，服务端强制（activeMentions 白名单、turn 存活检查、
    配额、隔离决策）自动继承。
-5. 人类与 CI 可直接用 CLI 驱动协作（`/delegate` 之外的全能力通道）。
+5. 人类与 CI 可直接用 CLI 驱动协作（全能力通道）。
 
 ### 非目标（明确出范围）
 
-- **递归委派**：worker/子任务继续禁止再委派（`call()` 已有 `parent.parentThreadId` 拒绝 +
-  `delegateTask` 的"协作子任务暂不支持继续委派"），本轮不改语义。受限 worker key 是未来策略开关。
+- **递归委派**：worker/子任务继续禁止再委派（`call()` 已有 `parent.parentThreadId` 拒绝；
+  旧手动 `delegateTask` 链路已随 `/delegate` 入口移除），本轮不改语义。受限 worker key 是未来策略开关。
 - **官方 Codex 线程**：不注入、不发现、不路由。见 §8 安全边界。
 - **替换 MCP 前端**：MCP 桥保持现状，双前端长期共存、同步演进。
 - **harness 进程 env 注入**：本轮不做适配器级 `HARNESS_MIX_*` env 推广（`thread.environment`
@@ -111,6 +111,7 @@ lead 模型（任意 harness）
 | CLI | 操作 | 说明 |
 |---|---|---|
 | `agents` | list_agents | |
+| `templates` | list_team_templates | 按调用线程 cwd 合并 项目 > 用户 > 内置 团队模板；任意时刻只读可用 |
 | `whoami` | session_info | 新增操作，见 §3.1 |
 | `delegate <agent> [task...]` | delegate_to_agent | task 缺省或为 `-` 时读 stdin；`--isolation auto\|worktree\|shared`；团队模式 `--team <id> --member <id> --task-id <tid>` |
 | `delegations` | list_delegations | |
@@ -191,7 +192,7 @@ lead 模型（任意 harness）
 | `collaboration-cli-test.cjs`（新） | 起 HostRuntime + 假适配器 + 真控制面：whoami/delegate(stdin)/status/wait/compact/review+apply 摘要/退出码矩阵/坏 key 403/歧义 cwd 报错/注册表发现（含 worker 条目）/JSON 错误透传/team 全命令/script 异步返回 |
 | `collaboration-skill-test.cjs`（新） | installed→current→updated→conflict 四态、双目的地一致、digest 稳定、原子性（无残留 tmp） |
 | `collaboration-test.cjs`（扩展） | session_info（turn 外可用）；非 MCP lead 不再抛错且收到 CLI 措辞；MCP lead 措辞不变（回归锚点）；成员信封双措辞；dispatch 文本前端中性 |
-| 回归 | `npm run check` + `test:core-all` 全链 + `test:collaboration`、`delegation-await-test`、`team-mailbox-test` 不回归 |
+| 回归 | `npm run check` + `test:core-all` 全链 + `test:collaboration`、`team-mailbox-test` 不回归 |
 
 ## 8. 安全边界（必须写入 AGENTS.md 的声明）
 

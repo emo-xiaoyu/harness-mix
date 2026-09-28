@@ -85,7 +85,8 @@ async function main() {
     const init = await transport.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     assert.ok(init.capabilities.tools);
     const catalog = await transport.request('tools/list', {});
-    assert.equal(catalog.tools.length, 17);
+    assert.equal(catalog.tools.length, 18);
+    assert.ok(catalog.tools.some(tool => tool.name === 'list_team_templates'), '模板清单工具进入 MCP 目录');
     assert.ok(catalog.tools.some(tool => tool.name === 'session_info'), 'CLI 身份自检工具进入目录');
     assert.ok(catalog.tools.some(tool => tool.name === 'review_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'apply_delegation_changes'));
