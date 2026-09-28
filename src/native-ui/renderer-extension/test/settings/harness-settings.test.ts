@@ -27,7 +27,7 @@ describe("Harness Mix Settings & Model Configuration", () => {
       (agent): agent is ExternalRendererAgent => agent !== "codex",
     );
     for (const agent of externalAgents) {
-      if (['kiro-cli', 'cursor-cli', 'codebuddy', 'zcode', 'trae'].includes(agent)) {
+      if (['kiro-cli', 'cursor-cli', 'codebuddy', 'zcode', 'trae', 'kimi-code'].includes(agent)) {
         expect(HARNESS_INSTALL_COMMANDS[agent]).toBeUndefined();
         continue;
       }
