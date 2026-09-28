@@ -58,13 +58,14 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
     </tr>
     <tr>
       <td align="center"><img src="src/assets/icons/cline-color.svg" width="28" height="28" alt="Cline"><br><sub>Cline</sub></td>
+      <td align="center"><img src="src/assets/icons/kimi-code-moonshot.svg" width="28" height="28" alt="Kimi Code"><br><sub>Kimi Code</sub></td>
     </tr>
   </tbody>
 </table>
 
 <p align="center"><sub>图标与 Harness 能力均来自项目自身的注册表；只有本机已安装且握手成功的 Harness 才会进入真实运行。</sub></p>
 
-Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认官方 Codex 会话由 Desktop 直接连接官方 app-server；明确选择其他 Harness 或 `Codex（协作）` 时，独立的 Harness Mix Host 才处理对应任务。它把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae 和 Cline 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理托管任务的映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认官方 Codex 会话由 Desktop 直接连接官方 app-server；明确选择其他 Harness 或 `Codex（协作）` 时，独立的 Harness Mix Host 才处理对应任务。它把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae、Cline 和 Kimi Code 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理托管任务的映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
 
 ## 界面预览
 
@@ -77,7 +78,7 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 | 功能模块 | 核心能力 | 交互入口与特点 |
 | :--- | :--- | :--- |
 | **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
-| **🎨 皮肤市场** | 内置 HeiGe、Codex Styler、Dream Skin 与经典编辑器配色主题，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
+| **🎨 皮肤市场** | 内置 HeiGe、Codex Styler、Dream Skin 与经典编辑器配色主题，外加原创「复古 QQ · 千禧蓝」结构化皮肤，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
 | **📚 历史会话导入与引用** | 一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑；`#` 引用任意旧会话注入脱敏上下文 | 引用仅预取最近一页；MCP 只读工具 `get_session_info` / `list_session_messages` 供 Harness 按需翻页与读取分支 / 模型 / 用量元数据 |
 | **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
 | **🧩 原生 Skills 管理** | 全量覆盖 17 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
@@ -130,8 +131,9 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 | **ZCode** | `zcode.cjs app-server --stdio`（ZCode Protocol v1） | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ |
 | **Trae** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
 | **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 |
 
-<sub>注：✅ 为原生支持并已打通；➖ 为上游协议当前未开放或未声明；只有本机已安装且握手成功的 Harness 才会进入真实运行。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
+<sub>注：✅ 为原生支持并已打通；🟡 为 Kimi ACP 已声明或适配但本机账号尚未登录，真实回合待验证；➖ 为上游协议当前未开放或未声明。Kimi Code 0.26.0 握手未声明 Fork。只有本机已安装且握手成功的 Harness 才会进入真实运行。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
 
 ## 核心功能特色
 
@@ -208,6 +210,7 @@ npm start
 - Kiro CLI：安装 `kiro-cli`，启用 `acp` 子命令并完成 CLI 登录。
 - Cursor CLI：安装 `cursor-agent` 并完成 CLI 登录。
 - Cline：安装 `cline`（`npm i -g cline`）并通过 `cline auth` 完成登录；Harness Mix 以官方 `cline --acp` 接入。
+- Kimi Code：安装官方 `kimi` CLI，运行 `kimi login` 完成原生登录；Harness Mix 使用 `kimi acp`，可用 `HARNESS_MIX_KIMI_EXECUTABLE` 指定 CLI 路径。
 - Qoder：安装 `qodercli`（或 `qoder`）并完成 CLI 登录；ACP 入口由本机版本决定。
 - ZCode：安装 ZCode 桌面版并完成登录（自带无头 `glm/zcode.cjs`），内核直接以 `zcode.cjs app-server --stdio`（ZCode Protocol v1）接入；共享凭据、模型目录与账号声明均由 ZCode 自治。可用 `HARNESS_MIX_ZCODE_EXECUTABLE` 覆盖 CLI 路径。多 Agent 协作中 ZCode 可作为派活目标、Agent Team 成员与 `/delegate` 对象；`#` 主控角色通过协作 CLI 前端（`collaboration-cli.cjs`，长文本走 stdin）开放——任意能执行 shell 命令的 Harness 都能当 Lead，见 docs/cli-collaboration-design.md。
 - Trae：只有在拥有已验证的 ACP 兼容桥接程序时才配置 `HARNESS_MIX_TRAE_EXECUTABLE`，项目不会猜测官方入口。
@@ -298,6 +301,7 @@ macOS/Linux source builds and launch adaptation are in place; full desktop accep
     </tr>
     <tr>
       <td align="center"><img src="src/assets/icons/cline-color.svg" width="28" height="28" alt="Cline"><br><sub>Cline</sub></td>
+      <td align="center"><img src="src/assets/icons/kimi-code-moonshot.svg" width="28" height="28" alt="Kimi Code"><br><sub>Kimi Code</sub></td>
     </tr>
   </tbody>
 </table>
@@ -317,7 +321,7 @@ The preview comes from the current Codex Desktop native window: Harness Mix appe
 | Module | Core capabilities | Entry points & notes |
 | :--- | :--- | :--- |
 | **🔄 Cross-Harness Task Handoff** | 4 handoff modes (continue / run plan / independent review / re-analyze) with smooth transitions | Composer handoff badge / `/switch`; persisted redacted checkpoints with evidence traceability |
-| **🎨 Skin Marketplace** | Built-in HeiGe, Codex Styler, Dream Skin and classic editor-palette themes with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
+| **🎨 Skin Marketplace** | Built-in HeiGe, Codex Styler, Dream Skin and classic editor-palette themes plus the original "Retro QQ · Millennium Blue" structural skin, with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
 | **📚 History Import & Reference** | One-click import of Pi / Claude / Codex / CodeBuddy native history with interruptible resume; `#` references any past session with redacted context injected | References prefetch only the latest page; read-only MCP tools `get_session_info` / `list_session_messages` let Harnesses page through and read branch / model / usage metadata on demand |
 | **🤝 Multi-Agent Orchestration** | Type `#` to summon target Harnesses, manage them as capsule tags, dispatch under strong coordinator constraints | Composer `#` menu; loop review and verification, cascading subtask cancellation and timeout circuit breaking |
 | **🧩 Native Skills Management** | Covers the native skill directories of all 17 Harnesses, with root directories pre-created at session start | Settings → Skills; drag-and-drop install of a single `SKILL.md` or a complete folder |
@@ -370,8 +374,9 @@ Theme assets ship with the project and the images use licensed material from thi
 | **ZCode** | `zcode.cjs app-server --stdio` (ZCode Protocol v1) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ |
 | **Trae** | Compatible ACP bridge | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
 | **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
+| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 |
 
-<sub>Note: ✅ means natively supported and wired end-to-end; ➖ means the upstream protocol currently does not expose or declare it; only Harnesses installed locally with a successful handshake enter real runs. See [Native ACP Deep Integration](docs/native-acp.md) and [Harness Management](docs/harness-management.md) for details.</sub>
+<sub>Note: ✅ means natively supported and verified; 🟡 means the Kimi ACP capability is advertised or wired but a live turn awaits native login; ➖ means the upstream protocol does not expose or declare it. Kimi Code 0.26.0 does not advertise Fork. See [Native ACP Deep Integration](docs/native-acp.md) and [Harness Management](docs/harness-management.md) for details.</sub>
 
 ## Core Features
 

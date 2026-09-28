@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
     assert.match(skinResult.text, /Native Codex.*Miku 488137.*原神 · 晨曦.*鸣潮 · 共鸣.*龙珠 · 筋斗云.*金辉盛境.*夜曲工作室.*静谧花园/s);
     assert.equal(skinResult.active, 'miku-488137');
   assert.equal(skinResult.style, true);
-    assert.equal(skinResult.cardCount, 30);
+    assert.equal(skinResult.cardCount, 31);
     assert.equal(skinResult.bundledPreviewCount, 17);
     fs.writeFileSync(path.join(out, 'settings-skins.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(() => {

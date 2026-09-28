@@ -1,6 +1,6 @@
 # CodeBuddy、Kiro CLI、Cursor CLI 与其他原生 ACP 接入
 
-CodeBuddy、Kiro CLI、Cursor CLI、Qoder 和 Cline 使用原生 ACP stdio，并在 `native-acp.js`、
+CodeBuddy、Kiro CLI、Cursor CLI、Qoder、Cline 和 Kimi Code 使用原生 ACP stdio，并在 `native-acp.js`、
 `acp-interactions.js` 中处理厂商差异。ZCode、Trae 也复用此引擎，但当前只有显式
 ACP 程序配置入口，尚未验证可用桥接程序，不能称为已完成官方原生接入。
 不替换原生账号、不代理模型供应商、不自动批准工具请求。
@@ -16,6 +16,15 @@ ACP 程序配置入口，尚未验证可用桥接程序，不能称为已完成�
 | `zcode` | 显式指定 ACP 桥接程序，无附加参数 | `HARNESS_MIX_ZCODE_ACP_EXECUTABLE` | [ZCode](https://zcode.z.ai/)；本机原生 CLI 仅确认 app-server |
 | `trae` | 显式指定兼容 ACP 程序，无附加参数 | `HARNESS_MIX_TRAE_EXECUTABLE` | [官方 trae-agent](https://github.com/bytedance/trae-agent)；未确认 ACP 支持 |
 | `cline` | `cline --acp` | `HARNESS_MIX_CLINE_EXECUTABLE` | [Cline CLI](https://docs.cline.bot/usage/cli-overview)；官方文档与源码均确认 ACP |
+| `kimi-code` | `kimi acp` | `HARNESS_MIX_KIMI_EXECUTABLE` | [Kimi Code ACP](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp) |
+
+Kimi Code 官方另有仓库内的 [`node-sdk`](https://github.com/MoonshotAI/kimi-code/tree/main/packages/node-sdk)
+和本地 [REST/WebSocket Server API](https://moonshotai.github.io/kimi-code/en/reference/server-api)。
+截至本次核对，SDK 包标记为 `private`，npm 注册表未提供可安装版本；Server API
+官方标为实验性，并要求独立 bearer token。当前接入选择官方公开的 `kimi acp`，
+由 Kimi 自身持有会话、登录与权限。不能把仅调用 Moonshot 模型的 API 当作
+Kimi Code Agent SDK。官方最新文档列出 ACP `session/fork`，本机 `kimi 0.26.0`
+握手未声明该能力，适配器据实际版本保持 Fork 关闭。真实回合验收仍需原生登录。
 
 Qoder 在 Windows 上识别 npm 包并直接启动官方 JavaScript bundle。ZCode 的
 `app-server --stdio` 使用厂商协议，不能直接填入 ACP 程序路径。旧的 `zcode acp`、

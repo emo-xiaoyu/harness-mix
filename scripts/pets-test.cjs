@@ -10,25 +10,31 @@ const {
   readAsarHeader,
   isWebpBuffer,
   validatePetMetadata,
+  parseWindowsProxySettings,
+  isLoopbackTarget,
+  CURATED_COMMUNITY_PETS,
+  PET_ID_PATTERN,
 } = require('../src/main/native/pets');
 
-function buildSyntheticAsar(targetPath, petName, blobContent) {
+function buildSyntheticAsar(targetPath, petNames, blobContent) {
+  const names = Array.isArray(petNames) ? petNames : [petNames];
   const tree = {
     files: {
       webview: {
         files: {
           assets: {
-            files: {
-              [`${petName}-spritesheet-v1-0123456789abcdef.webp`]: {
-                size: blobContent.length,
-                offset: '0',
-              },
-            },
+            files: {},
           },
         },
       },
     },
   };
+  for (const name of names) {
+    tree.files.webview.files.assets.files[`${name}-spritesheet-v1-0123456789abcdef.webp`] = {
+      size: blobContent.length,
+      offset: '0',
+    };
+  }
   const jsonBuf = Buffer.from(JSON.stringify(tree), 'utf8');
   const jsonLen = jsonBuf.length;
   const padLen = (4 - (jsonLen % 4)) % 4;
@@ -61,7 +67,9 @@ function webpPayload(label) {
   fs.writeFileSync(fakeCodexBin, '');
 
   const fakeSpriteBlob = Buffer.from('RIFF....WEBPVP8 ...fake-sprite-data...', 'utf8');
-  buildSyntheticAsar(fakeAsarPath, 'synthetic-buddy', fakeSpriteBlob);
+  // 同一个 asar 里放两只官方桌宠：synthetic-buddy 走常规流程，
+  // rush 与内置清单里的社区桌宠撞 id，用来验证「原生自带优先、社区副本去重」
+  buildSyntheticAsar(fakeAsarPath, ['synthetic-buddy', 'rush'], fakeSpriteBlob);
 
   const petsDir = path.join(testRoot, 'installed-pets');
   fs.mkdirSync(petsDir, { recursive: true });
@@ -70,12 +78,29 @@ function webpPayload(label) {
     HARNESSMIX_STOCK_CODEX_PATH: fakeCodexBin,
     HARNESS_MIX_PETS_DIR: petsDir,
     HARNESSMIX_DATA_DIR: path.join(testRoot, 'data-dir'),
+    // 显式禁用系统代理回落：测试永远不读宿主机的 WinINET 注册表
+    HARNESS_MIX_SYSTEM_PROXY: 'none',
   };
   const selectionFile = path.join(env.HARNESSMIX_DATA_DIR, 'pet-selection.json');
 
   // 本地 HTTP 服务器模拟社区下载源，覆盖 成功/500/坏签名/超大/截断/慢响应 场景
+  const communityQueries = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/pets') {
+      // 在线社区接口 mock：记录出站查询串，返回两条在线数据
+      communityQueries.push(url.searchParams.toString());
+      const body = JSON.stringify({
+        pets: [
+          { id: 'guga', displayName: '咕嘎', description: 'online guga', spriteVersionNumber: 1, spritesheetUrl: 'https://example.com/guga.webp', previewUrl: 'https://example.com/guga-preview.webp', posterUrl: 'https://example.com/guga-poster.webp' },
+          { id: 'community-pet', displayName: 'Community Pet', description: '', spriteVersionNumber: 1, spritesheetUrl: 'https://example.com/cp.webp' },
+        ],
+        total: 2,
+      });
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
     if (url.pathname === '/ok.webp') {
       const body = webpPayload('community');
       res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length });
@@ -120,6 +145,8 @@ function webpPayload(label) {
     server.listen(0, '127.0.0.1', resolve);
   });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  // 主 market 的社区接口指向必 500 的路径：所有 community() 调用走本地收录回落，测试不触网
+  env.HARNESS_MIX_PETS_API = `${baseUrl}/community-down`;
 
   const leftoverArtifacts = () =>
     fs.readdirSync(petsDir).filter(name => name.startsWith('.tmp-') || name.startsWith('.bak-'));
@@ -147,6 +174,34 @@ function webpPayload(label) {
     const curatedSample = catalog.data.find(p => p.id === 'komi-shouko-pixel');
     assert.ok(curatedSample, 'curated community pet komi-shouko-pixel should be present');
     assert.equal(curatedSample.installed, false);
+
+    // 2b. 原生自带去重：官方预载里也有 rush（与内置清单同 id）时，目录中只出现一次且按 official 归类
+    const rushEntries = catalog.data.filter(p => p.id === 'rush');
+    assert.equal(rushEntries.length, 1, 'pet colliding with official preload must appear exactly once');
+    assert.equal(rushEntries[0].source, 'official', 'official preload wins over the curated community copy');
+
+    // 2c. 内置收录清单结构校验：id 合法且唯一、字段齐全、直链全部指向 codex-pets.net CDN，
+    // 且不包含官方预载（原生自带）桌宠 id
+    const OFFICIAL_PRELOAD_IDS = new Set([
+      'bsod', 'codex', 'dewey', 'fireball', 'hoots', 'null-signal', 'rocky', 'seedy', 'stacky',
+    ]);
+    const seenCuratedIds = new Set();
+    for (const pet of CURATED_COMMUNITY_PETS) {
+      assert.ok(PET_ID_PATTERN.test(pet.id), `curated pet id must be valid: ${pet.id}`);
+      assert.ok(!seenCuratedIds.has(pet.id), `curated pet id must be unique: ${pet.id}`);
+      seenCuratedIds.add(pet.id);
+      assert.ok(!OFFICIAL_PRELOAD_IDS.has(pet.id), `curated list must not include official preload pet: ${pet.id}`);
+      assert.equal(pet.source, 'community');
+      assert.ok(typeof pet.displayName === 'string' && pet.displayName.trim(), `curated pet needs displayName: ${pet.id}`);
+      assert.ok(Number.isInteger(pet.spriteVersionNumber) && pet.spriteVersionNumber >= 1, `curated pet needs spriteVersionNumber: ${pet.id}`);
+      for (const field of ['spritesheetUrl', 'previewUrl', 'posterUrl']) {
+        assert.ok(
+          typeof pet[field] === 'string' && /^https:\/\/codex-pets\.net\/assets\/pets\//.test(pet[field]),
+          `curated pet ${field} must be a codex-pets.net asset URL: ${pet.id}`,
+        );
+      }
+    }
+    assert.ok(CURATED_COMMUNITY_PETS.length >= 20, 'curated builtin list should stay populated');
 
     // 3. Test preview() for official pet
     const previewRes = market.preview({ id: 'synthetic-buddy' });
@@ -189,7 +244,7 @@ function webpPayload(label) {
     assert.equal(installedEntry.installed, true);
     assert.equal(installedEntry.source, 'installed');
 
-    // 5. Test community() fallback and search
+    // 5. Test community() fallback and search（mock 接口 500，回落到内置收录清单）
     const communityRes = await market.community({ search: 'komi' });
     assert.ok(communityRes.total >= 1);
     assert.equal(communityRes.data[0].id, 'komi-shouko-pixel');
@@ -224,6 +279,45 @@ function webpPayload(label) {
     assert.equal(communityMeta.displayName, 'Community Pet');
     assert.equal(communityMeta.spriteVersionNumber, 1);
     assert.deepEqual(leftoverArtifacts(), [], 'no staging/backup dirs left after community install');
+
+    // 7b. community() 在线路径：mock 接口返回的数据被映射，已安装的 id 带 installed 标记；
+    // 出站参数被清洗（trending 已下线回落 popular，pageSize 钳到接口上限，page 不小于 1）
+    const onlineMarket = createPetMarket({ env: { ...env, HARNESS_MIX_PETS_API: `${baseUrl}/api/pets` } });
+    const onlineRes = await onlineMarket.community({ sort: 'trending', pageSize: 500, page: 0 });
+    assert.equal(onlineRes.source, 'online');
+    assert.equal(onlineRes.total, 2);
+    const onlineGuga = onlineRes.data.find(p => p.id === 'guga');
+    assert.equal(onlineGuga.displayName, '咕嘎');
+    assert.equal(onlineGuga.description, 'online guga');
+    assert.equal(onlineGuga.source, 'community');
+    assert.equal(onlineGuga.installed, false);
+    assert.equal(onlineGuga.spritesheetUrl, 'https://example.com/guga.webp');
+    const onlineInstalled = onlineRes.data.find(p => p.id === 'community-pet');
+    assert.equal(onlineInstalled.installed, true, 'online listing marks locally installed pets');
+    assert.equal(communityQueries.length, 1);
+    const outbound = new URLSearchParams(communityQueries[0]);
+    assert.equal(outbound.get('sort'), 'popular', 'invalid sort must be sanitized to popular');
+    assert.equal(outbound.get('pageSize'), '60', 'pageSize must be clamped to the API cap');
+    assert.equal(outbound.get('page'), '1', 'page must be clamped to >= 1');
+
+    // 7c. 环回保护：HTTPS_PROXY 指向必然不通的死代理时，127.0.0.1 上的 mock 下载依然成功
+    //（环回目标永不走代理；若误走死代理，这里会以 fetch failed 失败）
+    const deadProxyEnv = {
+      ...env,
+      HTTPS_PROXY: 'http://127.0.0.1:9',
+      HTTP_PROXY: 'http://127.0.0.1:9',
+      HARNESS_MIX_PETS_API: `${baseUrl}/api/pets`,
+    };
+    const loopbackMarket = createPetMarket({ env: deadProxyEnv });
+    const loopbackInstall = await loopbackMarket.install({
+      id: 'loopback-pet',
+      displayName: 'Loopback Pet',
+      spritesheetUrl: `${baseUrl}/ok.webp`,
+    });
+    assert.equal(loopbackInstall.installed, true, 'loopback downloads bypass the configured proxy');
+    const loopbackCommunity = await loopbackMarket.community({});
+    assert.equal(loopbackCommunity.source, 'online', 'loopback community API bypasses the configured proxy');
+    loopbackMarket.uninstall({ id: 'loopback-pet' });
 
     // 8. 下载失败（HTTP 500）：拒绝安装且不留下任何目录
     await assert.rejects(
@@ -336,6 +430,47 @@ function webpPayload(label) {
     assert.equal(isWebpBuffer(Buffer.from('WEBP....RIFF', 'latin1')), false);
     assert.equal(isWebpBuffer(Buffer.from('RIFF', 'latin1')), false);
     assert.equal(isWebpBuffer(Buffer.alloc(0)), false);
+
+    // Windows 系统代理解析（reg query 输出 -> 代理 URL）
+    const regHeader = 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\r\n    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    127.0.0.1:7890\r\n`),
+      'http://127.0.0.1:7890',
+      'bare host:port gains the http scheme',
+    );
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\n    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http://proxy.corp:8080\n`),
+      'http://proxy.corp:8080',
+      'proxied URL with scheme is preserved',
+    );
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\r\n    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    http=127.0.0.1:7890;https=127.0.0.1:7891\r\n`),
+      'http://127.0.0.1:7891',
+      'per-protocol ProxyServer prefers the https entry',
+    );
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\r\n    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    http=127.0.0.1:7890\r\n`),
+      'http://127.0.0.1:7890',
+      'per-protocol ProxyServer falls back to the http entry',
+    );
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\r\n    ProxyEnable    REG_DWORD    0x0\r\n    ProxyServer    REG_SZ    127.0.0.1:7890\r\n`),
+      null,
+      'disabled system proxy yields no proxy',
+    );
+    assert.equal(
+      parseWindowsProxySettings(`${regHeader}\r\n    ProxyEnable    REG_DWORD    0x1\r\n    AutoConfigURL    REG_SZ    https://pac.corp/proxy.pac\r\n`),
+      null,
+      'PAC-only configuration yields no proxy',
+    );
+    assert.equal(parseWindowsProxySettings(''), null, 'empty reg output yields no proxy');
+
+    // 环回目标判定：本地地址不走代理
+    assert.equal(isLoopbackTarget('http://127.0.0.1:8080/x'), true);
+    assert.equal(isLoopbackTarget('http://localhost:3000/y'), true);
+    assert.equal(isLoopbackTarget('http://[::1]:9000/z'), true);
+    assert.equal(isLoopbackTarget('https://codex-pets.net/assets/pets/a.webp'), false);
+    assert.equal(isLoopbackTarget('not a url'), false);
 
     assert.throws(() => validatePetMetadata(null, 'x'), /must be an object/);
     assert.throws(

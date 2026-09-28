@@ -88,6 +88,11 @@ function assetEntries(header) {
   return files && typeof files === 'object' ? files : {};
 }
 
+// 精选社区桌宠（离线兜底清单，同时驱动设置页「社区精选」内置展示）。
+// 收录规则：
+// - 全部指向 codex-pets.net 官方 CDN 的版本化资源，Harness Mix 不随包分发任何精灵图；
+// - 排除 Codex 官方预载（原生自带）桌宠——app.asar 里已有的不重复收录（catalog() 还会按 id 再去重兜底）；
+// - 不收录真实人物与政治人物形象；直链入库前逐一 HEAD 验证过。
 const CURATED_COMMUNITY_PETS = [
   {
     id: 'komi-shouko-pixel',
@@ -169,21 +174,272 @@ const CURATED_COMMUNITY_PETS = [
     posterUrl: 'https://codex-pets.net/assets/pets/v/1789453516001/haaap/poster.webp',
     source: 'community',
   },
+  {
+    id: 'guga',
+    displayName: 'Guga (咕嘎)',
+    description: 'A rounder and cuter chibi penguin hoodie girl pet with a softer face and friendlier proportions.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777721201758/guga/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777721201758/guga/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777721201758/guga/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'clawd',
+    displayName: 'Clawd',
+    description: 'A compact Codex pet based on official Claude Code pixel Clawd frames, extracted without stretching.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777707802295/clawd/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777707802295/clawd/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777707802295/clawd/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'fern',
+    displayName: 'Fern',
+    description: 'A poised purple-haired anime companion in an oversized tan cable-knit cardigan. Unofficial fan art.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1783885630629/fern/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1783885630629/fern/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1783885630629/fern/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'monthly-salary-cat',
+    displayName: 'Monthly Salary Cat (月薪猫)',
+    description: 'A 1:1 restored animated pet version of the white-and-brown teary Monthly salary cat meme.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1780647673803/monthly-salary-cat/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1780647673803/monthly-salary-cat/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1780647673803/monthly-salary-cat/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'miku',
+    displayName: 'Miku',
+    description: 'A chibi pixel companion based on Hatsune Miku. Unofficial fan art.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777756884505/miku/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777756884505/miku/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777756884505/miku/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'clippit',
+    displayName: 'Clippy',
+    description: 'A classic paperclip assistant rebuilt from Microsoft Agent animation frames.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777724908947/clippit/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777724908947/clippit/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777724908947/clippit/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'luoxiaohei2d',
+    displayName: 'Luo Xiaohei (罗小黑)',
+    description: 'A tiny black cat companion inspired by Luo Xiaohei, simplified into a cute polished digital pet style. Unofficial fan art.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1779932867044/luoxiaohei2d/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1779932867044/luoxiaohei2d/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1779932867044/luoxiaohei2d/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'pika',
+    displayName: 'Pika',
+    description: 'A tiny yellow electric mouse digital pet.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777753044165/pika/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777753044165/pika/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777753044165/pika/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'xiaoba',
+    displayName: 'Xiaoba (小八)',
+    description: 'Chiikawa-style Hachiware-inspired pet with a blue ear cap, white rounded body, blush cheeks, and a cheerful expression.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1778314796325/xiaoba/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1778314796325/xiaoba/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1778314796325/xiaoba/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'doge',
+    displayName: 'Doge',
+    description: 'A cute Doge-style Shiba Inu companion for Codex.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777715762673/doge/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777715762673/doge/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777715762673/doge/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'pingu',
+    displayName: 'Pingu',
+    description: 'A small claymation penguin with a black rounded body, white belly, red beak, and orange feet.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1779150041965/pingu/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1779150041965/pingu/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1779150041965/pingu/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'banana-cat',
+    displayName: 'Banana Cat (比比拉布)',
+    description: 'A faithful restoration of the early-3D banana cat meme, preserving its narrow silhouette and melancholy face.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1783925124593/banana-cat/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1783925124593/banana-cat/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1783925124593/banana-cat/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'doraemon',
+    displayName: 'Doraemon',
+    description: 'A compact blue robot-cat pet inspired by 哆啦A梦, simplified into a pixel-adjacent desktop mascot. Unofficial fan art.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777724587069/doraemon/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777724587069/doraemon/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777724587069/doraemon/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'totoro',
+    displayName: 'Totoro',
+    description: 'A pointy-eared chinchilla forest spirit with a sleepy grin. Unofficial fan art.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1777827389018/totoro/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1777827389018/totoro/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1777827389018/totoro/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'jiji',
+    displayName: 'Jiji',
+    description: 'An original minimalist black-cat pet with oversized ears, bright oval eyes, and a compact chibi body.',
+    spriteVersionNumber: 1,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1778309831837/jiji/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1778309831837/jiji/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1778309831837/jiji/poster.webp',
+    source: 'community',
+  },
+  {
+    id: 'rilakkuma-k-v2',
+    displayName: 'Rilakkuma (轻松熊)',
+    description: 'A relaxed Rilakkuma bear that keeps you company while you code. Unofficial fan art.',
+    spriteVersionNumber: 2,
+    spritesheetUrl: 'https://codex-pets.net/assets/pets/v/1784665710188/rilakkuma-k-v2/spritesheet.webp',
+    previewUrl: 'https://codex-pets.net/assets/pets/v/1784665710188/rilakkuma-k-v2/preview.webp',
+    posterUrl: 'https://codex-pets.net/assets/pets/v/1784665710188/rilakkuma-k-v2/poster.webp',
+    source: 'community',
+  },
 ];
 
-function getProxyDispatcher(env = process.env) {
-  const proxy = env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY;
+// codex-pets.net 社区接口当前接受的排序值与分页上限；trending 已下线（传了整页 400），
+// pageSize 超过 60 也会被拒，这里统一清洗后再出站
+const COMMUNITY_SORTS = new Set(['popular', 'new', 'views']);
+const COMMUNITY_PAGE_SIZE_MAX = 60;
+
+// HARNESS_MIX_PETS_API 可把社区接口指到本地 mock（测试用），默认走官方站点
+function communityApiEndpoint(env = process.env) {
+  return env.HARNESS_MIX_PETS_API || 'https://codex-pets.net/api/pets';
+}
+
+// 环回/链路本地目标永远不走代理（本地 mock、局域网资源直连）
+function isLoopbackTarget(targetUrl) {
+  try {
+    const host = new URL(targetUrl).hostname.toLowerCase();
+    return host === 'localhost' || host === '::1' || host === '[::1]' || /^127\./.test(host);
+  } catch {
+    return false;
+  }
+}
+
+// 解析 `reg query "HKCU\...\Internet Settings"` 的输出，返回 https 请求可用的代理 URL；
+// 支持三种 ProxyServer 形态：裸 host:port、带 scheme、以及 http=..;https=.. 的分协议写法。
+// 只认手动代理（ProxyEnable=1 + ProxyServer）；PAC/自动检测没有进程内可用的求值方式，按无代理处理。
+function parseWindowsProxySettings(regOutput) {
+  const lines = String(regOutput || '').split(/\r?\n/);
+  const values = {};
+  for (const line of lines) {
+    const match = line.match(/^\s*(ProxyEnable|ProxyServer|AutoConfigURL)\s+REG_\w+\s+(.*)$/i);
+    if (match) values[match[1].toLowerCase()] = match[2].trim();
+  }
+  if (!values.proxyenable || !/^0?x?1$/i.test(values.proxyenable.replace(/\s/g, ''))) return null;
+  if (!values.proxyserver || values.proxyserver === ':') return null;
+  let candidate = values.proxyserver;
+  if (candidate.includes('=')) {
+    const perProtocol = new Map();
+    for (const part of candidate.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx > 0) perProtocol.set(part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim());
+    }
+    candidate = perProtocol.get('https') || perProtocol.get('http') || '';
+    if (!candidate) return null;
+  }
+  if (!/^https?:\/\//i.test(candidate)) candidate = `http://${candidate}`;
+  try {
+    const parsed = new URL(candidate);
+    if (!parsed.hostname) return null;
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+// Windows 系统代理（WinINET）：AppX 激活启动的 Codex Desktop 只带 CODEX_CLI_PATH，
+// Host 进程里通常没有 *_PROXY 环境变量，环境变量缺失时回落到注册表里的系统代理。
+// HARNESS_MIX_SYSTEM_PROXY 可强制指定（'none'/'off'/'direct' 表示禁用，其余按代理 URL）。
+let cachedSystemProxy; // undefined = 未读取；null = 无系统代理
+function windowsSystemProxyUrl(env = process.env) {
+  const forced = env.HARNESS_MIX_SYSTEM_PROXY;
+  if (typeof forced === 'string' && forced.trim()) {
+    const value = forced.trim().toLowerCase();
+    if (value === 'none' || value === 'off' || value === 'direct') return null;
+    return forced.trim();
+  }
+  if (cachedSystemProxy !== undefined) return cachedSystemProxy;
+  cachedSystemProxy = null;
+  if (process.platform === 'win32') {
+    try {
+      const { execFileSync } = require('child_process');
+      const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+      const reg = path.join(systemRoot, 'System32', 'reg.exe');
+      const output = execFileSync(reg,
+        ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'],
+        { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      cachedSystemProxy = parseWindowsProxySettings(output);
+    } catch { /* 注册表读不到按无系统代理处理 */ }
+  }
+  return cachedSystemProxy;
+}
+
+const proxyAgentCache = new Map(); // proxy URL -> ProxyAgent（复用连接池，避免每次 fetch 新建）
+function proxyAgentFor(proxyUrl) {
+  let agent = proxyAgentCache.get(proxyUrl);
+  if (!agent) {
+    const { ProxyAgent } = require('undici');
+    agent = new ProxyAgent(proxyUrl);
+    if (proxyAgentCache.size >= 4) proxyAgentCache.delete(proxyAgentCache.keys().next().value);
+    proxyAgentCache.set(proxyUrl, agent);
+  }
+  return agent;
+}
+
+function getProxyDispatcher(targetUrl, env = process.env) {
+  if (isLoopbackTarget(targetUrl)) return undefined;
+  const proxy = env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || windowsSystemProxyUrl(env);
   if (!proxy) return undefined;
   try {
-    const { ProxyAgent } = require('undici');
-    return new ProxyAgent(proxy);
+    return proxyAgentFor(proxy);
   } catch {
     return undefined;
   }
 }
 
 async function fetchWithProxy(url, options = {}, env = process.env) {
-  const dispatcher = getProxyDispatcher(env);
+  const dispatcher = getProxyDispatcher(url, env);
   const opts = { ...options };
   if (dispatcher) opts.dispatcher = dispatcher;
   return fetch(url, opts);
@@ -383,16 +639,19 @@ function createPetMarket({ env = process.env } = {}) {
       };
     },
 
-    async community({ page = 1, pageSize = 24, sort = 'trending', search = '' } = {}) {
+    async community({ page = 1, pageSize = 24, sort = 'popular', search = '' } = {}) {
       const installed = installedPets();
       const installedIds = new Set(installed.map(p => p.id));
+      const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+      const safePageSize = Math.min(Math.max(1, Number.parseInt(pageSize, 10) || 24), COMMUNITY_PAGE_SIZE_MAX);
+      const safeSort = COMMUNITY_SORTS.has(String(sort)) ? String(sort) : 'popular';
       const queryParams = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        sort: String(sort || 'trending'),
+        page: String(safePage),
+        pageSize: String(safePageSize),
+        sort: safeSort,
       });
       if (search && String(search).trim()) queryParams.set('search', String(search).trim());
-      const apiUrl = `https://codex-pets.net/api/pets?${queryParams.toString()}`;
+      const apiUrl = `${communityApiEndpoint(env)}?${queryParams.toString()}`;
       try {
         const res = await fetchWithProxy(apiUrl, { signal: AbortSignal.timeout(8000) }, env);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -608,4 +867,13 @@ function createPetMarket({ env = process.env } = {}) {
   };
 }
 
-module.exports = { createPetMarket, readAsarHeader, isWebpBuffer, validatePetMetadata };
+module.exports = {
+  createPetMarket,
+  readAsarHeader,
+  isWebpBuffer,
+  validatePetMetadata,
+  parseWindowsProxySettings,
+  isLoopbackTarget,
+  CURATED_COMMUNITY_PETS,
+  PET_ID_PATTERN,
+};
