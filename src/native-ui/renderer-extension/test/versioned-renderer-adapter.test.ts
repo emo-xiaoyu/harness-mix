@@ -122,6 +122,65 @@ describe("current Codex Renderer Agent adapter", () => {
     );
   });
 
+  it("falls back to the window-exposed bridge when the composer fiber carries no manager", () => {
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+    } as unknown as Element;
+    const root = { querySelector: () => editor } as unknown as ParentNode;
+    Object.defineProperty(editor, "__reactFiber$test", {
+      configurable: true,
+      value: { memoizedState: { memoizedState: {}, next: null }, return: null },
+    });
+    const exposed = {
+      hostId: "local",
+      sendRequest: vi.fn(),
+      prewarmThreadStart: vi.fn(),
+      enqueueRequest: vi.fn(),
+    };
+    const holder = globalThis as unknown as { __harnessmixRequestBridgeV1?: unknown };
+    holder.__harnessmixRequestBridgeV1 = { bridge: exposed, hostId: "local" };
+    try {
+      expect(findActivePrewarmTargets(root)).toEqual([exposed]);
+    } finally {
+      delete holder.__harnessmixRequestBridgeV1;
+    }
+  });
+
+  it("prefers fiber bridges over the window-exposed fallback", () => {
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+    } as unknown as Element;
+    const root = { querySelector: () => editor } as unknown as ParentNode;
+    const fiberBridge = {
+      hostId: "local",
+      sendRequest: vi.fn(),
+      prewarmThreadStart: vi.fn(),
+      enqueueRequest: vi.fn(),
+    };
+    Object.defineProperty(editor, "__reactFiber$test", {
+      configurable: true,
+      value: {
+        memoizedState: { memoizedState: fiberBridge, next: null },
+        return: null,
+      },
+    });
+    const exposed = {
+      hostId: "local",
+      sendRequest: vi.fn(),
+      prewarmThreadStart: vi.fn(),
+      enqueueRequest: vi.fn(),
+    };
+    const holder = globalThis as unknown as { __harnessmixRequestBridgeV1?: unknown };
+    holder.__harnessmixRequestBridgeV1 = { bridge: exposed, hostId: "local" };
+    try {
+      expect(findActivePrewarmTargets(root)).toEqual([fiberBridge]);
+    } finally {
+      delete holder.__harnessmixRequestBridgeV1;
+    }
+  });
+
   it("keeps local and remote request targets independently addressable", () => {
     const local = {
       hostId: "local",
@@ -179,7 +238,55 @@ describe("current Codex Renderer Agent adapter", () => {
     expect(resolveRendererRequestRoute(replacementPolicy, [], discovered)).toBeNull();
   });
 
-  it("prefers a policy-owned exact request target without Composer discovery", () => {
+  it("recovers via discovery when the policy's declared request target goes dead mid-flight", () => {
+    const fallbackBridge = {
+      hostId: "local",
+      sendRequest: vi.fn(),
+      prewarmThreadStart: vi.fn(),
+      enqueueRequest: vi.fn(),
+    };
+    // Desktop rebuilt the composer underneath: requestTarget() now returns a
+    // manager whose requestClient no longer satisfies the bridge contract.
+    const deadManager = {
+      getHostId: () => "local",
+      sendRequest: vi.fn(),
+      requestClient: { sendRequest: vi.fn() },
+    };
+    const policy = {
+      state: "ready" as const,
+      hostId: "local",
+      requestTarget: () => deadManager,
+      select: vi.fn(() => true),
+      clear: vi.fn(async () => undefined),
+    };
+
+    // Declared target alive → it wins over discovery.
+    const alivePolicy = {
+      ...policy,
+      requestTarget: () => ({
+        getHostId: () => "local",
+        sendRequest: vi.fn(),
+        requestClient: fallbackBridge,
+      }),
+    };
+    const declared = resolveRendererRequestRoute(alivePolicy, [fallbackBridge], null);
+    expect(declared?.targets).toHaveLength(1);
+    expect(declared?.targets[0]?.requestClient).toBe(fallbackBridge);
+
+    // Declared target dead → fall back to the discovered bridge for the same
+    // host (the window-exposed fallback) instead of wedging the route.
+    const recovered = resolveRendererRequestRoute(policy, [fallbackBridge], null);
+    expect(recovered?.targets).toEqual([fallbackBridge]);
+
+    // A discovered bridge for a different host must not be resurrected.
+    const foreignBridge = { ...fallbackBridge, hostId: "remote-ssh-discovered:other" };
+    expect(resolveRendererRequestRoute(policy, [foreignBridge], null)).toBeNull();
+
+    // Nothing discovered and nothing declared → null stays null.
+    expect(resolveRendererRequestRoute(policy, [], null)).toBeNull();
+  });
+
+  it("prefers a policy-owned exact request target over Composer discovery", () => {
     const manager = {
       hostId: "remote-ssh-discovered:mac",
       sendRequest: vi.fn(),
@@ -199,10 +306,13 @@ describe("current Codex Renderer Agent adapter", () => {
     expect(route).toEqual({ policy, targets: [manager] });
     expect(policy.requestTarget).toHaveBeenCalledOnce();
 
-    const discoverTargets = vi.fn(() => [manager]);
+    // Discovery runs on every resolve (the declared target can go dead
+    // mid-flight), but the live declared target still wins over discovery.
+    const discoveredPeer = { ...manager, sendRequest: vi.fn() };
+    const discoverTargets = vi.fn(() => [discoveredPeer]);
     const resolver = createRendererRequestRouteResolver(() => policy, discoverTargets);
     expect(resolver.resolve()?.targets).toEqual([manager]);
-    expect(discoverTargets).not.toHaveBeenCalled();
+    expect(discoverTargets).toHaveBeenCalled();
   });
 
   it.each([
@@ -223,7 +333,7 @@ describe("current Codex Renderer Agent adapter", () => {
         throw new Error("synthetic target failure");
       },
     ],
-  ])("fails closed for a %s policy-owned request target", (_name, requestTarget) => {
+  ])("falls back to same-host discovery for a %s policy-owned request target", (_name, requestTarget) => {
     const matchingDiscoveredManager = {
       hostId: "remote-ssh-discovered:mac",
       sendRequest: vi.fn(),
@@ -238,7 +348,13 @@ describe("current Codex Renderer Agent adapter", () => {
       clear: vi.fn(async () => undefined),
     };
 
-    expect(resolveRendererRequestRoute(policy, [matchingDiscoveredManager], null)).toBeNull();
+    // Desktop can rebuild the composer underneath a live policy: the declared
+    // target goes dead, and the route must recover through discovery instead
+    // of wedging every composer on a dead channel.
+    expect(resolveRendererRequestRoute(policy, [matchingDiscoveredManager], null)).toEqual({
+      policy,
+      targets: [matchingDiscoveredManager],
+    });
   });
 
   it("keeps Fiber discovery as the fallback for a legacy policy without requestTarget", () => {

@@ -47,6 +47,23 @@ describe("Desktop connection snapshot discovery", () => {
       { discardAllPrewarmedThreads: vi.fn() });
     expect("dispatchAppServerResponse" in nativeManager).toBe(false);
   });
+  it("exposes the patched bridge on the window for fiber-less rediscovery and clears it on dispose", () => {
+    const manager = requestManagerFixture();
+    const bridge = requestBridgeFixture();
+    const prewarmed = { discardAllPrewarmedThreads: vi.fn() };
+    const target: DraftPrewarmPolicyTarget = {};
+    installDraftPrewarmPolicyBridge(manager, bridge, "local", target, prewarmed);
+    // While a turn runs the composer fiber may no longer reach the manager;
+    // the renderer falls back to this window exposure.
+    expect(target.__harnessmixRequestBridgeV1).toEqual({
+      manager,
+      bridge,
+      hostId: "local",
+      prewarmedThreadManager: prewarmed,
+    });
+    (target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void }).dispose();
+    expect(target.__harnessmixRequestBridgeV1).toBeUndefined();
+  });
   it("drains sidecar frames parked before the bridge installed", () => {
     const manager = requestManagerFixture();
     const onNotification = manager.onNotification as ReturnType<typeof vi.fn>;

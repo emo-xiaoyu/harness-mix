@@ -626,6 +626,19 @@ export function findActivePrewarmTargets(root: ParentNode): PrewarmTarget[] {
     if ((typeof parent !== "object" && typeof parent !== "function") || parent === null) break;
     fiber = parent as typeof fiber;
   }
+  if (targets.size === 0) {
+    // While a turn runs, Desktop can rebuild the composer subtree so the
+    // manager is no longer reachable from the editor's fiber chain. The
+    // Desktop controller exposes the patched bridge on the window; falling
+    // back to it keeps the whole request channel (ownership, model catalogs,
+    // account state) alive instead of wedging every composer on "Select
+    // model" with an ownership error.
+    const exposed = (
+      globalThis as unknown as { __harnessmixRequestBridgeV1?: { bridge?: unknown } }
+    ).__harnessmixRequestBridgeV1;
+    const fallback = isRecord(exposed) ? exposed.bridge : null;
+    if (looksLikeRequestBridge(fallback)) targets.add(fallback);
+  }
   return [...targets];
 }
 
@@ -850,7 +863,16 @@ function activePrewarmTargetsForPolicy(
   targets: readonly PrewarmTarget[],
 ): readonly PrewarmTarget[] | null {
   if (!isDraftPrewarmPolicyReady(policy)) return null;
-  if (declaresRequestTarget(policy)) return policyOwnedTargets(policy);
+  if (declaresRequestTarget(policy)) {
+    const owned = policyOwnedTargets(policy);
+    if (owned) return owned;
+    // The policy's declared target can go dead mid-flight: Desktop rebuilds
+    // the composer subtree (stop/continue a task, thread switch) and swaps
+    // the request manager underneath. Discovery results are still filtered
+    // by the policy's own hostId below, so falling back cannot resurrect a
+    // manager that belongs to a different host.
+    return rendererRequestTargetsForHost(targets, policy.hostId);
+  }
   return rendererRequestTargetsForHost(targets, policy.hostId);
 }
 
@@ -904,11 +926,12 @@ export function createRendererRequestRouteResolver(
     resolve() {
       // Cache null results as well; otherwise a later empty-discovery gap could
       // resurrect a request manager that belonged to the previous host.
+      // Discovery always runs: when the policy's declared target goes dead
+      // mid-flight (composer rebuilt while a task runs), the declared-target
+      // path needs the discovered candidates — including the window-exposed
+      // fallback bridge — to recover instead of wedging every composer.
       const policy = readPolicy();
-      const discoveredTargets =
-        isDraftPrewarmPolicyReady(policy) && declaresRequestTarget(policy)
-          ? []
-          : discoverTargets();
+      const discoveredTargets = discoverTargets();
       route = resolveRendererRequestRoute(policy, discoveredTargets, route);
       return route;
     },

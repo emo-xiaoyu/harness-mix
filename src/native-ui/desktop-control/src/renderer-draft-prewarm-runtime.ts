@@ -786,6 +786,10 @@ export function installDraftPrewarmPolicyBridge(
     },
     dispose(): void {
       if (bridge.sendRequest === routedSend) bridge.sendRequest = originalSend;
+      const exposedBridge = target.__harnessmixRequestBridgeV1 as { bridge?: unknown } | undefined;
+      if (exposedBridge?.bridge === bridge) {
+        delete target.__harnessmixRequestBridgeV1;
+      }
       if (catalogStore && catalogObserver && catalogStore.observeCatalogThreads === catalogObserver) {
         catalogStore.observeCatalogThreads = originalObserveCatalogThreads!;
       }
@@ -825,6 +829,16 @@ export function installDraftPrewarmPolicyBridge(
   Object.defineProperty(target, "__harnessmixDraftPrewarmPolicyV1", {
     configurable: true,
     value: policy,
+  });
+  // Expose the patched request objects on the window as a fallback discovery
+  // path. While a turn runs, Desktop can rebuild the composer subtree so the
+  // manager no longer sits on any hook reachable from the composer editor's
+  // fiber chain — the fiber walk then finds nothing and the renderer
+  // extension loses its whole request channel (ownership errors, dead model
+  // pickers) even though this bridge object is alive and routed.
+  Object.defineProperty(target, "__harnessmixRequestBridgeV1", {
+    configurable: true,
+    value: { manager, bridge, hostId, prewarmedThreadManager },
   });
   if (typeof target.dispatchEvent === "function" && typeof CustomEvent === "function") {
     target.dispatchEvent(new CustomEvent("harnessmix:draft-prewarm-policy-changed"));

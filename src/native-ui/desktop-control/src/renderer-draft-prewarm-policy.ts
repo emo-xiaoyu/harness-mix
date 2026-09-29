@@ -67,13 +67,29 @@ export function rendererRequestManagerFromHook(value: unknown): Record<string, a
 }
 
 const FIND_REQUEST_MANAGER_EXPRESSION = `(() => {
+  // While a turn runs, Desktop can rebuild the composer subtree so the
+  // request manager is no longer reachable from the editor's fiber chain.
+  // The Desktop controller exposes the patched bridge on the window; use it
+  // as a fallback so discovery keeps working while turns run.
+  const exposed = window.__harnessmixRequestBridgeV1;
+  const exposedCandidates =
+    exposed != null && typeof exposed === 'object' &&
+    typeof exposed.hostId === 'string' && exposed.hostId.length > 0 &&
+    typeof exposed.manager?.sendRequest === 'function' &&
+    typeof exposed.bridge?.sendRequest === 'function' &&
+    typeof exposed.bridge?.prewarmThreadStart === 'function' &&
+    typeof exposed.prewarmedThreadManager?.discardAllPrewarmedThreads === 'function'
+      ? [{
+          manager: exposed.manager,
+          requestClient: exposed.bridge,
+          hostId: exposed.hostId,
+          prewarmedThreadManager: exposed.prewarmedThreadManager,
+        }]
+      : [];
   const editors = [...document.querySelectorAll(
     '[data-codex-composer], [contenteditable="true"][role="textbox"]',
   )];
-  if (editors.length !== 1) {
-    return { candidateCount: 0, hostId: null, sendRequest: null };
-  }
-  let element = editors[0];
+  let element = editors.length === 1 ? editors[0] : null;
   let fiber = null;
   while (element != null && fiber == null) {
     const key = Object.getOwnPropertyNames(element).find((name) =>
@@ -100,23 +116,25 @@ const FIND_REQUEST_MANAGER_EXPRESSION = `(() => {
       }
     }
   }
-  const candidates = [...managers].map((manager) => {
-    const requestClient =
-      typeof manager.requestClient?.sendRequest === 'function' &&
-      typeof manager.requestClient?.prewarmThreadStart === 'function' &&
-      typeof manager.requestClient?.enqueueRequest === 'function'
-        ? manager.requestClient
-        : manager;
-    return {
-      manager,
-      requestClient,
-      hostId: manager?.getHostId?.() ?? requestClient?.hostId ?? null,
-      prewarmedThreadManager: manager?.prewarmedThreadManager ?? null,
-    };
-  });
-  const selected = (${selectRendererRequestManager.toString()})(candidates, [...activeHostIds]);
+  const pool = managers.size > 0
+    ? [...managers].map((manager) => {
+        const requestClient =
+          typeof manager.requestClient?.sendRequest === 'function' &&
+          typeof manager.requestClient?.prewarmThreadStart === 'function' &&
+          typeof manager.requestClient?.enqueueRequest === 'function'
+            ? manager.requestClient
+            : manager;
+        return {
+          manager,
+          requestClient,
+          hostId: manager?.getHostId?.() ?? requestClient?.hostId ?? null,
+          prewarmedThreadManager: manager?.prewarmedThreadManager ?? null,
+        };
+      })
+    : exposedCandidates;
+  const selected = (${selectRendererRequestManager.toString()})(pool, [...activeHostIds]);
   return {
-    candidateCount: selected == null ? candidates.length : 1,
+    candidateCount: selected == null ? pool.length : 1,
     hostId: selected?.hostId ?? null,
     manager: selected?.manager ?? null,
     requestClient: selected?.requestClient ?? null,
