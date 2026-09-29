@@ -40,7 +40,23 @@ There is no unit-test framework; verification is layered: `check` (syntax) → `
 
 ## Commit & Pull Request Guidelines
 
-This project has no committed Git history yet — adopt Conventional Commits (`feat:`, `fix:`, `refactor:`) with a scoped summary, e.g. `feat(adapter): add fork capability to pi`. PRs should describe which harness layers are affected (renderer extension / desktop control / runtime / adapter), state honestly-declared capability changes, and attach a smoke-run log or screenshot for UI changes.
+Adopt Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`) with a scoped summary, e.g. `feat(adapter): add fork capability to pi`. PRs should describe which harness layers are affected (renderer extension / desktop control / runtime / adapter), state honestly-declared capability changes, and attach a smoke-run log or screenshot for UI changes.
+
+Push discipline: run at least `npm run check` plus the relevant test suites (`test:core-all`, `test:native-ui`, adapter `*.cjs` scripts) before pushing; never push a state you know leaves CI red. Group related work into logical commits (one layer/concern per commit) rather than mixed mega-commits. Do not commit `output/` artifacts.
+
+## Release & npm Publish
+
+Versioning rule: **every release bumps the patch segment by one** — `0.4.0` → `0.4.1` → `0.4.2`. Bump the minor/major segment (e.g. `0.5.0`) only when the user explicitly asks for a bigger release or names the exact target version; never jump versions on your own judgment.
+
+Release checklist, in order:
+
+1. All code committed and pushed; working tree clean; CI already green on the last code commit.
+2. Bump `package.json` `version` **and** all six `optionalDependencies` `@harness-mix/native-*` pins to the same new version, and add a `CHANGELOG.md` entry for it.
+3. Run `npm install --package-lock-only` so `package-lock.json` matches. `npm ci` on CI enforces strict package.json/lockfile agreement — publishing without this step broke every CI job at 0.4.0. Verify locally with `npm ci --dry-run`.
+4. Commit as `Release <version>`, tag `v<version>`, push branch + tag.
+5. **Wait for the `CI` and `Installers` workflows to pass on the release commit before publishing anything.** npm publish happens only from a green release commit.
+6. Publish: `npm publish --access public --registry=https://registry.npmjs.org` for `@harness-mix/cli`, then `npm run publish:native -- win32 x64 --publish` (real binaries) and `npm run publish:native -- <platform> <arch> --source-only --publish` for the other five platform packages.
+7. Verify each version is visible on the registry (propagation can lag a few minutes for the large main package) before announcing the release.
 
 ## Security & Configuration Tips
 
