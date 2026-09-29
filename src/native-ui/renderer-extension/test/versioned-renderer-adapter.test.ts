@@ -181,6 +181,65 @@ describe("current Codex Renderer Agent adapter", () => {
     }
   });
 
+  it("synthesizes the direct control transport when no manager is discoverable at all", async () => {
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+    } as unknown as Element;
+    const root = { querySelector: () => editor } as unknown as ParentNode;
+    Object.defineProperty(editor, "__reactFiber$test", {
+      configurable: true,
+      value: { memoizedState: { memoizedState: {}, next: null }, return: null },
+    });
+    const send = vi.fn(async () => ({ ok: true }));
+    const holder = globalThis as unknown as {
+      __harnessmixRequestBridgeV1?: unknown;
+      __harnessmixSidecarRequestV1?: unknown;
+    };
+    holder.__harnessmixSidecarRequestV1 = { hostId: "local", send };
+    try {
+      const targets = findActivePrewarmTargets(root);
+      expect(targets).toHaveLength(1);
+      const target = targets[0] as unknown as { hostId: string; sendRequest: (m: string, p: unknown) => Promise<unknown> };
+      expect(target.hostId).toBe("local");
+      // The synthetic target forwards to the exposed control transport and
+      // stays stable across discoveries (one cached model client).
+      const again = findActivePrewarmTargets(root);
+      expect(again[0]).toBe(targets[0]);
+      await expect(target.sendRequest("harnessmix/harness/inspect", { harnessId: "pi" })).resolves.toEqual({ ok: true });
+      expect(send).toHaveBeenCalledWith("harnessmix/harness/inspect", { harnessId: "pi" });
+    } finally {
+      delete holder.__harnessmixSidecarRequestV1;
+    }
+  });
+
+  it("prefers the exposed bridge over the control transport when both exist", () => {
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+    } as unknown as Element;
+    const root = { querySelector: () => editor } as unknown as ParentNode;
+    Object.defineProperty(editor, "__reactFiber$test", {
+      configurable: true,
+      value: { memoizedState: { memoizedState: {}, next: null }, return: null },
+    });
+    const exposedBridge = {
+      hostId: "local",
+      sendRequest: vi.fn(),
+      prewarmThreadStart: vi.fn(),
+      enqueueRequest: vi.fn(),
+    };
+    const holder = globalThis as unknown as Record<string, unknown>;
+    holder.__harnessmixRequestBridgeV1 = { bridge: exposedBridge, hostId: "local" };
+    holder.__harnessmixSidecarRequestV1 = { hostId: "local", send: vi.fn() };
+    try {
+      expect(findActivePrewarmTargets(root)).toEqual([exposedBridge]);
+    } finally {
+      delete holder.__harnessmixRequestBridgeV1;
+      delete holder.__harnessmixSidecarRequestV1;
+    }
+  });
+
   it("keeps local and remote request targets independently addressable", () => {
     const local = {
       hostId: "local",

@@ -573,9 +573,49 @@ function looksLikeRequestBridge(value: unknown): value is PrewarmTarget {
   );
 }
 
+// Memoized so route resolution reuses one synthetic control-transport target
+// (and thus one cached model client) across calls; keyed by the exposure
+// object identity so a controller reinstall hands out a fresh target.
+let controlTransportSource: { hostId?: unknown; send?: unknown } | null = null;
+let controlTransportTarget: PrewarmTarget | null = null;
+
+/** Window-exposed fallbacks that do not depend on any Desktop internal:
+ * the patched bridge handle first, then the controller's direct
+ * control-plane transport (harnessmix/* over its own Host channel). */
+function windowFallbackTargets(): PrewarmTarget[] {
+  const exposed = (
+    globalThis as unknown as { __harnessmixRequestBridgeV1?: { bridge?: unknown } }
+  ).__harnessmixRequestBridgeV1;
+  const fallback = isRecord(exposed) ? exposed.bridge : null;
+  if (looksLikeRequestBridge(fallback)) return [fallback];
+  const control = (
+    globalThis as unknown as { __harnessmixSidecarRequestV1?: { hostId?: unknown; send?: unknown } }
+  ).__harnessmixSidecarRequestV1;
+  if (
+    isRecord(control) &&
+    typeof control.hostId === "string" &&
+    control.hostId.length > 0 &&
+    typeof control.send === "function"
+  ) {
+    if (controlTransportSource !== control) {
+      controlTransportSource = control;
+      controlTransportTarget = {
+        hostId: control.hostId,
+        sendRequest: (method: string, params: unknown) =>
+          (control.send as (method: string, params: unknown) => Promise<unknown>)(method, params),
+      };
+    }
+    return controlTransportTarget ? [controlTransportTarget] : [];
+  }
+  return [];
+}
+
 export function findActivePrewarmTargets(root: ParentNode): PrewarmTarget[] {
   const editor = root.querySelector<HTMLElement>(COMPOSER_EDITOR_SELECTOR);
-  if (!editor) return [];
+  if (!editor) {
+    // Even with no composer at all, window-exposed transports remain valid.
+    return windowFallbackTargets();
+  }
 
   // Find the closest DOM node that actually carries a React fiber: the editor
   // itself, any descendant, then any ancestor.
@@ -629,15 +669,10 @@ export function findActivePrewarmTargets(root: ParentNode): PrewarmTarget[] {
   if (targets.size === 0) {
     // While a turn runs, Desktop can rebuild the composer subtree so the
     // manager is no longer reachable from the editor's fiber chain. The
-    // Desktop controller exposes the patched bridge on the window; falling
-    // back to it keeps the whole request channel (ownership, model catalogs,
-    // account state) alive instead of wedging every composer on "Select
-    // model" with an ownership error.
-    const exposed = (
-      globalThis as unknown as { __harnessmixRequestBridgeV1?: { bridge?: unknown } }
-    ).__harnessmixRequestBridgeV1;
-    const fallback = isRecord(exposed) ? exposed.bridge : null;
-    if (looksLikeRequestBridge(fallback)) targets.add(fallback);
+    // window-exposed transports keep the whole request channel (ownership,
+    // model catalogs, account state) alive instead of wedging every composer
+    // on "Select model" with an ownership error.
+    for (const fallback of windowFallbackTargets()) targets.add(fallback);
   }
   return [...targets];
 }
