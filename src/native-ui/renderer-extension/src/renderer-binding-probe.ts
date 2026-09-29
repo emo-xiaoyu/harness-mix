@@ -525,6 +525,10 @@ export function isOwnershipSubmissionBlocked(status: ComposerOwnershipStatus): b
   return status === "loading" || status === "error";
 }
 
+export function isStockCodexAccountId(accountId: string | null | undefined): boolean {
+  return accountId == null || accountId === "official-codex";
+}
+
 interface ComposerEntry {
   composer: Element;
   composerId: string;
@@ -1325,7 +1329,13 @@ export function installRendererBindingProbe(
     try {
       if (!client || !requestHostId) throw new Error("Thread ownership control is unavailable");
       mounted.hostId = requestHostId;
-      const inspection = await client.inspectThread({ threadId });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const inspection = await Promise.race([
+        client.inspectThread({ threadId }),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("Thread ownership request timed out")), 15_000);
+        }),
+      ]).finally(() => { if (timeout) clearTimeout(timeout); });
       if (
         !isLiveOwnershipRequest(mounted, generation) ||
         composerEntries.get(mounted.composer) !== mounted ||
@@ -1384,7 +1394,16 @@ export function installRendererBindingProbe(
       }
     } catch {
       if (!isLiveOwnershipRequest(mounted, generation)) return;
-      mounted.ownershipStatus = "error";
+      // The local sidecar already falls back to stock Codex for an unknown
+      // thread when ownership lookup fails. Keep the native composer usable
+      // under the same condition; external threads remain sidecar-owned.
+      mounted.ownershipStatus =
+        window.__harnessmixSidecarModeV1 === true &&
+        controller.get(mounted.composer).agent === "codex" &&
+        isStockCodexAccountId(controller.get(mounted.composer).codexAccountId) &&
+        controller.restore(mounted.composer, "codex")
+          ? "ready"
+          : "error";
     } finally {
       if (isLiveOwnershipRequest(mounted, generation)) {
         paintComposer(mounted);
@@ -2941,7 +2960,7 @@ export function installRendererBindingProbe(
     if (!mounted || !isComposerModelWriteAllowed(mounted.modelTarget)) return false;
     const model = controller.modelForAgent(composer, state.agent);
     if (!shouldApplyDraftAgentCarrier(state.agent, model)) return false;
-    return applyComposerModelWrite(
+    const applied = applyComposerModelWrite(
       mounted.modelTarget,
       () =>
         applyAdapterAgent?.(
@@ -2956,6 +2975,18 @@ export function installRendererBindingProbe(
           composer,
         ) ?? state.agent === "codex",
     );
+    if (applied || state.agent !== "codex" || !isStockCodexAccountId(state.codexAccountId)) return applied;
+    // Official Codex drafts use Desktop's stock route. A missing Harness Mix
+    // request manager must not prevent the native composer from submitting.
+    // If a policy is still present, clear any earlier external carrier first.
+    const policy = window.__harnessmixDraftPrewarmPolicyV1;
+    if (!policy) return true;
+    try {
+      policy.select(null);
+      return true;
+    } catch {
+      return false;
+    }
   };
   const swallowEvent = (event: Event): void => {
     event.preventDefault();
@@ -2986,7 +3017,7 @@ export function installRendererBindingProbe(
         account.accountId === accounts.selection.selectedAccountId);
       const needsIsolatedAccountRoute = accounts?.loaded === true
         ? selectedAccount?.management === "isolated"
-        : current.codexAccountId !== null && current.codexAccountId !== "official-codex";
+        : !isStockCodexAccountId(current.codexAccountId);
       if (
         (window.__harnessmixSidecarModeV1 !== true || needsIsolatedAccountRoute) &&
         shouldBlockCodexDraftSubmission({

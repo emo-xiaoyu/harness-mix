@@ -231,6 +231,94 @@ afterEach(() => {
 });
 
 describe("Renderer binding Host-scoped Claude catalogs", () => {
+  it("keeps a stock Codex conversation sendable when local sidecar ownership lookup fails", async () => {
+    installFakeBrowser();
+    (window as typeof window & { __harnessmixSidecarModeV1: boolean }).__harnessmixSidecarModeV1 = true;
+    const client = {
+      inspectHarness: vi.fn(async () => readyInspection()),
+      inspectThread: vi.fn().mockRejectedValue(new Error("sidecar unavailable")),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const modelControl = {
+      ...client, currentHostId: () => "local", clientForHost: () => client,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined, () => true, modelControl as never,
+    );
+    await vi.waitFor(() => expect(client.inspectThread).toHaveBeenCalled());
+    await vi.waitFor(() => expect(probe.status().selections[0]).toMatchObject({
+      agent: "codex", phase: "locked", ownership: "ready",
+    }));
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("releases a stock Codex conversation when local sidecar ownership lookup never responds", async () => {
+    installFakeBrowser();
+    (window as typeof window & { __harnessmixSidecarModeV1: boolean }).__harnessmixSidecarModeV1 = true;
+    const client = {
+      inspectHarness: vi.fn(async () => readyInspection()),
+      inspectThread: vi.fn(() => new Promise(() => undefined)),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const modelControl = {
+      ...client, currentHostId: () => "local", clientForHost: () => client,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    vi.useFakeTimers();
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined, () => true, modelControl as never,
+    );
+    expect(probe.status().selections[0]?.ownership).toBe("loading");
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(probe.status().selections[0]).toMatchObject({
+      agent: "codex", phase: "locked", ownership: "ready",
+    });
+    vi.useRealTimers();
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("allows an official Codex draft to submit when the Harness Mix route is unavailable", async () => {
+    installFakeBrowser();
+    testState.modelTarget = ["default"];
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    const applyAgent = vi.fn(() => false);
+    probe.setAdapter(
+      { state: "installing", reason: "draft-routing-policy-unavailable", modelUpdates: 0, hook: null },
+      undefined, applyAgent,
+    );
+    expect(probe.status().selections[0]).toMatchObject({ agent: "codex", phase: "draft" });
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(applyAgent).toHaveBeenCalledWith("codex", undefined, undefined, undefined, testState.composer);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
   it("keeps the latest catalog selectable until a locked Thread explicitly replaces its missing Model", async () => {
     installFakeBrowser();
     const oldModel = harnessModelRefSchema.parse({ id: "claude-model-v1.b3B1cw" });

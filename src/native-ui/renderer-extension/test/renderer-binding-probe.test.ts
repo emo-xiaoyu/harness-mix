@@ -16,6 +16,7 @@ import {
   isLateConversationTarget,
   isComposerModelWriteAllowed,
   isOwnershipSubmissionBlocked,
+  isStockCodexAccountId,
   lockedPermissionMode,
   permissionModeSelectionLocked,
   lateConversationTargetResolution,
@@ -1205,6 +1206,10 @@ describe("Renderer Composer DOM behavior", () => {
   });
 
   it("fails closed a Codex draft submission while account routing is unknown on a routed Host", () => {
+    expect(isStockCodexAccountId(undefined)).toBe(true);
+    expect(isStockCodexAccountId(null)).toBe(true);
+    expect(isStockCodexAccountId("official-codex")).toBe(true);
+    expect(isStockCodexAccountId("isolated-account")).toBe(false);
     // 26.917 regression window: a freshly recreated request manager loses the
     // Codex account route marker; sending then leaks to the official route and
     // duplicates the sidebar session.
