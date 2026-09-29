@@ -790,6 +790,10 @@ export function installDraftPrewarmPolicyBridge(
       if (exposedBridge?.bridge === bridge) {
         delete target.__harnessmixRequestBridgeV1;
       }
+      const exposedControl = target.__harnessmixSidecarRequestV1 as { hostId?: unknown } | undefined;
+      if (exposedControl?.hostId === hostId) {
+        delete target.__harnessmixSidecarRequestV1;
+      }
       if (catalogStore && catalogObserver && catalogStore.observeCatalogThreads === catalogObserver) {
         catalogStore.observeCatalogThreads = originalObserveCatalogThreads!;
       }
@@ -839,6 +843,34 @@ export function installDraftPrewarmPolicyBridge(
   Object.defineProperty(target, "__harnessmixRequestBridgeV1", {
     configurable: true,
     value: { manager, bridge, hostId, prewarmedThreadManager },
+  });
+  // Direct control-plane transport for the renderer extension. The frame
+  // machinery below (enqueueBridgeRequest → the Host channel, responses
+  // matched in handleBridgeFrame → bridge.onResult) runs entirely on handles
+  // captured at install time, so this survives every Desktop-internal
+  // reshuffle that breaks fiber-based manager discovery: when a composer
+  // rebuild leaves no discoverable manager, harnessmix/* control requests
+  // (ownership, catalogs, availability, accounts) can still reach the Host.
+  Object.defineProperty(target, "__harnessmixSidecarRequestV1", {
+    configurable: true,
+    value: {
+      hostId,
+      send(method: unknown, parameters: unknown): Promise<unknown> {
+        if (typeof method !== "string" || !method.startsWith("harnessmix/")) {
+          return Promise.reject(
+            new Error("harnessmix sidecar control channel carries harnessmix/* requests only"),
+          );
+        }
+        if (!usesExternalBridge) {
+          return Promise.reject(
+            new Error("harnessmix sidecar control channel is unavailable on this Host"),
+          );
+        }
+        return Promise.resolve(initializeBridge()).then(
+          () => enqueueBridgeRequest(method, parameters) as Promise<unknown>,
+        );
+      },
+    },
   });
   if (typeof target.dispatchEvent === "function" && typeof CustomEvent === "function") {
     target.dispatchEvent(new CustomEvent("harnessmix:draft-prewarm-policy-changed"));

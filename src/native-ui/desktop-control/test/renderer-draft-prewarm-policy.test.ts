@@ -64,6 +64,55 @@ describe("Desktop connection snapshot discovery", () => {
     (target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void }).dispose();
     expect(target.__harnessmixRequestBridgeV1).toBeUndefined();
   });
+  it("round-trips harnessmix control requests over the sidecar channel, independent of manager discovery", async () => {
+    const manager = requestManagerFixture();
+    const sidecarSend = vi.fn();
+    const target: DraftPrewarmPolicyTarget = {
+      __harnessmixSidecarModeV1: true,
+      __harnessmixSidecarSendV1: sidecarSend,
+    };
+    const pendingById = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+    const bridge = requestBridgeFixture({
+      enqueueRequest: (
+        method: string,
+        _parameters: unknown,
+        _options: unknown,
+        dispatch: (request: Record<string, unknown>) => void,
+      ) => {
+        const request = { id: `req-${method}`, method, params: {} };
+        const promise = new Promise((resolve, reject) => pendingById.set(String(request.id), { resolve, reject }));
+        dispatch(request);
+        return promise;
+      },
+    });
+    // Stand in for Desktop's request registry: handleBridgeFrame settles the
+    // promise minted by enqueueRequest through bridge.onResult/onError.
+    bridge.onResult = (id: unknown, result: unknown) => pendingById.get(String(id))?.resolve(result);
+    bridge.onError = (id: unknown, error: unknown) => pendingById.get(String(id))?.reject(error);
+    installDraftPrewarmPolicyBridge(manager, bridge, "local", target, {
+      discardAllPrewarmedThreads: vi.fn(),
+    });
+    const control = target.__harnessmixSidecarRequestV1 as {
+      hostId: string;
+      send(method: string, parameters: unknown): Promise<unknown>;
+    };
+    expect(control.hostId).toBe("local");
+    // Non-control-plane methods never ride the sidecar channel.
+    await expect(control.send("thread/read", {})).rejects.toThrow("harnessmix/*");
+    const pending = control.send("harnessmix/thread/ownership/list", { threadIds: ["t-1"] });
+    await vi.waitFor(() =>
+      expect(sidecarSend).toHaveBeenCalledWith(expect.stringContaining("harnessmix/thread/ownership/list")),
+    );
+    const frame = JSON.parse(sidecarSend.mock.calls[0]?.[0] as string) as { id: string };
+    // The Host answers over the receive relay; the promise settles without
+    // any Desktop-internal involvement.
+    (target.__harnessmixSidecarReceiveV1 as (frame: string) => void)(
+      JSON.stringify({ id: frame.id, result: { threads: [] } }),
+    );
+    await expect(pending).resolves.toEqual({ threads: [] });
+    (target.__harnessmixDraftPrewarmPolicyV1 as { dispose(): void }).dispose();
+    expect(target.__harnessmixSidecarRequestV1).toBeUndefined();
+  });
   it("drains sidecar frames parked before the bridge installed", () => {
     const manager = requestManagerFixture();
     const onNotification = manager.onNotification as ReturnType<typeof vi.fn>;
@@ -142,12 +191,13 @@ function requestBridgeFixture(
   input: {
     sendRequest?: RendererHostRequestBridge["sendRequest"];
     prewarmThreadStart?: RendererHostRequestBridge["prewarmThreadStart"];
+    enqueueRequest?: RendererHostRequestBridge["enqueueRequest"];
   } = {},
 ): RendererHostRequestBridge {
   return {
     sendRequest: input.sendRequest ?? vi.fn(),
     prewarmThreadStart: input.prewarmThreadStart ?? vi.fn(),
-    enqueueRequest: vi.fn(),
+    enqueueRequest: input.enqueueRequest ?? vi.fn(),
     onResult: vi.fn(),
     onError: vi.fn(),
   };
