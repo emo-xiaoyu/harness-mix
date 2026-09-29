@@ -348,12 +348,30 @@ class NativeProtocol {
       durationMs: startedAt != null && completedAt != null ? Math.max(0, completedAt - startedAt) : null,
       items: this.runtime.core.getItemsForTurn(turn.id).map(projectItem).filter(Boolean) };
   }
+  /** Thread-scoped transport model string. Plugin-route harnesses must carry
+   * the thread's effective model (or the harness catalog default): Desktop's
+   * native UI resolves the composer model from this field, and a modelless
+   * route renders as a dead "Select model" picker with an unusable send button
+   * in views the renderer extension does not own (native subagent contexts). */
+  threadRouteModel(thread) {
+    const ext = externalId(thread.harnessId);
+    if (['pi', 'claude-code', 'deepseek-harness', 'antigravity', 'omp', 'opencode', 'grok'].includes(ext)) {
+      return `harnessmix/${ext}-native`;
+    }
+    const catalogModels = this.runtime.catalogs?.get(thread.harnessId)?.models ?? [];
+    const source = thread.model ?? thread.options?.model
+      ?? catalogModels.find(m => m && m.isDefault === true)
+      ?? catalogModels[0];
+    const route = { harnessId: ext };
+    if (source && source.id) route.model = modelRef(source);
+    return `harnessmix/plugin-v1@${Buffer.from(JSON.stringify(route)).toString('hex')}`;
+  }
   projectThread(thread, includeTurns = true) {
     // Projection shape mirrors the upstream harnessmix external-thread contract: every
     // field the Desktop sidebar/composer reads must be present with the same defaults.
     const updatedAt = Math.floor((thread.updatedAt || thread.createdAt) / 1000);
     return { id: thread.id, preview: thread.messages?.find(m => m.role === 'user')?.text || thread.preview || thread.title,
-      ephemeral: thread.ephemeral === true, modelProvider: 'harnessmix', model: routeModel(externalId(thread.harnessId)), reasoningEffort: null,
+      ephemeral: thread.ephemeral === true, modelProvider: 'harnessmix', model: this.threadRouteModel(thread), reasoningEffort: null,
       section: thread.section ?? null, sectionEnteredAt: thread.sectionEnteredAt ?? null, projectId: projectIdForThread(thread),
       createdAt: Math.floor(thread.createdAt / 1000),
       updatedAt, recencyAt: updatedAt,
@@ -854,7 +872,7 @@ class NativeProtocol {
       // absent usage but not an explicit null: emitting "usage": null made the
       // renderer's strict parse fail and wedge the whole ownership restore.
       const projectedUsage = usage ? projectUsage(usage) : null;
-      return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: routeModel(externalId(thread.harnessId)), locked: true,
+      return { owner: 'external', harnessId: externalId(thread.harnessId), transportModelId: this.threadRouteModel(thread), locked: true,
         ...this.configuration(thread), history: this.capabilities(thread.harnessId, catalog).history,
         workspace: await this.runtime.inspectThreadWorkspace(thread.id),
         ...(projectedUsage ? { usage: projectedUsage } : {}),
@@ -999,7 +1017,7 @@ class NativeProtocol {
     if (method === 'thread/resume') {
       // 回显线程实际生效的权限（Desktop 据此渲染 composer 权限指示），而不是硬编码默认值
       const perms = thread.options?.turnPermissions ?? null;
-      return { thread: this.projectThread(thread), model: routeModel(externalId(thread.harnessId)), modelProvider: 'harness-mix', cwd: thread.cwd,
+      return { thread: this.projectThread(thread), model: this.threadRouteModel(thread), modelProvider: 'harness-mix', cwd: thread.cwd,
         approvalPolicy: perms?.approvalPolicy ?? 'on-request', approvalsReviewer: perms?.approvalsReviewer ?? null,
         sandbox: perms?.sandboxPolicy ?? { type: 'workspaceWrite', writableRoots: [thread.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null };
     }

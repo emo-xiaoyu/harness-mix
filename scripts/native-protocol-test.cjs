@@ -368,6 +368,24 @@ async function main() {
     assert.deepEqual(decodeRoute('harnessmix/opencode-native@m@perm'), { harnessId: 'opencode', model: { id: 'm' }, permissionModeId: 'perm' });
     assert.deepEqual(decodeRoute('harnessmix/grok-native@m@@think'), { harnessId: 'grok', model: { id: 'm' }, thinkingOptionId: 'think' });
     assert.throws(() => decodeRoute('harnessmix/omp-native@a@b@c@d'), /Invalid native Harness route/);
+    // ===== 线程级传输模型：plugin-route 线程必须携带模型，否则 Desktop 原生 UI
+    // 显示空态 "Select model" 且发送不可用（子代理视图等扩展未接管的 composer）=====
+    assert.equal(bridge.threadRouteModel({ harnessId: 'pi' }), 'harnessmix/pi-native', 'legacy 线程保持两段式传输串');
+    runtime.adapters.set('openclaw', { manifest: { id: 'openclaw', name: 'OpenClaw' } });
+    runtime.catalogs.set('openclaw', { models: [{ id: 'oc-default', name: 'Default', provider: 'oc', isDefault: true }, { id: 'oc-alt', name: 'Alt', provider: 'oc' }], thinkingLevels: [] });
+    const subagentRoute = bridge.threadRouteModel({ harnessId: 'openclaw' });
+    const subagentDecoded = decodeRoute(subagentRoute);
+    assert.equal(subagentDecoded.harnessId, 'openclaw');
+    assert.ok(subagentDecoded.model, '无模型线程（子代理）回退目录默认模型');
+    assert.equal(subagentDecoded.model.id, Buffer.from(JSON.stringify({ id: 'oc-default', provider: 'oc' })).toString('base64url'));
+    const explicitRoute = bridge.threadRouteModel({ harnessId: 'openclaw', model: { id: 'oc-alt', provider: 'oc', name: 'ignored-extras' } });
+    assert.equal(decodeRoute(explicitRoute).model.id, Buffer.from(JSON.stringify({ id: 'oc-alt', provider: 'oc' })).toString('base64url'), '线程生效模型优先于目录默认');
+    const rawRoute = JSON.parse(Buffer.from(explicitRoute.slice('harnessmix/plugin-v1@'.length), 'hex').toString());
+    assert.deepEqual(Object.keys(rawRoute), ['harnessId', 'model'], '路由键序符合共享契约的 canonical 编码');
+    assert.deepEqual(Object.keys(rawRoute.model), ['id'], 'route 内 model 必须是 strict 的 {id} 形态');
+    const bareRoute = bridge.threadRouteModel({ harnessId: 'zcode' });
+    assert.ok(bareRoute.startsWith('harnessmix/plugin-v1@'), '无目录无模型的 harness 安全降级为纯路由');
+    assert.ok(!decodeRoute(bareRoute).model, '降级路由不带模型字段');
     // 瞬态 Fork / 后台元数据线程防护：拒绝 ephemeral / threadSource 请求，防止重命名/索引时静默派生会话
     await assert.rejects(bridge.request('thread/fork', { threadId, ephemeral: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);
