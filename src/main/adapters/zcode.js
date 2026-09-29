@@ -382,6 +382,9 @@ function attachSession(launch, { thread, emit, diagnostic }) {
       sessionId: null, active: false, turn: null, closed: false,
       models: [], usage: undefined, context: undefined, turnText: '',
       pending: new Map(), seenEvents: new Set(), afterSeq: 0, pollTimer: null, polling: false,
+      // toolCallId -> {name, input}: ZCode only sends toolName/input on the
+      // leading "scheduled" event; later updates reuse the remembered values.
+      toolMeta: new Map(),
       subagentTask: null, subagentStatuses: new Map(), subagentUnsupported: false,
       // 取消后到下一回合开始之间的 turn.completed/turn.failed 属于被停掉的旧回合，
       // 不得结算新回合（否则下一轮秒回空文本）
@@ -698,17 +701,39 @@ function projectSessionEvent(session, payload, eventId) {
       break;
     }
     case 'tool.updated': {
-      const title = payload.toolName ?? payload.toolCallId ?? 'tool';
+      // ZCode's tool.updated payload carries toolName/input only on the
+      // leading "scheduled" event; started/progress/result come back without
+      // them (see the CLI's own zcodeToolUpdatedEventPayloadSchema). Remember
+      // the identity per toolCallId so later updates keep the human tool
+      // name instead of degrading the card title to a raw "call_<uuid>",
+      // which Desktop renders as garbled text.
+      const meta = session.state.toolMeta.get(payload.toolCallId) ?? {};
+      if (payload.kind === 'scheduled') {
+        if (payload.toolName) meta.name = payload.toolName;
+        if (payload.input !== undefined) meta.input = payload.input;
+        session.state.toolMeta.set(payload.toolCallId, meta);
+        if (session.state.toolMeta.size > 200) {
+          for (const key of session.state.toolMeta.keys()) { session.state.toolMeta.delete(key); break; }
+        }
+      }
+      const title = payload.toolName ?? meta.name ?? '工具';
+      const inputText = asText(meta.input);
       if (payload.kind === 'scheduled' || payload.kind === 'started' || payload.kind === 'progress') {
         emit({
           kind: 'tool', toolCallId: payload.toolCallId, title, state: 'running',
-          ...(asText(payload.input) !== undefined ? { input: asText(payload.input) } : {}),
+          ...(inputText !== undefined ? { input: inputText } : {}),
         });
       } else if (payload.kind === 'result') {
+        // result is a structured object ({success, content, ...}); surface
+        // its content as the output instead of the raw JSON envelope.
+        const result = payload.result;
+        const outputText = asText(payload.output) ??
+          (result && typeof result === 'object'
+            ? (typeof result.content === 'string' ? result.content : asText(result))
+            : asText(result));
         emit({
           kind: 'tool', toolCallId: payload.toolCallId, title, state: 'done',
-          ...(asText(payload.output ?? payload.result ?? payload.text) !== undefined
-            ? { output: asText(payload.output ?? payload.result ?? payload.text) } : {}),
+          ...(outputText !== undefined ? { output: outputText } : {}),
         });
       } else if (payload.kind === 'error') {
         emit({

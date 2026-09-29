@@ -386,6 +386,10 @@ async function main() {
     const bareRoute = bridge.threadRouteModel({ harnessId: 'zcode' });
     assert.ok(bareRoute.startsWith('harnessmix/plugin-v1@'), '无目录无模型的 harness 安全降级为纯路由');
     assert.ok(!decodeRoute(bareRoute).model, '降级路由不带模型字段');
+    // 裸调用 id（call_<uuid>）作为工具名会在 Desktop 渲染成乱码文本，投影层必须拦下
+    const { projectItem } = require('../src/main/native/protocol');
+    assert.equal(projectItem({ id: 'x1', type: 'tool_call', status: 'completed', title: 'call_c4863438bbb24d2ca503b74b' }).tool, 'tool', 'call_id 标题必须被替换');
+    assert.equal(projectItem({ id: 'x2', type: 'tool_call', status: 'completed', title: 'read_file' }).tool, 'read_file', '真实工具名保持不变');
     // 瞬态 Fork / 后台元数据线程防护：拒绝 ephemeral / threadSource 请求，防止重命名/索引时静默派生会话
     await assert.rejects(bridge.request('thread/fork', { threadId, ephemeral: true }), /Ephemeral fork is not supported/);
     await assert.rejects(bridge.request('thread/fork', { threadId, threadSource: 'thread_description' }), /Ephemeral fork is not supported/);

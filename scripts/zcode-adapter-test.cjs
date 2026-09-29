@@ -116,14 +116,17 @@ if (mode === 'app-server') {
           push({ type: 'part.delta', messageId: 'm1', partId: 'p2', field: 'text', delta: '你' });
           push({ type: 'part.delta', messageId: 'm1', partId: 'p2', field: 'text', delta: '好' });
           push({ type: 'tool.updated', kind: 'scheduled', toolCallId: 't1', toolName: 'read_file', input: { path: 'a.txt' } });
-          push({ type: 'tool.updated', kind: 'result', toolCallId: 't1', toolName: 'read_file', output: 'file body' });
+          // 真实 ZCode 载荷：scheduled 之后的 started/result 不再携带 toolName，
+          // 结果是结构化对象（success/content）——名称必须靠会话侧记忆保持
+          push({ type: 'tool.updated', kind: 'started', toolCallId: 't1' });
+          push({ type: 'tool.updated', kind: 'result', toolCallId: 't1', result: { success: true, content: 'file body' } });
           push({ type: 'tool.updated', kind: 'scheduled', toolCallId: 't2', toolName: 'write_file', input: { path: 'b.txt' } });
           const permId = nextId++;
           pendingServerRequests.set(permId, data => {
             const decision = data.result?.decision;
             push({ type: 'permission.resolved', toolCallId: 't2', decision });
-            if (decision === 'allow') push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', toolName: 'write_file', output: 'written' });
-            else push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', toolName: 'write_file', output: `decision:${decision}` });
+                if (decision === 'allow') push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', result: { success: true, content: 'written' } });
+                else push({ type: 'tool.updated', kind: 'result', toolCallId: 't2', result: { success: true, content: `decision:${decision}` } });
             const askId = nextId++;
             pendingServerRequests.set(askId, askData => {
               push({ type: 'turn.completed', response: `你好（${decision}/${askData.result?.value}）`, tokenCount: 42, usage: { inputTokens: 30, outputTokens: 12 }, toolCallCount: 2, duration: 1.5, cacheStats: { cacheReadTokens: 7 } });
@@ -249,9 +252,13 @@ const zcode = require('../src/main/adapters/zcode');
     assert.equal(events.filter(event => event.kind === 'thinking-delta').map(event => event.text).join(''), '思考', 'reasoning delta 投影');
     assert.equal(events.filter(event => event.kind === 'text-delta').map(event => event.text).join(''), '你好');
     const tools = events.filter(event => event.kind === 'tool');
-    assert.deepEqual(tools.map(tool => `${tool.toolCallId}:${tool.state}`), ['t1:running', 't1:done', 't2:running', 't2:done']);
-    assert.equal(tools[1].output, 'file body');
-    assert.equal(tools[3].output, 'written');
+    assert.deepEqual(tools.map(tool => `${tool.toolCallId}:${tool.state}`), ['t1:running', 't1:running', 't1:done', 't2:running', 't2:done']);
+    // started/result 不带 toolName：标题必须由 scheduled 时记住的名字保持，
+    // 绝不允许退化为 call_<uuid>（Desktop 会渲染成乱码文本）
+    assert.deepEqual([...new Set(tools.map(tool => tool.title))].sort(), ['read_file', 'write_file']);
+    assert.equal(tools[2].output, 'file body', 'result.content 提取为输出');
+    assert.equal(tools[1].input, '{"path":"a.txt"}', 'input 由 scheduled 记忆补齐（started 事件不再携带）');
+    assert.equal(tools[4].output, 'written');
     const usageEvent = events.find(event => event.kind === 'usage');
     assert.deepEqual(usageEvent.usage, { inputTokens: 30, outputTokens: 12, cachedInputTokens: 7, totalTokens: 42 });
     assert.ok(events.some(event => event.kind === 'completed' && event.finalAnswer === true));

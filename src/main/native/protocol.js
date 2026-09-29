@@ -249,7 +249,10 @@ function projectItem(item) {
         aggregatedOutput: item.output ? String(item.output) : null,
         exitCode: null, durationMs: terminal(item.status) ? Math.max(0, (item.updatedAt ?? 0) - (item.createdAt ?? 0)) : null, processId: null };
     }
-    return { ...base, type: 'dynamicToolCall', namespace: 'harness-mix', tool: item.title || 'tool',
+    // A raw call id (call_<uuid> / long hex) as the tool name renders as
+    // garbled text in Desktop; never surface one.
+    const rawIdTitle = /^(call_)?[0-9a-f][0-9a-f-]{15,}$/i.test(String(item.title));
+    return { ...base, type: 'dynamicToolCall', namespace: 'harness-mix', tool: rawIdTitle ? 'tool' : (item.title || 'tool'),
       arguments: item.input || {}, contentItems: item.output ? [{ type: 'inputText', text: String(item.output) }] : null,
       status, success: terminal(item.status) ? item.state !== 'error' : null };
   }
