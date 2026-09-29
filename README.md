@@ -28,7 +28,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624.svg">
 </p>
 
-<p align="center"><strong>当前注册的 Harness（17 个）</strong></p>
+<p align="center"><strong>当前注册的 Harness（18 个）</strong></p>
 
 <table align="center">
   <tbody>
@@ -65,7 +65,7 @@ macOS/Linux 已加入源码构建与启动适配；目标系统的完整桌面�
 
 <p align="center"><sub>图标与 Harness 能力均来自项目自身的注册表；只有本机已安装且握手成功的 Harness 才会进入真实运行。</sub></p>
 
-Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认官方 Codex 会话由 Desktop 直接连接官方 app-server；明确选择其他 Harness 或 `Codex（协作）` 时，独立的 Harness Mix Host 才处理对应任务。它把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae、Cline 和 Kimi Code 在内的原生 Coding Harness 接入同一套 UI。Host Runtime 与 Protocol Core 管理托管任务的映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
+Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认官方 Codex 会话由 Desktop 直接连接官方 app-server；明确选择其他 Harness 或 `Codex（协作）` 时，独立的 Harness Mix Host 才处理对应任务。它把包括 Antigravity、Codex、Pi、Oh My Pi、Claude Code、DeepSeek Harness、OpenCode、Grok、OpenClaw、Hermes、Qoder、CodeBuddy、Kiro CLI、Cursor CLI、ZCode、Trae、Cline 和 Kimi Code 在内的原生 Coding Harness 接入同一套 UI——连它们各自在回合中派生的原生子代理（子智能体）也会以原生卡片直接出现在 Codex 内容流里，无需切回各家客户端。Host Runtime 与 Protocol Core 管理托管任务的映射、协作和事件投影；模型调用、工具执行、原生会话与凭据仍由各 Harness 自己管理。
 
 ## 界面预览
 
@@ -80,8 +80,9 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 | **🔄 跨 Harness 任务接力** | 4 种接力模式（继续执行 / 执行计划 / 独立审查 / 重新分析）平滑交接 | 输入框接力角标 / `/switch`；持久化脱敏检查点与证据追溯 |
 | **🎨 皮肤市场** | 内置 HeiGe、Codex Styler、Dream Skin 与经典编辑器配色主题，外加原创「复古 QQ · 千禧蓝」结构化皮肤，支持亮色 / 暗色、背景装饰和可读性保护 | 设置 → 皮肤；一键预览、应用和恢复原生外观 |
 | **📚 历史会话导入与引用** | 一键导入 Pi / Claude / Codex / CodeBuddy 原生历史并可中断续跑；`#` 引用任意旧会话注入脱敏上下文 | 引用仅预取最近一页；MCP 只读工具 `get_session_info` / `list_session_messages` 供 Harness 按需翻页与读取分支 / 模型 / 用量元数据 |
-| **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发 | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
-| **🧩 原生 Skills 管理** | 全量覆盖 17 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
+| **🤝 多 Agent 协同编排** | 输入 `#` 唤起目标 Harness，胶囊标签直观管理，主控强约束派发；任意 Harness 都能担任 Agent Team Lead（团队长） | 输入框 `#` 菜单；支持循环审查验证、子任务级联取消与超时熔断 |
+| **🔍 原生子代理面板** | 各 Harness 自行派生的原生子代理（子智能体）在 Codex 内联展示为子代理卡片，标题、任务、状态与产出实时投影 | 16/18 个 Harness 已接通（Trae、Kiro CLI 暂未接入）；协议直读与会话文件扫描双通道 |
+| **🧩 原生 Skills 管理** | 全量覆盖 18 个 Harness 原生技能目录，会话启动自动预建根目录 | 设置 → Skills；支持单个 `SKILL.md` 或完整文件夹直接拖拽安装 |
 | **🛠️ 原生 MCP 扩展** | 支持本地 stdio 与远程 Streamable HTTP / SSE 协议 | 设置 → MCP；支持自定义 Header 传递，按 Harness 独立生效 |
 | **📋 原生消息队列** | 完整接入 Codex 会话排队机制（增删改查、排序、插队抢占与自动排空） | 原生 Composer 队列；当前回合完成后自动顺序调度执行排队消息 |
 | **✅ 可配置验证门禁** | 任务级 off / advisory / required 策略，内置一致性检查与自定义验证命令 | 命令面板 `/gate`、`/verify`；强制模式保护隔离分支合并与推送 |
@@ -112,28 +113,55 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 
 > 💡 **设计原则**：所有能力严格在 Adapter `manifest` 中诚实声明，界面按真实能力渲染，不依靠名称猜测。凭据、模型、工具与权限审批始终由原生 Harness 独立掌控。
 
-| Harness | 原生接入协议 | 流式输出 | 思考推理 | 工具审批 | 用户提问 | 会话恢复/Fork | 图片附件 | 原生 Skills | MCP 扩展 |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
-| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
-| **DeepSeek** | 普通 Web Remote / 协作 ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
-| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ |
-| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **ZCode** | `zcode.cjs app-server --stdio`（ZCode Protocol v1） | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ |
-| **Trae** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
-| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 |
+| Harness | 原生接入协议 | 流式输出 | 思考推理 | 工具审批 | 用户提问 | 会话恢复/Fork | 图片附件 | 原生 Skills | MCP 扩展 | 原生子代理 |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ | ✅ |
+| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ | ✅ |
+| **DeepSeek** | 普通 Web Remote / 协作 ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ | ➖ |
+| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ | ✅ |
+| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **ZCode** | `zcode.cjs app-server --stdio`（ZCode Protocol v1） | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ | ✅ |
+| **Trae** | 兼容 ACP 桥接程序 | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ | ➖ |
+| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 | 🟡 |
 
-<sub>注：✅ 为原生支持并已打通；🟡 为 Kimi ACP 已声明或适配但本机账号尚未登录，真实回合待验证；➖ 为上游协议当前未开放或未声明。Kimi Code 0.26.0 握手未声明 Fork。只有本机已安装且握手成功的 Harness 才会进入真实运行。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
+<sub>注：✅ 为原生支持并已打通；🟡 为 Kimi ACP 已声明或适配但本机账号尚未登录，真实回合待验证；➖ 为上游协议当前未开放或未声明。Kimi Code 0.26.0 握手未声明 Fork。只有本机已安装且握手成功的 Harness 才会进入真实运行。「原生子代理」列指该 Harness 在自己回合里派生的原生子代理（子智能体）能否在 Codex 内以子代理卡片查看：16 个已接通，Trae 与 Kiro CLI 暂未接入；ZCode 需较新版本（旧版无 `session/subagents` 方法时自动降级为不可见，不影响回合）。详见 [原生 ACP 深度适配](docs/native-acp.md) 与 [Harness 管理说明](docs/harness-management.md)。</sub>
+
+### 进阶协议能力（主矩阵之外）
+
+以下能力位同样来自各 Adapter `manifest` 的诚实声明（native-ACP 家族为基础声明叠加各家覆盖），界面按真实声明渲染：
+
+| Harness | 计划模式 | 原生实时 Diff | 上下文压缩 | 用量上报 | 上下文余量 | 模型目录 | 思考档 | 权限档 | 消息级 Fork |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Codex** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Pi** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Oh My Pi** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **DeepSeek** | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
+| **OpenCode** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Grok** | ➖ | ➖ | ✅ | ✅ | ➖ | ✅ | ✅ | ➖ | ➖ |
+| **OpenClaw** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ |
+| **Hermes** | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ➖ | ➖ |
+| **CodeBuddy** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ |
+| **Kiro CLI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ |
+| **Cursor CLI** | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ | ➖ | ✅ | ➖ |
+| **Qoder** | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ➖ |
+| **ZCode** | ✅ | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ |
+| **Trae** | ✅ | ✅ | ➖ | ✅ | ✅ | ✅ | ➖ | ✅ | ➖ |
+| **Cline** | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ✅ | ➖ |
+| **Kimi Code** | 🟡 | 🟡 | 🟡 | ➖ | ➖ | 🟡 | 🟡 | 🟡 | ➖ |
+
+<sub>注：计划模式（plan）为会话级计划档切换；原生实时 Diff（nativeDiff）为回合中的实时改动流，未声明者仍有 Host 统一的最终快照 Diff；上下文压缩（compaction）对应 `/compact` 类原生命令；用量上报（usage）决定进入「用量中心」90 天聚合，上下文余量（contextUsage）决定会话余量条；模型目录 / 思考档 / 权限档（models / thinkingLevels / permissionModes）支持运行中切换（`setModel` / `setThinkingLevel` / `setPermissionMode`）；消息级 Fork（forkFromMessage）比主矩阵的会话级 Fork 粒度更细。Claude Code 的计划档包含在其原生权限档目录（`plan` 档）中，故未单列；DeepSeek 在协作 ACP 形态下降级，不提供 Fork、上下文压缩与权限档；Kimi Code 整行与其主矩阵一致，待真实回合验证。</sub>
 
 ## 核心功能特色
 
@@ -149,12 +177,27 @@ Harness Mix 是接入官方 Codex Desktop 原生界面的本地内核。默认�
 - **标签可视化**：已选协同 Agent 在输入框顶部呈现为胶囊标签，支持点击快速删除或 Backspace 撤销。
 - **严谨编排约束**：自动为主控 Coordinator 注入硬约束，严禁越界派发给未指定的 Harness；完善级联取消与子任务超时熔断机制。
 - **真正的 Agent Team**：一个 Lead 可组织最多六个并发的具名 Harness 成员；Team、职责、共享任务依赖图和成员邮箱均由 Host 持久化，teammate 可直接定向通信、交接和反馈，而不是只把并行结果返回 Lead。
+- **Agent Team Lead（任意 Harness 领队）**：领队不再要求 MCP 协作工具——受管技能 `agentteam` 与协作 CLI 前端（`collaboration-cli.cjs`，长文本走 stdin）让任何能执行 shell 命令的 Harness 都能建队并管理 Agent Team（成员编成、共享任务图、成员邮箱、编排脚本）；CLI 与 MCP 双前端长期共存，服务端白名单、配额与回合校验自动继承。见 [CLI 协作前端设计](docs/cli-collaboration-design.md)。
 - **独立开关**：「设置 → 协作」中「多 Agent 协作」与「Agent Team」是两个独立开关（默认均开启）；关闭协作即同时停用团队，关闭团队则保留一次性委派。
 - **原生 Team Workbench**：对话顶部团队驾驶舱点击「展开详情」后在 Codex 内容流内显示唯一主导者、各成员职责、独立任务列、进度、通信流和事件回放，不覆盖原生侧栏、消息或输入框；成员卡片可跳转其原生子任务。状态直接向 Host 实时刷新，各成员仍使用自己的原生 Harness Session、模型、工具、权限和账户。
 - **统一 Workspace 能力**：全部 Harness 由 Host 统一获得 Git 探测、Worktree 隔离和最终快照 Diff；原生实时 Diff 继续按各 Harness 实际协议叠加。显式隔离失败不会降级到共享目录。
 
+### 🧑‍🤝‍🧑 Agent Team 与原生团队工作台
+一个 Lead 组织最多六个具名 Harness 成员组成长期团队：Team、角色职责、共享任务依赖图与成员邮箱全部由 Host 持久化，成员各自使用自己的原生会话、模型与权限工作，又能定向通信与交接。对话顶部的团队驾驶舱点击「展开详情」后，在 Codex 内容流内打开原生 Team Workbench：唯一 Lead、成员卡与任务泳道、团队动态、通信流和事件回放一屏尽览。看板是可操作的——任务卡支持「取消 / 重试 / 改派」，成员卡支持「追问」；「中断团队」级联取消成员回合并保留可恢复委派，有界收尾握手把成员自述的进度（已完成 / 进行中 / 阻塞 / 下一步）落进任务图与 Lead 邮箱，「继续协作」一键恢复。编队可来自团队模板（`#` 菜单「团队」页）或受管技能 `agentteam`，任意能执行 shell 命令的 Harness 都能当 Lead。
+
+<p align="center">
+  <img src="docs/images/agent-team-workbench.png" width="960" alt="Codex 内容流内的 Agent Team 团队工作台">
+</p>
+
+### 🔍 原生子代理可视（Native Subagent Projection）
+各 Harness 在自己回合里派生的原生子代理——如 Claude Code 的 Task 子代理、OpenCode 的 agent 会话、Kimi Code / CodeBuddy 的子智能体——会被投影成 Codex 内容流中的子代理卡片，标题、任务、运行状态与产出一目了然，无需切回各原生客户端。接通方式分两类：协议直读（Claude Code、Codex、OpenCode、ZCode、Pi / Oh My Pi、Hermes）与原生会话文件扫描（Kimi Code、CodeBuddy、Qoder、Cursor CLI、Cline、Grok、DeepSeek、Antigravity、OpenClaw）；Trae 与 Kiro CLI 暂未接入，ZCode 需较新版本。子代理始终由各 Harness 原生派生和管理，Harness Mix 只做只读投影；官方 Codex 线程不经 Host，其子代理展示仍由 Codex 原生承担。
+
+<p align="center">
+  <img src="docs/images/native-subagent-panel.png" width="960" alt="Codex 内容流中的原生子代理（子智能体）卡片面板">
+</p>
+
 ### 🧩 原生 Skills 与 MCP 管理
-- **17 平台免配置预建**：打开会话时自动预建全部 17 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。
+- **18 平台免配置预建**：打开会话时自动预建全部 18 个 Harness 声明的原生 Skills 根目录，新安装 Harness 也能即开即用。
 - **拖拽安装**：在「设置 → Skills」中可将单个 `SKILL.md` 或完整技能文件夹直接拖拽安装，自带安全路径校验。
 - **作用域与安全停用**：支持 Global（全局）与 Project（项目级）无缝切换；停用时安全移入保留目录，绝不损坏用户源文件。
 - **远程 MCP 支持**：支持配置带自定义 Headers 的 Streamable HTTP / SSE 远程服务。
@@ -205,6 +248,11 @@ npm start
 - Codex：安装 `@openai/codex`，确保 `codex` 命令可用。
 - Pi：确保 `pi.cmd` 可用。
 - Claude Code：SDK 已由 npm 依赖安装，认证仍由 Claude Code 环境管理。
+- Antigravity：安装 Antigravity 桌面版并完成登录；内核探测其自带的 `agy` CLI（Windows 默认 `%LOCALAPPDATA%\agy\bin\agy.exe`，加入 PATH 后任意位置可用）。
+- OpenCode：安装 `opencode` CLI 并完成登录；内核以 `opencode serve` 的原生 HTTP/SSE 接入。
+- Grok：安装 `grok` CLI 并完成登录；内核以 `grok agent stdio` 接入，可用 `HARNESS_MIX_GROK_EXECUTABLE` 指定路径。
+- OpenClaw：安装 `openclaw` 并完成登录（配置位于 `~/.openclaw/openclaw.json`）；内核优先连接已运行的 Gateway（每机一个），未运行才拉起本地 `openclaw gateway`。
+- Hermes：安装 `hermes`（Windows 上为 uv/pip 生成的 `hermes.exe` 启动器）；可用 `HARNESS_MIX_HERMES_EXECUTABLE` 覆盖路径，内核以 `hermes acp` 接入。
 - DeepSeek Harness：使用本项目锁定的 `@deepseek-ai/dsh@0.1.2-rc.1`。可通过 `HARNESS_MIX_DSH_ROOT` 显式指定源码目录，但版本必须被内核支持。
 - CodeBuddy：安装官方 `codebuddy` CLI 并完成登录；旧 WorkBuddy 安装也可通过兼容别名继续使用。
 - Kiro CLI：安装 `kiro-cli`，启用 `acp` 子命令并完成 CLI 登录。
@@ -271,7 +319,7 @@ macOS/Linux source builds and launch adaptation are in place; full desktop accep
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624.svg">
 </p>
 
-<p align="center"><strong>Currently registered Harnesses (17)</strong></p>
+<p align="center"><strong>Currently registered Harnesses (18)</strong></p>
 
 <table align="center">
   <tbody>
@@ -308,7 +356,7 @@ macOS/Linux source builds and launch adaptation are in place; full desktop accep
 
 <p align="center"><sub>Icons and Harness capabilities come from the project's own registry; only Harnesses installed locally with a successful handshake enter real runs.</sub></p>
 
-Harness Mix is a local kernel that plugs into the official Codex Desktop native UI. Default official Codex threads connect directly to the stock app-server. An independent Harness Mix Host handles only explicitly selected Harnesses and `Codex (collaboration)` threads. The Host Runtime and Protocol Core manage task mapping, collaboration and event projection for those managed threads; model calls, tool execution, native sessions and credentials stay owned by each Harness itself.
+Harness Mix is a local kernel that plugs into the official Codex Desktop native UI. Default official Codex threads connect directly to the stock app-server. An independent Harness Mix Host handles only explicitly selected Harnesses and `Codex (collaboration)` threads — and the native subagents each Harness spawns mid-turn appear inline in the Codex content stream as subagent cards, with no need to switch back to each native client. The Host Runtime and Protocol Core manage task mapping, collaboration and event projection for those managed threads; model calls, tool execution, native sessions and credentials stay owned by each Harness itself.
 
 ## UI Preview
 
@@ -323,8 +371,9 @@ The preview comes from the current Codex Desktop native window: Harness Mix appe
 | **🔄 Cross-Harness Task Handoff** | 4 handoff modes (continue / run plan / independent review / re-analyze) with smooth transitions | Composer handoff badge / `/switch`; persisted redacted checkpoints with evidence traceability |
 | **🎨 Skin Marketplace** | Built-in HeiGe, Codex Styler, Dream Skin and classic editor-palette themes plus the original "Retro QQ · Millennium Blue" structural skin, with light / dark modes, background decorations and readability protection | Settings → Skins; one-click preview, apply and restore the stock look |
 | **📚 History Import & Reference** | One-click import of Pi / Claude / Codex / CodeBuddy native history with interruptible resume; `#` references any past session with redacted context injected | References prefetch only the latest page; read-only MCP tools `get_session_info` / `list_session_messages` let Harnesses page through and read branch / model / usage metadata on demand |
-| **🤝 Multi-Agent Orchestration** | Type `#` to summon target Harnesses, manage them as capsule tags, dispatch under strong coordinator constraints | Composer `#` menu; loop review and verification, cascading subtask cancellation and timeout circuit breaking |
-| **🧩 Native Skills Management** | Covers the native skill directories of all 17 Harnesses, with root directories pre-created at session start | Settings → Skills; drag-and-drop install of a single `SKILL.md` or a complete folder |
+| **🤝 Multi-Agent Orchestration** | Type `#` to summon target Harnesses, manage them as capsule tags, dispatch under strong coordinator constraints; any Harness can serve as the Agent Team Lead | Composer `#` menu; loop review and verification, cascading subtask cancellation and timeout circuit breaking |
+| **🔍 Native Subagent Panel** | Subagents (sub-agents) spawned by each Harness's own turn are rendered inline in Codex as subagent cards with live title, task, status and output | Wired for 16 of 18 Harnesses (Trae and Kiro CLI not yet); dual channels — protocol streaming and native session-file scanning |
+| **🧩 Native Skills Management** | Covers the native skill directories of all 18 Harnesses, with root directories pre-created at session start | Settings → Skills; drag-and-drop install of a single `SKILL.md` or a complete folder |
 | **🛠️ Native MCP Extensions** | Local stdio and remote Streamable HTTP / SSE transports | Settings → MCP; custom headers supported, applied per Harness |
 | **📋 Native Message Queue** | Full integration of the Codex session queue (add / remove / edit, reorder, preempt and auto-drain) | Native Composer queue; queued messages are scheduled sequentially once the current turn completes |
 | **✅ Configurable Verification Gates** | Per-task off / advisory / required policies, built-in consistency checks and custom verification commands | Command palette `/gate`, `/verify`; required mode protects isolated branch merges and pushes |
@@ -355,28 +404,55 @@ Theme assets ship with the project and the images use licensed material from thi
 
 > 💡 **Design principle**: every capability is honestly declared in the Adapter `manifest`, and the UI renders from real capabilities instead of guessing from names. Credentials, models, tools and permission approvals always remain under each native Harness's own control.
 
-| Harness | Native protocol | Streaming | Reasoning | Tool approval | User questions | Resume / Fork | Image attachments | Native Skills | MCP |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
-| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ |
-| **DeepSeek** | Plain Web Remote / collaboration ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ✅ | ✅ | ✅ | ✅ |
-| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ |
-| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ |
-| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **ZCode** | `zcode.cjs app-server --stdio` (ZCode Protocol v1) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ |
-| **Trae** | Compatible ACP bridge | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ |
-| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ |
-| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 |
+| Harness | Native protocol | Streaming | Reasoning | Tool approval | User questions | Resume / Fork | Image attachments | Native Skills | MCP | Native subagents |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | `agy` CLI (`stream-json` / Hook) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Codex** | `codex app-server --stdio` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | `@anthropic-ai/claude-agent-sdk` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Pi** | `pi --mode rpc` | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ | ✅ |
+| **Oh My Pi** | `omp --mode rpc` (`pi-family.js`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ➖ | ✅ |
+| **DeepSeek** | Plain Web Remote / collaboration ACP | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | `opencode serve` (HTTP / SSE) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Grok** | `grok agent stdio` (`_x.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenClaw** | Gateway WebSocket Loopback | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Hermes** | `hermes acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ✅ | ✅ | ✅ | ✅ | ✅ |
+| **CodeBuddy** | `codebuddy --acp` (`_codebuddy.ai/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Kiro CLI** | `kiro-cli acp` (`_kiro/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ✅ | ➖ | ✅ | ✅ | ➖ |
+| **Cursor CLI** | `cursor-agent acp` (`cursor/*`) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ➖ | ✅ | ✅ | ✅ |
+| **Qoder** | `qoder --acp` | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **ZCode** | `zcode.cjs app-server --stdio` (ZCode Protocol v1) | ✅ | ✅ | ✅ | ✅ | ✅ / ➖ | ✅ | ✅ | ➖ | ✅ |
+| **Trae** | Compatible ACP bridge | ✅ | ➖ | ✅ | ➖ | ✅ / ➖ | ➖ | ✅ | ✅ | ➖ |
+| **Cline** | `cline --acp` | ✅ | ✅ | ✅ | ➖ | ✅ / ➖ | ✅ | ✅ | ✅ | ✅ |
+| **Kimi Code** | `kimi acp` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 / ➖ | 🟡 | ✅ | 🟡 | 🟡 |
 
-<sub>Note: ✅ means natively supported and verified; 🟡 means the Kimi ACP capability is advertised or wired but a live turn awaits native login; ➖ means the upstream protocol does not expose or declare it. Kimi Code 0.26.0 does not advertise Fork. See [Native ACP Deep Integration](docs/native-acp.md) and [Harness Management](docs/harness-management.md) for details.</sub>
+<sub>Note: ✅ means natively supported and verified; 🟡 means the Kimi ACP capability is advertised or wired but a live turn awaits native login; ➖ means the upstream protocol does not expose or declare it. Kimi Code 0.26.0 does not advertise Fork. Only Harnesses installed locally with a successful handshake enter real runs. The "Native subagents" column marks whether subagents spawned inside a Harness's own turn are visible in Codex as subagent cards: 16 are wired, Trae and Kiro CLI are not yet; ZCode needs a recent build (older builds without the `session/subagents` method degrade silently without affecting the turn). See [Native ACP Deep Integration](docs/native-acp.md) and [Harness Management](docs/harness-management.md) for details.</sub>
+
+### Advanced protocol capabilities (beyond the main matrix)
+
+The capability bits below are likewise honestly declared in each Adapter's `manifest` (the native-ACP family composes base declarations with per-vendor overrides), and the UI renders from the real declarations:
+
+| Harness | Plan mode | Native live diff | Compaction | Usage reporting | Context bar | Model catalog | Thinking levels | Permission modes | Fork from message |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Antigravity** | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Codex** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Claude Code** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Pi** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Oh My Pi** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **DeepSeek** | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
+| **OpenCode** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Grok** | ➖ | ➖ | ✅ | ✅ | ➖ | ✅ | ✅ | ➖ | ➖ |
+| **OpenClaw** | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ |
+| **Hermes** | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ➖ | ➖ |
+| **CodeBuddy** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ |
+| **Kiro CLI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ |
+| **Cursor CLI** | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ | ➖ | ✅ | ➖ |
+| **Qoder** | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ➖ |
+| **ZCode** | ✅ | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ |
+| **Trae** | ✅ | ✅ | ➖ | ✅ | ✅ | ✅ | ➖ | ✅ | ➖ |
+| **Cline** | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ✅ | ➖ |
+| **Kimi Code** | 🟡 | 🟡 | 🟡 | ➖ | ➖ | 🟡 | 🟡 | 🟡 | ➖ |
+
+<sub>Note: plan mode is a session-level plan switch; native live diff streams changes during a turn (Harnesses without it still get the Host's uniform final snapshot diff); compaction maps to `/compact`-style native commands; usage reporting feeds the Usage Center's 90-day aggregation and context usage drives the session context bar; model catalog / thinking levels / permission modes support in-session switching (`setModel` / `setThinkingLevel` / `setPermissionMode`); fork-from-message is finer-grained than the session-level Fork in the main matrix. Claude Code's plan mode lives in its native permission-mode catalog (the `plan` mode), so it is not listed separately; DeepSeek degrades in its collaboration-ACP form (no Fork, compaction or permission modes); the Kimi Code row follows its main-matrix status, pending real-turn verification.</sub>
 
 ## Core Features
 
@@ -392,12 +468,27 @@ One Harness analyzes in depth, another writes the implementation, then you switc
 - **Tag visualization**: selected collaborating Agents appear as capsule tags above the composer, with click-to-remove and Backspace-to-undo.
 - **Strict orchestration constraints**: the coordinator is automatically injected with hard constraints that forbid dispatching to unspecified Harnesses; cascading cancellation and subtask timeout circuit breaking are built in.
 - **Real Agent Teams**: one Lead can organize up to six concurrent named Harness members; the Team, roles, shared task dependency graph and member mailboxes are all persisted by the Host, so teammates communicate, hand off and report directly instead of only returning parallel results to the Lead.
+- **Agent Team Lead (any Harness can lead)**: leading no longer requires MCP collaboration tools — the managed `agentteam` skill and the collaboration CLI frontend (`collaboration-cli.cjs`, long texts over stdin) let any Harness that can run a shell command create and manage an Agent Team (rosters, the shared task graph, member mailboxes, orchestration scripts); the CLI and MCP frontends coexist long-term, and server-side whitelist, quota and turn checks apply to both. See the [CLI Collaboration Frontend design](docs/cli-collaboration-design.md).
 - **Independent switches**: Settings → Collaboration offers separate toggles for Multi-Agent Collaboration and Agent Team (both on by default); disabling collaboration also disables teams, while disabling teams keeps one-shot delegation available.
 - **Native Team Workbench**: expanding the details of the team cockpit at the top of a conversation shows the single lead, member roles, per-member task lanes, progress, message flow and event replay inside the Codex content stream — without covering the native sidebar, messages or composer. Member cards jump to their native subtasks. State refreshes live from the Host, and members keep using their own native Harness sessions, models, tools, permissions and accounts.
 - **Unified workspace capabilities**: every Harness uniformly gets Host-owned Git detection, worktree isolation and a final snapshot diff; native live diffs continue to layer on top according to each Harness's real protocol. An explicit isolation failure never degrades to a shared directory.
 
+### 🧑‍🤝‍🧑 Agent Team & Native Team Workbench
+One Lead organizes up to six named Harness members into a durable team: the Team, roles, shared task dependency graph and member mailboxes are all persisted by the Host, while members keep working in their own native sessions, models and permissions and still communicate and hand off directly. Expanding the team cockpit at the top of a conversation opens the native Team Workbench inside the Codex content stream: the single Lead, member cards with task lanes, team activity, message flow and event replay in one view. The board is actionable — task cards support cancel / retry / reassign, member cards support follow-up questions; "Interrupt team" cascades cancellation across member turns while keeping delegations resumable, a bounded wrap-up handshake files each member's self-reported progress (done / in progress / blocked / next) into the task graph and the Lead's mailbox, and "Continue collaboration" resumes in one click. Rosters come from team templates (the `#` menu's Team tab) or the managed `agentteam` skill, and any Harness that can run a shell command can lead.
+
+<p align="center">
+  <img src="docs/images/agent-team-workbench.png" width="960" alt="Agent Team workbench inside the Codex content stream">
+</p>
+
+### 🔍 Native Subagent Projection
+Subagents spawned inside each Harness's own turn — Claude Code Task subagents, OpenCode agent sessions, Kimi Code / CodeBuddy subagents and the like — are projected into the Codex content stream as subagent cards showing title, task, live status and output, with no need to switch back to each native client. Two wiring channels are used: protocol streaming (Claude Code, Codex, OpenCode, ZCode, Pi / Oh My Pi, Hermes) and native session-file scanning (Kimi Code, CodeBuddy, Qoder, Cursor CLI, Cline, Grok, DeepSeek, Antigravity, OpenClaw); Trae and Kiro CLI are not wired yet, and ZCode needs a recent build. Subagents stay spawned and managed by each Harness natively — Harness Mix only projects them read-only. Official Codex threads never pass through the Host, so their subagent display remains fully native.
+
+<p align="center">
+  <img src="docs/images/native-subagent-panel.png" width="960" alt="Native subagent cards panel inside the Codex content stream">
+</p>
+
 ### 🧩 Native Skills & MCP Management
-- **Zero-config pre-creation across 17 platforms**: opening a session pre-creates the native Skills root directories declared by all 17 Harnesses, so even newly installed Harnesses work out of the box.
+- **Zero-config pre-creation across 18 platforms**: opening a session pre-creates the native Skills root directories declared by all 18 Harnesses, so even newly installed Harnesses work out of the box.
 - **Drag-and-drop install**: in Settings → Skills, drop a single `SKILL.md` or a complete skill folder to install it, with safe path validation built in.
 - **Scoped and safe disabling**: switch seamlessly between Global and Project scopes; disabling moves skills into a retention directory and never damages user source files.
 - **Remote MCP support**: configure Streamable HTTP / SSE remote servers with custom headers.
@@ -452,6 +543,11 @@ Common native dependencies:
 - Codex: install `@openai/codex` and make sure the `codex` command is available.
 - Pi: make sure `pi.cmd` is available.
 - Claude Code: the SDK ships as an npm dependency; authentication stays managed by the Claude Code environment.
+- Antigravity: install the Antigravity desktop app and sign in; the kernel probes its bundled `agy` CLI (Windows default `%LOCALAPPDATA%\agy\bin\agy.exe`, usable anywhere once on PATH).
+- OpenCode: install the `opencode` CLI and sign in; the kernel connects through `opencode serve` over native HTTP/SSE.
+- Grok: install the `grok` CLI and sign in; the kernel connects through `grok agent stdio`, override the path with `HARNESS_MIX_GROK_EXECUTABLE`.
+- OpenClaw: install `openclaw` and sign in (config lives at `~/.openclaw/openclaw.json`); the kernel prefers an already-running Gateway (one per machine) and only spawns a local `openclaw gateway` when none exists.
+- Hermes: install `hermes` (on Windows, the uv/pip-generated `hermes.exe` launcher); override the path with `HARNESS_MIX_HERMES_EXECUTABLE`; the kernel connects through `hermes acp`.
 - DeepSeek Harness: uses the `@deepseek-ai/dsh@0.1.2-rc.1` version locked by this project. `HARNESS_MIX_DSH_ROOT` may explicitly point at a source checkout, but the version must be supported by the kernel.
 - CodeBuddy: install the official `codebuddy` CLI and sign in; old WorkBuddy installs keep working through a compatibility alias.
 - Kiro CLI: install `kiro-cli`, enable the `acp` subcommand and sign in.
