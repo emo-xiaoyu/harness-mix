@@ -714,13 +714,22 @@ export function renderComposerAgentControl(
     availableThinkingOptions.length === 0 ||
     availableThinkingOptions.some(({ id }) => id === modelView.selectedThinkingOptionId);
   const modelReady = selectedModel !== undefined && selectedCatalogModel !== undefined;
+  // A locked external Thread keeps its configuration on the Host: its send
+  // button only waits out an in-flight user selection, not a catalog that is
+  // still loading or failed to load (follow-ups and steering stay possible).
+  const selectionInFlight =
+    modelView.status === "selecting" || permissionModeView.status === "selecting";
+  const lockedExternalThread = state.agent !== "codex" && state.phase === "locked";
   const modelBlocked =
-    state.agent !== "codex" && (modelView.status === "selecting" || !modelReady || !thinkingReady);
+    state.agent !== "codex" &&
+    (selectionInFlight || (!lockedExternalThread && (!modelReady || !thinkingReady)));
   const permissionModeBlocked =
     state.agent !== "codex" &&
-    (!isPermissionModeControlReady(permissionModeView) ||
-      (permissionModeView.status !== "unsupported" &&
-        !control.nativePermissionModeControlVerified));
+    (selectionInFlight ||
+      (!lockedExternalThread &&
+        (!isPermissionModeControlReady(permissionModeView) ||
+          (permissionModeView.status !== "unsupported" &&
+            !control.nativePermissionModeControlVerified))));
   const submissionBlocked = switching || ownershipError || modelBlocked || permissionModeBlocked;
   if (isComposerStopButton(control.sendButton)) {
     // The native composer reuses its send slot for Stop while a turn runs;

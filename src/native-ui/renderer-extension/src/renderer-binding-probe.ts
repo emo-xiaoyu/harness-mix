@@ -192,6 +192,50 @@ export function shouldRefreshCodexAccountsForAdapterState(
 // Backoff ladder for usage polls that have not produced a full snapshot yet.
 const rendererUsageRefreshDelays = [250, 500, 1000, 2000, 4000, 8000] as const;
 
+// Backoff ladder for external model catalog loads that landed in a retryable
+// error state (request timeout, transient Host outage, harness cold start).
+// Without it a single failed inspect leaves the composer unable to submit
+// until an unrelated event happens to retrigger the load.
+const rendererModelCatalogRetryDelays = [1_000, 2_000, 5_000, 10_000, 20_000] as const;
+
+// Backoff ladder for ownership inspections that landed in error. Desktop can
+// rebuild the composer subtree mid-flight (stop/continue a task, thread
+// switch) so the route resolution fails for an instant; without an automatic
+// retry the composer stays wedged (dead model picker, swallowed submissions)
+// until the user happens to refocus the window or press submit.
+const rendererOwnershipRetryDelays = [1_000, 2_000, 5_000, 10_000, 20_000] as const;
+
+// A superseded ownership inspection or catalog load returns silently and
+// leaves its status stuck in "loading"/"idle" — blocked for submission, with
+// no timeout of its own. The watchdog re-drives anything that has hung longer
+// than a single request could still be in flight.
+export const SUSPENDED_STATE_RECOVERY_MS = 16_000;
+const SUSPENDED_STATE_SWEEP_MS = 3_000;
+
+export function isOwnershipSuspended(
+  status: ComposerOwnershipStatus,
+  startedAt: number | undefined,
+  now: number,
+): boolean {
+  return status === "loading" && startedAt !== undefined && now - startedAt > SUSPENDED_STATE_RECOVERY_MS;
+}
+
+export function isExternalModelViewSuspended(
+  input: {
+    agent: RendererAgent;
+    phase: ComposerAgentPhase;
+    ownershipStatus: ComposerOwnershipStatus;
+    modelStatus: string | undefined;
+  },
+  startedAt: number | undefined,
+  now: number,
+): boolean {
+  if (input.agent === "codex") return false;
+  if (input.phase !== "locked" || input.ownershipStatus !== "ready") return false;
+  if (input.modelStatus !== "idle" && input.modelStatus !== "loading") return false;
+  return startedAt === undefined || now - startedAt > SUSPENDED_STATE_RECOVERY_MS;
+}
+
 export function refreshConnectionHosts(
   hostIds: Iterable<string>,
   refreshHost: (hostId: string) => Promise<void>,
@@ -962,6 +1006,12 @@ export function installRendererBindingProbe(
   const availabilityRetryDelays = [500, 1000, 2000, 4000, 8000] as const;
   const usageRefreshTimers = new Map<Element, number>();
   const usageRefreshAttempts = new Map<Element, number>();
+  const modelCatalogRetryTimers = new Map<Element, number>();
+  const modelCatalogRetryAttempts = new Map<Element, number>();
+  const ownershipRetryTimers = new Map<Element, number>();
+  const ownershipRetryAttempts = new Map<Element, number>();
+  const ownershipStartAt = new Map<Element, number>();
+  const modelLoadStartAt = new Map<Element, number>();
 
   const isLiveComposer = (composer: Element): boolean =>
     composer.isConnected &&
@@ -1287,9 +1337,115 @@ export function installRendererBindingProbe(
     usageRefreshTimers.set(mounted.composer, timer);
   };
 
+  const clearModelCatalogRetry = (composer: Element): void => {
+    const timer = modelCatalogRetryTimers.get(composer);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      modelCatalogRetryTimers.delete(composer);
+    }
+  };
+
+  /** Self-heal a model catalog load that landed in a retryable error state:
+   * without a bounded ladder one failed inspect (Host busy, cold harness
+   * start, sidecar blip) keeps the composer un-submittable until an
+   * unrelated event retriggered the load. */
+  const scheduleModelCatalogRetry = (
+    mounted: ComposerEntry,
+    agent: ExternalRendererAgent,
+  ): void => {
+    if (modelCatalogRetryTimers.has(mounted.composer)) return;
+    const attempt = modelCatalogRetryAttempts.get(mounted.composer) ?? 0;
+    if (attempt >= rendererModelCatalogRetryDelays.length) return;
+    modelCatalogRetryAttempts.set(mounted.composer, attempt + 1);
+    const timer = window.setTimeout(() => {
+      modelCatalogRetryTimers.delete(mounted.composer);
+      if (disposed || composerEntries.get(mounted.composer) !== mounted) return;
+      const state = controller.get(mounted.composer);
+      if (state.agent !== agent || mounted.modelView.status !== "error") return;
+      void loadExternalConfiguration(mounted);
+    }, rendererModelCatalogRetryDelays[attempt]);
+    modelCatalogRetryTimers.set(mounted.composer, timer);
+  };
+
+  const clearOwnershipRetry = (composer: Element): void => {
+    const timer = ownershipRetryTimers.get(composer);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      ownershipRetryTimers.delete(composer);
+    }
+  };
+
+  /** Self-heal an ownership inspection that landed in error: Desktop rebuilds
+   * the composer subtree mid-flight (stop/continue, thread switch) and the
+   * route resolution fails for an instant. Retrying autonomously — instead of
+   * waiting for a focus or submit event — keeps the composer usable. */
+  const scheduleOwnershipRetry = (mounted: ComposerEntry, threadId: string): void => {
+    if (ownershipRetryTimers.has(mounted.composer)) return;
+    const attempt = ownershipRetryAttempts.get(mounted.composer) ?? 0;
+    if (attempt >= rendererOwnershipRetryDelays.length) return;
+    ownershipRetryAttempts.set(mounted.composer, attempt + 1);
+    const timer = window.setTimeout(() => {
+      ownershipRetryTimers.delete(mounted.composer);
+      if (disposed || composerEntries.get(mounted.composer) !== mounted) return;
+      if (threadIdFromComposerModelTarget(mounted.modelTarget) !== threadId) return;
+      if (mounted.ownershipStatus !== "error") return;
+      void restoreThreadOwnership(mounted);
+    }, rendererOwnershipRetryDelays[attempt]);
+    ownershipRetryTimers.set(mounted.composer, timer);
+  };
+
+  /** Superseded requests return silently and can leave their status hung in
+   * "loading"/"idle" — blocked for submission with no timeout of its own
+   * (observed hanging for 50s+ while Desktop rebuilds composers under running
+   * tasks). Sweep periodically and re-drive whatever is stuck. */
+  const suspendedStateSweeper = window.setInterval(() => {
+    if (disposed) return;
+    const now = Date.now();
+    for (const mounted of composerEntries.values()) {
+      if (!mounted.composer.isConnected) continue;
+      if (
+        isOwnershipSuspended(
+          mounted.ownershipStatus,
+          ownershipStartAt.get(mounted.composer),
+          now,
+        )
+      ) {
+        ownershipRetryAttempts.delete(mounted.composer);
+        void restoreThreadOwnership(mounted);
+        continue;
+      }
+      const state = controller.get(mounted.composer);
+      if (
+        isExternalModelViewSuspended(
+          {
+            agent: state.agent,
+            phase: state.phase,
+            ownershipStatus: mounted.ownershipStatus,
+            modelStatus: mounted.modelView.status,
+          },
+          modelLoadStartAt.get(mounted.composer),
+          now,
+        )
+      ) {
+        modelCatalogRetryAttempts.delete(mounted.composer);
+        void loadExternalConfiguration(mounted);
+      }
+    }
+  }, SUSPENDED_STATE_SWEEP_MS);
+
   const externalConfigurationReady = (mounted: ComposerEntry): boolean => {
     const current = controller.get(mounted.composer);
     if (current.agent === "codex") return true;
+    if (current.phase === "locked") {
+      // A live external Thread keeps its configuration on the Host: follow-ups
+      // and steering do not need the draft model catalog. Only an in-flight
+      // user selection (model/permission RPC) defers submission — a reloading
+      // or failed catalog must not block answering or redirecting a task.
+      return (
+        mounted.modelView.status !== "selecting" &&
+        mounted.permissionModeView.status !== "selecting"
+      );
+    }
     return externalViewsReady(mounted.modelView, mounted.permissionModeView);
   };
 
@@ -1319,6 +1475,8 @@ export function installRendererBindingProbe(
       mounted.ownershipStatus = "not-required";
       return;
     }
+    clearOwnershipRetry(mounted.composer);
+    ownershipStartAt.set(mounted.composer, Date.now());
     const requestModelControl = modelControl;
     const requestHostId = activeModelHostId();
     const client = hostClientFrom(requestModelControl, requestHostId);
@@ -1365,6 +1523,7 @@ export function installRendererBindingProbe(
         throw new Error("Thread owner could not be applied to the Composer");
       }
       mounted.ownershipStatus = "ready";
+      ownershipRetryAttempts.delete(mounted.composer);
       if (agent !== "codex") {
         if (inspection.owner !== "external") {
           throw new Error("External Thread inspection did not include configuration");
@@ -1394,16 +1553,25 @@ export function installRendererBindingProbe(
       }
     } catch {
       if (!isLiveOwnershipRequest(mounted, generation)) return;
-      // The local sidecar already falls back to stock Codex for an unknown
-      // thread when ownership lookup fails. Keep the native composer usable
-      // under the same condition; external threads remain sidecar-owned.
-      mounted.ownershipStatus =
-        window.__harnessmixSidecarModeV1 === true &&
+      // The sidecar falls back to stock Codex for an unknown thread when
+      // ownership lookup fails, and in native mode the shim equally passes
+      // unowned threads through to the stock app-server (the Host answers
+      // unknown threads as Codex-owned). Either way an official Codex Thread
+      // must keep working through a Harness Mix outage — keep the native
+      // composer usable for stock-account Codex. Only a genuine RPC failure
+      // qualifies: with the request control not installed yet (composers
+      // routinely mount before the Adapter) the inspection must stay errored
+      // so the later Adapter installation re-runs it. External threads and
+      // isolated accounts stay fail-closed.
+      const attemptedLookup = client != null && requestHostId != null;
+      const recovered =
+        attemptedLookup &&
         controller.get(mounted.composer).agent === "codex" &&
         isStockCodexAccountId(controller.get(mounted.composer).codexAccountId) &&
-        controller.restore(mounted.composer, "codex")
-          ? "ready"
-          : "error";
+        controller.restore(mounted.composer, "codex");
+      mounted.ownershipStatus = recovered ? "ready" : "error";
+      if (recovered) ownershipRetryAttempts.delete(mounted.composer);
+      else scheduleOwnershipRetry(mounted, threadId);
     } finally {
       if (isLiveOwnershipRequest(mounted, generation)) {
         paintComposer(mounted);
@@ -1550,6 +1718,8 @@ export function installRendererBindingProbe(
     const state = controller.get(mounted.composer);
     if (state.agent === "codex") return;
     const agent = state.agent;
+    clearModelCatalogRetry(mounted.composer);
+    modelLoadStartAt.set(mounted.composer, Date.now());
     const requestModelControl = modelControl;
     const isDraft = !threadIdFromComposerModelTarget(mounted.modelTarget);
     const requestHostId = isDraft ? activeModelHostId() : mounted.hostId;
@@ -1715,6 +1885,7 @@ export function installRendererBindingProbe(
           catalog: inspection.catalog,
           thinkingSelectionSupported: false,
         };
+        modelCatalogRetryAttempts.delete(mounted.composer);
         if (selectedPermissionModeId && mounted.permissionModeView.catalog) {
           controller.setExternalPermissionMode(mounted.composer, agent, selectedPermissionModeId);
           mounted.permissionModeView = {
@@ -1808,6 +1979,7 @@ export function installRendererBindingProbe(
           : {}),
         thinkingSelectionSupported: inspection.capabilities.configuration.selectThinkingOption,
       };
+      modelCatalogRetryAttempts.delete(mounted.composer);
       if (selectedPermissionModeId && mounted.permissionModeView.catalog) {
         mounted.permissionModeView = {
           status: "ready",
@@ -1844,6 +2016,7 @@ export function installRendererBindingProbe(
           error: message,
         };
       }
+      scheduleModelCatalogRetry(mounted, agent);
     } finally {
       if (isLiveModelRequest(mounted, generation)) paintComposer(mounted);
     }
@@ -3001,9 +3174,31 @@ export function installRendererBindingProbe(
       controller.isSwitching(composer) ||
       isOwnershipSubmissionBlocked(mounted.ownershipStatus)
     ) {
+      // A failed ownership lookup is the one blocked state that can recover by
+      // itself: kick a re-inspection so the next attempt can succeed instead
+      // of silently swallowing every submission while the error persists.
+      if (isOwnershipSubmissionBlocked(mounted.ownershipStatus)) {
+        if (mounted.ownershipStatus === "error") {
+          ownershipRetryAttempts.delete(composer);
+          void restoreThreadOwnership(mounted);
+        }
+      }
       return false;
     }
-    if (!externalConfigurationReady(mounted)) return false;
+    if (!externalConfigurationReady(mounted)) {
+      if (
+        current.agent !== "codex" &&
+        current.phase === "draft" &&
+        mounted.modelView.status === "error"
+      ) {
+        // A failed catalog load is usually transient; a submission attempt is
+        // the strongest user-driven signal to retry immediately with a fresh
+        // backoff ladder instead of only swallowing the key or click.
+        modelCatalogRetryAttempts.delete(composer);
+        void loadExternalConfiguration(mounted);
+      }
+      return false;
+    }
     if (current.phase === "locked") return true;
     if (!pushComposerCarrier(composer)) return false;
     if (current.agent === "codex") {
@@ -3101,6 +3296,11 @@ export function installRendererBindingProbe(
       return;
     }
     if (composer && mounted && isOwnershipSubmissionBlocked(mounted.ownershipStatus)) {
+      // Same self-heal as authorizeSubmission: this earlier gate swallows the
+      // submission key before that shared path runs, so kick the retry here.
+      if (isComposerSubmissionKey(event) && mounted.ownershipStatus === "error") {
+        void restoreThreadOwnership(mounted);
+      }
       if (isComposerSubmissionKey(event)) swallowEvent(event);
       return;
     }
@@ -3184,7 +3384,21 @@ export function installRendererBindingProbe(
     void reloadCodexAccounts();
     for (const mounted of composerEntries.values()) {
       if (mounted.hostId === activeModelHostId() && mounted.ownershipStatus === "error") {
+        // Returning to the window is a user-driven signal to retry a failed
+        // ownership inspection from the top of the backoff ladder.
+        ownershipRetryAttempts.delete(mounted.composer);
         void restoreThreadOwnership(mounted);
+      }
+      const state = controller.get(mounted.composer);
+      if (
+        state.agent !== "codex" &&
+        mounted.modelView.status === "error" &&
+        mounted.composer.isConnected
+      ) {
+        // Returning to the window is a user-driven signal to retry a failed
+        // catalog load from the top of the backoff ladder.
+        modelCatalogRetryAttempts.delete(mounted.composer);
+        void loadExternalConfiguration(mounted);
       }
     }
     const local = hostState("local");
@@ -3331,6 +3545,7 @@ export function installRendererBindingProbe(
     dispose() {
       if (disposed) return;
       disposed = true;
+      window.clearInterval(suspendedStateSweeper);
       usageNotificationDispose?.();
       usageNotificationDispose = null;
       adapterDispose?.();

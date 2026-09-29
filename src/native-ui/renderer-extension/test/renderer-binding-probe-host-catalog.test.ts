@@ -182,6 +182,8 @@ function installFakeBrowser(): void {
     dispatchEvent: listeners.dispatchEvent.bind(listeners),
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
     open: vi.fn(),
   };
   const document_ = {
@@ -298,6 +300,107 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
+  it("keeps a stock Codex conversation sendable in native mode when ownership lookup fails", async () => {
+    installFakeBrowser();
+    // No __harnessmixSidecarModeV1 flag: full native mode with the shim. The
+    // Host outage must not brick replies on an official Codex Thread.
+    const client = {
+      inspectHarness: vi.fn(async () => readyInspection()),
+      inspectThread: vi.fn().mockRejectedValue(new Error("host restarting")),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const modelControl = {
+      ...client, currentHostId: () => "local", clientForHost: () => client,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined, () => true, modelControl as never,
+    );
+    await vi.waitFor(() => expect(probe.status().selections[0]).toMatchObject({
+      agent: "codex", phase: "locked", ownership: "ready",
+    }));
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("keeps ownership errored when the request control is not installed yet", async () => {
+    installFakeBrowser();
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    // The composer mounts before setAdapter: no model control exists yet, so
+    // the inspection must stay errored (and stay re-inspectable) instead of
+    // fail-open recovering to Codex and skipping the later restore.
+    await vi.waitFor(() => expect(probe.status().selections[0]?.ownership).toBe("error"));
+    probe.dispose();
+  });
+
+  it("recovers a failed external catalog load through the backoff ladder", async () => {
+    installFakeBrowser();
+    let failing = true;
+    const client = {
+      inspectHarness: vi.fn(async () => {
+        if (failing) throw new Error("catalog exploded");
+        return readyInspection();
+      }),
+      inspectThread: vi.fn(async () => ({
+        owner: "external" as const,
+        harnessId: "claude-code",
+        transportModelId:
+          "harnessmix/claude-code-native@claude-model-v1.b3B1cw@bypassPermissions@auto",
+        effectiveModel: harnessModelRefSchema.parse({ id: "claude-model-v1.b3B1cw" }),
+        history: { fork: true, forkAcrossCwd: false, rollbackLastTurn: true },
+        locked: true,
+      })),
+      inspectThreadCommands: vi.fn(async () => ({ commands: [] })),
+      inspectThreadUsage: vi.fn(async () => ({
+        threadId: "thread-a",
+        usage: null,
+        accountCredits: null,
+      })),
+      subscribeThreadUsage: () => () => undefined,
+    };
+    const modelControl = {
+      ...client, currentHostId: () => "local", clientForHost: () => client,
+    };
+    const { installRendererBindingProbe } = await import("../src/renderer-binding-probe.js");
+    const probe = installRendererBindingProbe({
+      enabledAgents: ["codex", "claude-code"], defaultAgent: "codex",
+    });
+    probe.setAdapter(
+      { state: "ready", reason: "ready", modelUpdates: 0, hook: "request-bridge" },
+      undefined, () => true, modelControl as never,
+    );
+    await vi.waitFor(() => {
+      expect(testState.renderedModelViews.at(-1)).toMatchObject({
+        status: "error",
+        error: expect.stringContaining("catalog exploded"),
+      });
+    });
+    failing = false;
+    // No external UI event: the ladder itself must retry the load and bring
+    // the picker back, unblocking follow-up submissions.
+    await vi.waitFor(
+      () => expect(testState.renderedModelViews.at(-1)).toMatchObject({ status: "ready" }),
+      { timeout: 5_000 },
+    );
+    const preventDefault = vi.fn();
+    testState.documentListeners.get("submit")?.({
+      target: testState.composer, preventDefault, stopImmediatePropagation: vi.fn(),
+    } as unknown as Event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  }, 15_000);
+
   it("allows an official Codex draft to submit when the Harness Mix route is unavailable", async () => {
     installFakeBrowser();
     testState.modelTarget = ["default"];
@@ -403,7 +506,9 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
       });
       expect(isRendererModelPickerDisabled(view)).toBe(false);
       expect(probe.lockedSelection()?.model).toEqual(oldModel);
-      expectSubmissionBlocked(true);
+      // A locked Thread keeps its configuration on the Host: a missing or
+      // failed catalog only blocks model picking, not follow-up submission.
+      expectSubmissionBlocked(false);
     };
 
     await vi.waitFor(() => {
@@ -439,7 +544,9 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
     expect(host.selectThreadModel).toHaveBeenCalledTimes(2);
     expect(probe.lockedSelection()?.model).toEqual(newModel);
     expectSubmissionBlocked(false);
-    expect(testState.prepareMentions).toHaveBeenCalledExactlyOnceWith(testState.composer);
+    // Submissions in the recoverable-error states above now also pass through,
+    // so mentions preparation is expected, just no longer exactly once.
+    expect(testState.prepareMentions).toHaveBeenCalledWith(testState.composer);
     expect(applyAgent).not.toHaveBeenCalled();
   });
 
@@ -910,8 +1017,10 @@ describe("Renderer binding Host-scoped Claude catalogs", () => {
       preventDefault,
       stopImmediatePropagation,
     } as unknown as Event);
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(stopImmediatePropagation).toHaveBeenCalledOnce();
+    // The Thread is locked: an empty catalog blocks model picking, but the
+    // follow-up submission itself must stay available.
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(stopImmediatePropagation).not.toHaveBeenCalled();
 
     await testState.getConnectionDiagnostics?.()?.refresh();
     await vi.waitFor(() => expect(claudeInspections).toBeGreaterThan(2));
