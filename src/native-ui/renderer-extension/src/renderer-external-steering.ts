@@ -93,6 +93,37 @@ function patchSteeringMethods(
 
 const INTERRUPTED_QUEUE_REASON = "Interrupted before the steer was accepted.";
 
+/** Bound on deciding external vs official steering. The raw manager request has
+ * no timeout of its own; a dead transport must not wedge the composer's only
+ * direction-change path for the 15+ seconds the desktop would otherwise spin. */
+const OWNERSHIP_RESOLUTION_TIMEOUT_MS = 15_000;
+
+/**
+ * Resolve Thread ownership for steering. Rejects when the answer does not
+ * arrive in time or the Host cannot answer; callers degrade to stock steering.
+ */
+async function resolveSteeringOwnership(
+  send: RendererMethod,
+  threadId: string,
+): Promise<"external" | "codex"> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const response = await Promise.race([
+    Promise.resolve(send("harnessmix/thread/ownership/list", { threadIds: [threadId] })),
+    new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error("Thread ownership resolution timed out")),
+        OWNERSHIP_RESOLUTION_TIMEOUT_MS,
+      );
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+  const ownership = threadOwnershipListResultSchema.parse(response);
+  const owner = ownership.threads.find((thread) => thread.threadId === threadId)?.owner;
+  if (!owner) throw new Error("Thread ownership could not be resolved for steering");
+  return owner;
+}
+
 /**
  * Snapshot the follow-up queue before the old Turn is cancelled, and hand back
  * a callback that unpauses exactly the entries the cancellation paused (any
@@ -223,6 +254,29 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
     if (isRecord(initialRole) && initialRole.role === "follower") {
       return originalSteer.apply(manager, args);
     }
+    // Coalesce duplicates synchronously: while a replacement is in flight, a
+    // repeated submit of the same message must join the pending replacement
+    // instead of racing it through another ownership roundtrip (the pending
+    // entry may already have settled and removed itself by the time an
+    // awaited lookup comes back).
+    const duplicateMessageId =
+      typeof clientUserMessageId === "string" && clientUserMessageId
+        ? clientUserMessageId
+        : isRecord(restoreMessage) &&
+            typeof restoreMessage.id === "string" &&
+            restoreMessage.id
+          ? restoreMessage.id
+          : null;
+    const existing = pendingReplacements.get(threadId);
+    if (existing) {
+      if (
+        existing.messageId === duplicateMessageId &&
+        existing.fingerprint === JSON.stringify(input)
+      ) {
+        return existing.promise;
+      }
+      throw new Error("This Thread is already changing direction");
+    }
     let host: ReturnType<typeof resolveSubmissionHost> | null = null;
     let expectedTurnId: unknown;
     try {
@@ -231,13 +285,20 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
     } catch {
       // Official steering must keep working even when this extra binding is missing.
     }
-    const ownership = threadOwnershipListResultSchema.parse(
-      await originalSend.call(manager, "harnessmix/thread/ownership/list", {
-        threadIds: [threadId],
-      }),
-    );
-    const owner = ownership.threads.find((thread) => thread.threadId === threadId)?.owner;
-    if (!owner) throw new Error("Thread ownership could not be resolved for steering");
+    let owner: "external" | "codex";
+    try {
+      owner = await resolveSteeringOwnership(
+        (method, params) => originalSend.call(manager, method, params),
+        threadId,
+      );
+    } catch {
+      // Ownership could not be proven in time (sidecar outage, dead transport,
+      // or a stock app-server without harnessmix methods). Official Codex
+      // steering must survive Harness Mix outages untouched, and the Host
+      // answers native turn/steer for external threads too — degrade to the
+      // stock steer instead of failing the user's message.
+      return originalSteer.apply(manager, args);
+    }
     if (disposed) throw new Error("External steering binding was disposed");
     if (owner === "codex") return originalSteer.apply(manager, args);
     if (!host) throw new Error("Desktop turn submission binding is unavailable");
@@ -268,12 +329,6 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
           ? restoreMessage.id
           : crypto.randomUUID();
     const fingerprint = JSON.stringify(input);
-    const existing = pendingReplacements.get(threadId);
-    if (existing) {
-      if (existing.messageId === messageId && existing.fingerprint === fingerprint)
-        return existing.promise;
-      throw new Error("This Thread is already changing direction");
-    }
     if (expectedTurnId != null && (typeof expectedTurnId !== "string" || !expectedTurnId)) {
       throw new Error("Desktop active Turn identity is invalid");
     }
@@ -289,46 +344,53 @@ export function installRendererExternalSteering(target: unknown): (() => void) |
       .then(async () => {
         if (disposed) throw new Error("External steering binding was disposed");
         const resumeQueue = await preserveQueuedFollowUps(manager, threadId);
-        if (disposed) throw new Error("External steering binding was disposed");
-        const response = await manager.startTurn(
-          threadId,
-          {
-            request: {
-              threadId,
-              input,
-              clientUserMessageId: messageId,
-              additionalContext,
-              responsesapiClientMetadata: restoreMessage.responsesapiClientMetadata,
-              cwd: restoreMessage.cwd,
-              serviceTier,
-              model: null,
-              effort: null,
-              collaborationMode: context.collaborationMode ?? null,
-            },
-            context: {
-              attachments: attachments ?? [],
-              commentAttachments: context.commentAttachments ?? [],
-              mcpAppModelContextAttachments: context.mcpAppModelContextAttachments,
-              useAppServerPermissionDefault: true,
-            },
-          },
-          onMessageAdded,
-        );
-        if (
-          !isRecord(response) ||
-          !isRecord(response.turn) ||
-          typeof response.turn.id !== "string"
-        ) {
-          throw new Error("Desktop returned no replacement Turn identity");
-        }
         try {
-          resumeQueue();
-        } catch {
-          // The input was already accepted; a resume failure must not turn it
-          // into a failed delivery (which would invite a duplicate retry).
-          console.error("harnessmix could not restore follow-up queue state after steering");
+          if (disposed) throw new Error("External steering binding was disposed");
+          const response = await manager.startTurn(
+            threadId,
+            {
+              request: {
+                threadId,
+                input,
+                clientUserMessageId: messageId,
+                additionalContext,
+                responsesapiClientMetadata: restoreMessage.responsesapiClientMetadata,
+                cwd: restoreMessage.cwd,
+                serviceTier,
+                model: null,
+                effort: null,
+                collaborationMode: context.collaborationMode ?? null,
+              },
+              context: {
+                attachments: attachments ?? [],
+                commentAttachments: context.commentAttachments ?? [],
+                mcpAppModelContextAttachments: context.mcpAppModelContextAttachments,
+                useAppServerPermissionDefault: true,
+              },
+            },
+            onMessageAdded,
+          );
+          if (
+            !isRecord(response) ||
+            !isRecord(response.turn) ||
+            typeof response.turn.id !== "string"
+          ) {
+            throw new Error("Desktop returned no replacement Turn identity");
+          }
+          return { turnId: response.turn.id };
+        } finally {
+          // Every exit path hands the paused follow-up queue back. Desktop
+          // pauses queued messages when the old Turn is cancelled; a steer
+          // that fails or is disposed after that point would otherwise leave
+          // the user's queued messages stuck paused forever.
+          try {
+            resumeQueue();
+          } catch {
+            // The input was already accepted; a resume failure must not turn it
+            // into a failed delivery (which would invite a duplicate retry).
+            console.error("harnessmix could not restore follow-up queue state after steering");
+          }
         }
-        return { turnId: response.turn.id };
       })
       .finally(() => {
         startRoutes.delete(routeKey);

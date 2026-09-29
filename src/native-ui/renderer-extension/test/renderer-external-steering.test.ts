@@ -262,11 +262,12 @@ describe("external direction changes use normal Desktop start presentation", () 
     f.dispose();
   });
 
-  it("does not swallow an ownership failure or retry a failed replacement", async () => {
+  it("degrades to stock steering when ownership cannot be resolved, and does not retry a failed replacement", async () => {
     const f = fixture();
     f.rpc.mockRejectedValueOnce(new Error("ownership unavailable"));
-    await expect(f.manager.steerTurn(...f.args)).rejects.toThrow("ownership unavailable");
-    expect(f.originalSteer).not.toHaveBeenCalled();
+    await expect(f.manager.steerTurn(...f.args)).resolves.toEqual({ turnId: "official" });
+    expect(f.originalSteer).toHaveBeenCalledWith(...f.args);
+    expect(f.manager.startTurn).not.toHaveBeenCalled();
     f.rpc.mockImplementation(async (method) => {
       if (method === "harnessmix/thread/ownership/list")
         return { threads: [{ threadId: "thread", owner: "external", harnessId: "pi" }] };
@@ -274,6 +275,47 @@ describe("external direction changes use normal Desktop start presentation", () 
     });
     await expect(f.manager.steerTurn(...f.args)).rejects.toThrow("cancel failed");
     expect(f.manager.startTurn).toHaveBeenCalledOnce();
+    f.dispose();
+  });
+
+  it("degrades to stock steering when ownership resolution hangs past its bound", async () => {
+    const f = fixture();
+    f.rpc.mockImplementation(async (method: unknown) => {
+      if (method !== "harnessmix/thread/ownership/list") throw new Error("unexpected rpc");
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers();
+    try {
+      const result = f.manager.steerTurn(...f.args);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(result).resolves.toEqual({ turnId: "official" });
+      expect(f.originalSteer).toHaveBeenCalledWith(...f.args);
+      expect(f.manager.startTurn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+    f.dispose();
+  });
+
+  it("resumes the paused follow-up queue when the replacement turn is rejected", async () => {
+    const f = fixture();
+    f.rpc.mockImplementation(async (method: unknown) => {
+      if (method === "harnessmix/thread/ownership/list")
+        return { threads: [{ threadId: "thread", owner: "external", harnessId: "pi" }] };
+      if (method === "turn/steer") {
+        f.queue.set(
+          f.queue.read().map((message) => ({
+            ...message,
+            pausedReason: "Interrupted before the steer was accepted.",
+          })),
+        );
+        throw new Error("steer rejected");
+      }
+      throw new Error(`unexpected ${String(method)}`);
+    });
+    f.queue.set([{ id: "queued" }]);
+    await expect(f.manager.steerTurn(...f.args)).rejects.toThrow("steer rejected");
+    expect(f.queue.read()).toEqual([{ id: "queued" }]);
     f.dispose();
   });
 });
