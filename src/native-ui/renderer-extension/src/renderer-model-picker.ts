@@ -502,6 +502,19 @@ function rebuildOptions(control: RendererModelPickerControl, view: RendererModel
   modelList.style.minHeight = "0";
   modelColumn.append(createHeading("Model"), control.searchHeader, control.searchEmpty, modelList);
 
+  // An error state with no (or stale) models used to render as a silent empty
+  // list while the trigger only said "Models unavailable"; surface the reason
+  // so transient Host/manager breakage is diagnosable from the UI.
+  if (view.status === "error") {
+    const errorRow = document.createElement("div");
+    errorRow.setAttribute("data-harnessmix-model-error", "true");
+    errorRow.className = "px-3 py-2 text-xs";
+    errorRow.style.opacity = "0.8";
+    errorRow.textContent = view.error ?? "Model catalog is unavailable";
+    errorRow.title = errorRow.textContent;
+    modelList.append(errorRow);
+  }
+
   for (const model of view.catalog?.models ?? []) {
     const button = document.createElement("button");
     button.type = "button";

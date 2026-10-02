@@ -776,6 +776,10 @@ function findComposerDomIdentity(composer: Element): ComposerDomIdentity {
 
 function findComposerDraftIds(composer: Element): Set<string> {
   const draftIds = new Set<string>();
+  const isDraftSettingsShape = (value: unknown): boolean =>
+    isRecord(value) &&
+    (("modelSettings" in value && "isManuallyChanged" in value) ||
+      ("draftSettings" in value && "isNewThreadDraft" in value));
   climbComposerFibers(findComposerFiber(composer), (fiber) => {
     const updateQueue = fiber.updateQueue;
     const memoCache = isRecord(updateQueue) ? updateQueue.memoCache : null;
@@ -798,6 +802,30 @@ function findComposerDraftIds(composer: Element): Set<string> {
         entry[2].startsWith("client-new-thread:")
       ) {
         draftIds.add(entry[2]);
+      }
+      // Layout-agnostic fallback (26.928 moved the draft-settings memo to a
+      // 14-slot layout with the id at slots 3/6/7; the next Desktop update
+      // will reshuffle again). Recognize the entry by its invariants instead
+      // of slot positions: exactly one consistent client-new-thread: id plus
+      // a draft-settings-shaped object somewhere in the entry. Large unrelated
+      // memos that merely reference the id are rejected because they carry no
+      // draft-settings object.
+      if (Array.isArray(entry) && entry.length > 13) {
+        let draftId: string | null = null;
+        let ambiguous = false;
+        let settingsSeen = false;
+        for (const value of entry) {
+          if (typeof value === "string" && value.startsWith("client-new-thread:")) {
+            if (draftId !== null && draftId !== value) {
+              ambiguous = true;
+              break;
+            }
+            draftId = value;
+          } else if (isDraftSettingsShape(value)) {
+            settingsSeen = true;
+          }
+        }
+        if (!ambiguous && draftId !== null && settingsSeen) draftIds.add(draftId);
       }
     }
   });

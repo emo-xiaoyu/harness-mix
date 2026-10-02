@@ -16,6 +16,7 @@ import {
   type ThreadUsageInspection,
   type ThreadUsageSnapshot,
   type HarnessMixError,
+  type HarnessInspection,
 } from "@harnessmix/shared-contracts";
 
 import {
@@ -212,6 +213,66 @@ const rendererOwnershipRetryDelays = [1_000, 2_000, 5_000, 10_000, 20_000] as co
 export const SUSPENDED_STATE_RECOVERY_MS = 16_000;
 const SUSPENDED_STATE_SWEEP_MS = 3_000;
 
+// ---------------------------------------------------------------------------
+// Resilience: harness-inspection cache with stale fallback, plus a rolling
+// error history so intermittent Desktop-side breakage is captured with its
+// exact reason instead of degrading into a generic "Models unavailable".
+// ---------------------------------------------------------------------------
+
+interface CachedHarnessInspection {
+  inspection: unknown;
+  savedAt: number;
+}
+
+const harnessInspectionCache = new Map<string, CachedHarnessInspection>();
+export const HARNESS_INSPECTION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+const harnessInspectionCacheKey = (hostId: string, harnessId: string): string =>
+  `${hostId}\0${harnessId}`;
+
+export function rememberHarnessInspection(
+  hostId: string,
+  harnessId: string,
+  inspection: unknown,
+): void {
+  harnessInspectionCache.set(harnessInspectionCacheKey(hostId, harnessId), {
+    inspection,
+    savedAt: Date.now(),
+  });
+}
+
+export function readCachedHarnessInspection(
+  hostId: string,
+  harnessId: string,
+  now = Date.now(),
+): { inspection: unknown; ageMs: number } | null {
+  const cached = harnessInspectionCache.get(harnessInspectionCacheKey(hostId, harnessId));
+  if (!cached || now - cached.savedAt > HARNESS_INSPECTION_CACHE_MAX_AGE_MS) return null;
+  return { inspection: cached.inspection, ageMs: now - cached.savedAt };
+}
+
+export interface RendererProbeErrorRecord {
+  at: number;
+  scope: string;
+  agent: string;
+  phase: string;
+  message: string;
+}
+
+const rendererProbeErrorLog: RendererProbeErrorRecord[] = [];
+const RENDERER_PROBE_ERROR_HISTORY_LIMIT = 60;
+
+export function rememberRendererProbeError(record: Omit<RendererProbeErrorRecord, "at">): void {
+  rendererProbeErrorLog.push({ ...record, at: Date.now() });
+  if (rendererProbeErrorLog.length > RENDERER_PROBE_ERROR_HISTORY_LIMIT) {
+    rendererProbeErrorLog.shift();
+  }
+}
+
+export function rendererProbeErrorHistory(): readonly RendererProbeErrorRecord[] {
+  return [...rendererProbeErrorLog];
+}
+
 export function isOwnershipSuspended(
   status: ComposerOwnershipStatus,
   startedAt: number | undefined,
@@ -231,8 +292,25 @@ export function isExternalModelViewSuspended(
   now: number,
 ): boolean {
   if (input.agent === "codex") return false;
-  if (input.phase !== "locked" || input.ownershipStatus !== "ready") return false;
-  if (input.modelStatus !== "idle" && input.modelStatus !== "loading") return false;
+  if (input.phase === "locked") {
+    // A locked thread already proved its harness; only a ready ownership
+    // result makes the catalog load meaningful.
+    if (input.ownershipStatus !== "ready") return false;
+  } else if (input.phase !== "draft") {
+    return false;
+  }
+  // Drafts (new-task composers) previously fell outside the sweep: a request
+  // superseded by a context change, or a frame lost to a dead sidecar
+  // channel, left "Loading models..." forever with no re-drive path. The
+  // waitingForAdapter state is included because a missed adapter-ready
+  // transition wedges it just as permanently.
+  if (
+    input.modelStatus !== "idle" &&
+    input.modelStatus !== "loading" &&
+    input.modelStatus !== "waitingForAdapter"
+  ) {
+    return false;
+  }
   return startedAt === undefined || now - startedAt > SUSPENDED_STATE_RECOVERY_MS;
 }
 
@@ -741,13 +819,39 @@ interface HostAvailabilityState {
   retryAttempt: number;
 }
 
+/** Whether a persisted probe still covers every agent a newer injection
+ * needs. A probe that cannot even report keeps the old conservative reuse
+ * behavior — tearing down something opaque is riskier than reusing it. */
+export function rendererProbeCoversAgents(
+  probe: { status(): RendererBindingProbeStatus } | undefined,
+  requiredAgents: readonly RendererAgent[],
+): boolean {
+  if (!probe) return false;
+  try {
+    const reported = probe.status().enabledAgents;
+    return requiredAgents.every((agent) => reported.includes(agent));
+  } catch {
+    return true;
+  }
+}
+
 export function installRendererBindingProbe(
   options: RendererBindingProbeOptions = {},
 ): RendererBindingProbeApi {
-  const existing = window.__harnessmixRendererBindingProbeV1;
-  if (existing) return existing;
-
   const enabledAgents = [...new Set(options.enabledAgents ?? DEFAULT_RENDERER_AGENTS)];
+  const existing = window.__harnessmixRendererBindingProbeV1;
+  if (existing) {
+    // A probe persisted from an older bundle must not shadow a newer
+    // injection forever. When it cannot cover the requested agent set,
+    // replace it — a stale probe once made the controller's binding
+    // validation fail on every reinstall after a page reload.
+    if (rendererProbeCoversAgents(existing, enabledAgents)) return existing;
+    try {
+      existing.dispose();
+    } catch {
+      return existing;
+    }
+  }
   const enabledAgentSet = new Set(enabledAgents);
   const controller = new DraftAgentController<Element>({
     enabledAgents,
@@ -1551,8 +1655,14 @@ export function installRendererBindingProbe(
         mounted.modelView = { status: "idle" };
         mounted.permissionModeView = { status: "idle" };
       }
-    } catch {
+    } catch (ownershipError) {
       if (!isLiveOwnershipRequest(mounted, generation)) return;
+      rememberRendererProbeError({
+        scope: "ownership",
+        agent: controller.get(mounted.composer).agent,
+        phase: controller.get(mounted.composer).phase,
+        message: ownershipError instanceof Error ? ownershipError.message : String(ownershipError),
+      });
       // The sidecar falls back to stock Codex for an unknown thread when
       // ownership lookup fails, and in native mode the shim equally passes
       // unowned threads through to the stock app-server (the Host answers
@@ -1804,16 +1914,34 @@ export function installRendererBindingProbe(
       if (!client) {
         throw new Error(`Renderer Model request manager is unavailable for Host ${requestHostId}`);
       }
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const inspection = await Promise.race([
-        client.inspectHarness({ harnessId: externalHarnessIds[agent] }),
-        new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(() => reject(new Error("Model catalog request timed out; retry loading models")), 15_000);
-        }),
-      ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      const harnessId = externalHarnessIds[agent];
+      let inspection: HarnessInspection;
+      let staleCacheNote: string | null = null;
+      try {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        inspection = await Promise.race([
+          client.inspectHarness({ harnessId }),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error("Model catalog request timed out; retry loading models")), 15_000);
+          }),
+        ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      } catch (error) {
+        // Transport-level failure only (timeout, dead channel, lost frames).
+        // A cached inspection from this page's lifetime keeps the composer
+        // fully usable while the retry ladders refresh in the background —
+        // transient Desktop churn must never wedge a new task again.
+        const cached = readCachedHarnessInspection(requestHostId, harnessId);
+        if (!cached) throw error;
+        staleCacheNote = `served from cache (${Math.round(cached.ageMs / 1000)}s old); refresh failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        rememberRendererProbeError({ scope: "catalog-refresh-fallback", agent, phase: controller.get(mounted.composer).phase, message: staleCacheNote });
+        inspection = cached.inspection as HarnessInspection;
+      }
       if (!isLiveModelRequest(mounted, generation) || controller.get(mounted.composer).agent !== agent) return;
       if (retryChangedContext()) return;
       if (inspection.status !== "ready") throw new Error(inspection.error.message);
+      if (staleCacheNote === null) rememberHarnessInspection(requestHostId, harnessId, inspection);
       const current = controller.get(mounted.composer);
       const previousModel = controller.modelForAgent(mounted.composer, agent);
       const previousModelAvailable =
@@ -1995,6 +2123,7 @@ export function installRendererBindingProbe(
       const selectedThinkingOptionId = controller.thinkingOptionForAgent(mounted.composer, agent);
       const selectedPermissionModeId = controller.permissionModeForAgent(mounted.composer, agent);
       const message = error instanceof Error ? error.message : String(error);
+      rememberRendererProbeError({ scope: "catalog", agent, phase: controller.get(mounted.composer).phase, message });
       mounted.modelView = {
         status: "error",
         ...(mounted.modelView.catalog ? { catalog: mounted.modelView.catalog } : {}),
@@ -3582,9 +3711,28 @@ export function installRendererBindingProbe(
       connectionListeners.clear();
       connectionDiagnostics = null;
       delete window.__harnessmixRendererBindingProbeV1;
+      delete (window as unknown as { __harnessmixRendererDiagnosticsV1?: unknown }).__harnessmixRendererDiagnosticsV1;
     },
   };
   window.__harnessmixRendererBindingProbeV1 = api;
+  // Rolling failure history with exact reasons — read via CDP or DevTools when
+  // an intermittent Desktop-side breakage needs diagnosis.
+  Object.defineProperty(window, "__harnessmixRendererDiagnosticsV1", {
+    configurable: true,
+    value: {
+      schemaVersion: 1 as const,
+      recentErrors: (): readonly RendererProbeErrorRecord[] => rendererProbeErrorHistory(),
+      cachedHarnessInspections: (): ReadonlyArray<{ hostId: string; harnessId: string; ageMs: number }> =>
+        [...harnessInspectionCache.entries()].map(([key, cached]) => {
+          const separator = key.indexOf("\0");
+          return {
+            hostId: key.slice(0, separator),
+            harnessId: key.slice(separator + 1),
+            ageMs: Date.now() - cached.savedAt,
+          };
+        }),
+    },
+  });
   runScan();
   return api;
 }

@@ -35,6 +35,15 @@ import {
   shouldReloadExternalCatalogAfterAvailabilityRefresh,
   shouldRetryExternalThreadUsage,
   shouldTransferComposerState,
+  isExternalModelViewSuspended,
+  isOwnershipSuspended,
+  SUSPENDED_STATE_RECOVERY_MS,
+  rememberHarnessInspection,
+  readCachedHarnessInspection,
+  HARNESS_INSPECTION_CACHE_MAX_AGE_MS,
+  rememberRendererProbeError,
+  rendererProbeErrorHistory,
+  rendererProbeCoversAgents,
 } from "../src/renderer-binding-probe.js";
 import {
   editorForElement,
@@ -57,6 +66,33 @@ import {
 } from "../src/renderer-usage-control.js";
 
 describe("Renderer connection diagnostics", () => {
+  it("reuses a persisted probe only while it covers the requested agent set", () => {
+    const probeFor = (agents: string[], throwing = false) => ({
+      status() {
+        if (throwing) throw new Error("probe is broken");
+        return {
+          version: 2 as const,
+          mountedComposers: 0,
+          enabledAgents: agents as never,
+          availability: {},
+          selections: [],
+          adapter: { state: "ready" as const, reason: "ready" },
+        };
+      },
+    });
+    // Covers: same set or superset (a newer bundle than the controller).
+    expect(rendererProbeCoversAgents(probeFor(["codex", "pi"]), ["codex"])).toBe(true);
+    expect(
+      rendererProbeCoversAgents(probeFor(["codex", "pi", "kimi-code"]), ["codex", "pi"]),
+    ).toBe(true);
+    // Stale: persisted probe from an older bundle lacks a required agent —
+    // this is the state that permanently broke controller reinstalls.
+    expect(rendererProbeCoversAgents(probeFor(["codex"]), ["codex", "kimi-code"])).toBe(false);
+    // Conservative reuse when the probe cannot even report.
+    expect(rendererProbeCoversAgents(probeFor(["codex"], true), ["codex", "kimi-code"])).toBe(true);
+    expect(rendererProbeCoversAgents(undefined, ["codex"])).toBe(false);
+  });
+
   it("round trips Kiro effort without reviving a choice cleared by the native model", () => {
     const model = harnessModelRefSchema.parse({ id: "adjustable" });
     const high = harnessThinkingOptionIdSchema.parse("high");
@@ -147,6 +183,93 @@ describe("Renderer connection diagnostics", () => {
         hostId === "remote" ? Promise.reject(new Error("remote unavailable")) : Promise.resolve(),
       ),
     ).rejects.toThrow("remote unavailable");
+  });
+});
+
+describe("Harness inspection cache and error history", () => {
+  it("returns a fresh cached inspection with its age", () => {
+    const inspection = { status: "ready", catalog: { models: [], thinkingOptions: [] } };
+    rememberHarnessInspection("cache-host-1", "zcode", inspection);
+    const cached = readCachedHarnessInspection("cache-host-1", "zcode");
+    expect(cached).not.toBeNull();
+    expect(cached!.inspection).toEqual(inspection);
+    expect(cached!.ageMs).toBeGreaterThanOrEqual(0);
+    expect(readCachedHarnessInspection("cache-host-1", "other")).toBeNull();
+    expect(readCachedHarnessInspection("cache-other", "zcode")).toBeNull();
+  });
+
+  it("refuses entries past the age limit so stale catalogs do not outlive the page", () => {
+    rememberHarnessInspection("cache-host-2", "pi", { status: "ready" });
+    const stale = readCachedHarnessInspection("cache-host-2", "pi", Date.now() + HARNESS_INSPECTION_CACHE_MAX_AGE_MS + 1);
+    expect(stale).toBeNull();
+  });
+
+  it("records probe errors with scope and exact message into the rolling history", () => {
+    rememberRendererProbeError({ scope: "catalog", agent: "zcode", phase: "draft", message: "boom" });
+    const history = rendererProbeErrorHistory();
+    const entry = history[history.length - 1];
+    expect(entry).toMatchObject({ scope: "catalog", agent: "zcode", phase: "draft", message: "boom" });
+    expect(entry.at).toBeGreaterThan(0);
+  });
+});
+
+describe("Suspended composer state sweep", () => {  const suspendedInput = {
+    agent: "pi" as const,
+    phase: "draft" as const,
+    ownershipStatus: "not-required" as const,
+    modelStatus: "loading",
+  };
+  const now = 1_000_000;
+
+  it("sweeps a draft composer whose model load was superseded or lost", () => {
+    // A draft (new-task composer) stuck in loading with no live request used
+    // to fall outside the watchdog: "Loading models..." forever.
+    expect(isExternalModelViewSuspended(suspendedInput, now - (SUSPENDED_STATE_RECOVERY_MS + 1), now)).toBe(true);
+    expect(isExternalModelViewSuspended(suspendedInput, now - 1_000, now)).toBe(false);
+  });
+
+  it("sweeps drafts waiting for an adapter that already became ready elsewhere", () => {
+    expect(
+      isExternalModelViewSuspended(
+        { ...suspendedInput, modelStatus: "waitingForAdapter" },
+        now - (SUSPENDED_STATE_RECOVERY_MS + 1),
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps locked-thread and terminal states gated as before", () => {
+    expect(
+      isExternalModelViewSuspended(
+        { ...suspendedInput, phase: "locked", ownershipStatus: "ready" },
+        now - (SUSPENDED_STATE_RECOVERY_MS + 1),
+        now,
+      ),
+    ).toBe(true);
+    // Locked without a resolved owner, terminal statuses, and stock Codex stay untouched.
+    expect(
+      isExternalModelViewSuspended(
+        { ...suspendedInput, phase: "locked", ownershipStatus: "loading" },
+        undefined,
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isExternalModelViewSuspended(
+        { ...suspendedInput, modelStatus: "error" },
+        now - (SUSPENDED_STATE_RECOVERY_MS + 1),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isExternalModelViewSuspended(
+        { ...suspendedInput, agent: "codex" as const },
+        now - (SUSPENDED_STATE_RECOVERY_MS + 1),
+        now,
+      ),
+    ).toBe(false);
+    expect(isOwnershipSuspended("loading", now - 1, now)).toBe(false);
+    expect(isOwnershipSuspended("loading", now - (SUSPENDED_STATE_RECOVERY_MS + 1), now)).toBe(true);
   });
 });
 

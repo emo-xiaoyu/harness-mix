@@ -481,6 +481,28 @@ describe("current Codex Renderer Agent adapter", () => {
     expect(findComposerModelTarget(composer)).toBeNull();
   });
 
+  it("recognizes the 26.928 fourteen-slot draft memo by shape, not slot positions", () => {
+    // Live capture from Desktop 26.928: the draft-settings memo grew to 14
+    // slots with the id at 3/6/7, breaking the 13-slot contract and wedging
+    // every new-task composer in "External configuration could not be applied
+    // to the Composer".
+    const draftSettings = { modelSettings: null, isManuallyChanged: false };
+    const updateDraftSettings = vi.fn();
+    const result = { draftSettings, isNewThreadDraft: true, updateDraftSettings };
+    const slots = ["/", "", "new", "client-new-thread:928", "new", "new-conversation",
+      "client-new-thread:928", "client-new-thread:928", {}, updateDraftSettings,
+      draftSettings, true, updateDraftSettings, result];
+    // A large unrelated memo that merely references the id carries no
+    // draft-settings object and must not qualify on its own.
+    const bigUnrelated = Array.from({ length: 243 }, (_, index) =>
+      index === 4 || index === 7 ? "client-new-thread:928" : index === 0 ? {} : undefined);
+    const composer = composerWithFiber({ updateQueue: { memoCache: { data: [bigUnrelated, slots] } }, return: null });
+    expect(findComposerModelTarget(composer)).toEqual(["default", "client-new-thread:928"]);
+    // Two distinct ids inside one entry stay ambiguous — fail closed.
+    slots[7] = "client-new-thread:other";
+    expect(findComposerModelTarget(composer)).toBeNull();
+  });
+
   it("finds the current seven-slot new Thread draft identity", () => {
     const wrapper = { isManuallyChanged: false, modelSettings: null, serviceTier: null };
     const draftAtom = { get: vi.fn(() => wrapper) };
