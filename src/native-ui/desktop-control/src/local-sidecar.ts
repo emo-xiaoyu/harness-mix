@@ -2,6 +2,12 @@
  * Host sidecar process wrapper. The sidecar speaks newline-delimited JSON on
  * stdio; frames are buffered while no CDP listener is attached so a renderer
  * swap does not lose in-flight approval requests.
+ *
+ * The child is supervised: after an unexpected exit the Host is respawned on a
+ * bounded backoff ladder. A dead sidecar used to latch permanently — every
+ * later `send()` threw forever, so an idle Desktop that outlived its Host
+ * (sleep, crash, OS reaping) could never load model catalogs or settle turns
+ * again without a full app restart.
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -10,6 +16,23 @@ export interface LocalSidecar {
   send(frame: string): void;
   onFrame(listener: (frame: string) => void): () => void;
   close(): Promise<void>;
+}
+
+/** Test seam: the minimal child-process surface the supervisor relies on. */
+export interface SidecarChildProcess {
+  stdout: NodeJS.ReadableStream;
+  stdin: NodeJS.WritableStream;
+  once(event: "exit", listener: (code: number | null, signal: string | null) => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  exitCode: number | null;
+  signalCode: string | null;
+  kill(): void;
+}
+
+export interface LocalSidecarOptions {
+  spawnChild?: typeof spawn;
+  restartDelays?: readonly number[];
+  stableUptimeMs?: number;
 }
 
 /**
@@ -71,35 +94,73 @@ export function startLocalSidecar(
   nodePath: string,
   scriptPath: string,
   stockCodexPath: string,
+  options: LocalSidecarOptions = {},
 ): LocalSidecar {
+  const spawnChild = options.spawnChild ?? spawn;
+  // Backoff between Host respawns after unexpected exits. The ladder caps out
+  // and resets once a child has stayed up past `stableUptimeMs`, so a Host that
+  // dies repeatedly degrades to one restart attempt per minute instead of a
+  // tight respawn loop.
+  const restartDelays =
+    options.restartDelays ?? [500, 2_000, 10_000, 30_000, 60_000];
+  const stableUptimeMs = options.stableUptimeMs ?? 60_000;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HARNESSMIX_STOCK_CODEX_PATH: stockCodexPath,
     HARNESSMIX_SIDECAR: "1",
   };
   delete env.CODEX_CLI_PATH;
-  const child = spawn(nodePath, [scriptPath, "app-server", "--listen", "stdio://"], {
-    env,
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const lines = createInterface({ input: child.stdout });
   const frames = createSidecarFrameBuffer();
   let failure: string | null = null;
   let closed = false;
-  const recordFailure = (message: string): void => {
-    if (closed || failure !== null) return;
-    failure = message;
-    frames.publish(JSON.stringify({ harnessmixSidecarFailure: message }));
+  let child: SidecarChildProcess | null = null;
+  let lines: ReturnType<typeof createInterface> | null = null;
+  let restartTimer: NodeJS.Timeout | null = null;
+  let restartAttempt = 0;
+  const spawnHost = (): void => {
+    const current = spawnChild(
+      nodePath,
+      [scriptPath, "app-server", "--listen", "stdio://"],
+      {
+        env,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "inherit"],
+      },
+    ) as unknown as SidecarChildProcess;
+    const startedAt = Date.now();
+    child = current;
+    failure = null;
+    lines = createInterface({ input: current.stdout });
+    lines.on("line", frames.publish);
+    let terminated = false;
+    const handleExit = (message: string): void => {
+      if (closed || terminated || child !== current) return;
+      terminated = true;
+      failure = message;
+      frames.publish(JSON.stringify({ harnessmixSidecarFailure: message }));
+      lines?.close();
+      // EPIPE races: stdin errors and exit can both fire for one death; only
+      // the first schedules the respawn.
+      if (Date.now() - startedAt >= stableUptimeMs) restartAttempt = 0;
+      const delay = restartDelays[Math.min(restartAttempt, restartDelays.length - 1)];
+      restartAttempt += 1;
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        if (!closed) spawnHost();
+      }, delay);
+    };
+    current.once("exit", (code) =>
+      handleExit(`Host exited with code ${code ?? "unknown"}`));
+    current.once("error", (error) =>
+      handleExit(`Host failed to start: ${error.message}`));
+    current.stdin.on("error", (error) =>
+      handleExit(`Host stdin failed: ${error.message}`));
   };
-  lines.on("line", frames.publish);
-  child.once("error", (error) => recordFailure(error.message));
-  child.once("exit", (code) => recordFailure(`Host exited with code ${code ?? "unknown"}`));
-  child.stdin.on("error", (error) => recordFailure(error.message));
+  spawnHost();
   return {
     send(frame) {
       if (failure !== null) throw new Error(failure);
-      if (closed) throw new Error("Host sidecar is closed");
+      if (closed || child === null) throw new Error("Host sidecar is closed");
       child.stdin.write(`${frame}\n`);
     },
     onFrame(listener) {
@@ -110,20 +171,27 @@ export function startLocalSidecar(
     async close() {
       if (closed) return;
       closed = true;
-      child.stdin.end();
-      if (child.exitCode === null && child.signalCode === null) {
-        await new Promise<void>((resolve) => {
-          const giveUp = setTimeout(() => {
-            child.kill();
-            resolve();
-          }, FAILURE_CLOSE_GRACE_MS);
-          child.once("exit", () => {
-            clearTimeout(giveUp);
-            resolve();
-          });
-        });
+      if (restartTimer !== null) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
       }
-      lines.close();
+      const exiting = child;
+      if (exiting !== null) {
+        exiting.stdin.end();
+        if (exiting.exitCode === null && exiting.signalCode === null) {
+          await new Promise<void>((resolve) => {
+            const giveUp = setTimeout(() => {
+              exiting.kill();
+              resolve();
+            }, FAILURE_CLOSE_GRACE_MS);
+            exiting.once("exit", () => {
+              clearTimeout(giveUp);
+              resolve();
+            });
+          });
+        }
+      }
+      lines?.close();
       frames.clear();
     },
   };

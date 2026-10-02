@@ -43,6 +43,7 @@ export interface RendererHostRequestManager {
   onRequest(request: Record<string, unknown>): void;
   dispatchAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
   sendAppServerResponse?(method: string, response: Record<string, unknown>): unknown;
+  sendRequest?(method: string, parameters: unknown, options?: unknown): unknown;
   threadStore?: {
     observeCatalogThreads?: (threads: unknown[]) => void;
   };
@@ -77,6 +78,12 @@ export function installDraftPrewarmPolicyBridge(
     return { state: "ready", reason: "owned-request-bridge" };
   }
   existing?.dispose?.();
+  // A composer rebuild reinstalls this policy with fresh Desktop objects; the
+  // successor must keep the active-turn memory or a later Host death can no
+  // longer settle turns that started before the rebuild. dispose() parks the
+  // tracked turns on the target for exactly one handoff.
+  const inheritedTurns = target.__harnessmixBridgedActiveTurnsV1;
+  target.__harnessmixBridgedActiveTurnsV1 = undefined;
 
   const originalSend = bridge.sendRequest;
   const originalPrewarm = bridge.prewarmThreadStart;
@@ -122,10 +129,49 @@ export function installDraftPrewarmPolicyBridge(
     }`;
   let bridgeProcessHandle = createBridgeProcessHandle();
   const bridgeReadyMethod = "harnessmix/remote-control-bridge/ready";
-  const bridgeRequests = new Map<unknown, { method: string; parameters: unknown }>();
+  const bridgeRequests = new Map<unknown, { method: string; parameters: unknown; timer: ReturnType<typeof globalThis.setTimeout> | null; settle?: { resolve: (value: unknown) => void; reject: (error: unknown) => void } }>();
+  // Own id space for harnessmix/* control-plane requests. Desktop recreates
+  // its request manager whenever composers are rebuilt (running turns, thread
+  // switches, long-idle reloads); the captured client's enqueueRequest then
+  // silently stops dispatching — frames are never written and Desktop's own
+  // onResult registry cannot resolve responses either (observed live: the
+  // Host answered ready catalogs in ~1ms while the renderer burned its retry
+  // ladder into "Models unavailable"). Control requests mint their ids here
+  // and settle directly in handleBridgeFrame, independent of any Desktop
+  // object lifecycle. Native methods (turn/*, thread/*) stay on Desktop's
+  // registry — that is their only transport.
+  const bridgeControlRequestIdPrefix = "harnessmix/control-request/";
+  let nextBridgeControlRequestOrdinal = 1;
+  // Turns launched through the bridge that have not received their terminal
+  // notification yet. When the Host channel dies mid-turn no turn/completed
+  // ever arrives and Desktop latches "A prompt is already running for this
+  // session" forever; failBridge synthesizes the settle for these.
+  const bridgedActiveTurns = new Map<string, { turnId: unknown; turn: Record<string, unknown> | null }>();
+  {
+    const parked = inheritedTurns as
+      | { hostId?: unknown; turns?: Array<[string, { turnId: unknown; turn: Record<string, unknown> | null }]> }
+      | undefined;
+    if (
+      usesExternalBridge &&
+      parked &&
+      parked.hostId === hostId &&
+      Array.isArray(parked.turns)
+    ) {
+      for (const [threadId, entry] of parked.turns) {
+        if (typeof threadId === "string" && entry && typeof entry === "object") {
+          bridgedActiveTurns.set(threadId, entry);
+        }
+      }
+    }
+  }
   const bridgeServerRequestIdPrefix = "harnessmix/remote-control-bridge/server-request/";
   const bridgeServerRequests = new Map<string, unknown>();
   let nextBridgeServerRequestOrdinal = 1;
+  // Last-resort per-request deadline. Every renderer-side wrapper (model
+  // catalog 15s/20s races) only covers control-plane calls; a turn/start or
+  // thread op whose frames are silently lost (Host dead, controller gone)
+  // otherwise hangs Desktop's own request promise forever.
+  const bridgeRequestTimeoutMs = 60_000;
   let outputDecoders = {
     stdout: new TextDecoder(),
     stderr: new TextDecoder(),
@@ -162,8 +208,9 @@ export function installDraftPrewarmPolicyBridge(
   };
   const failBridge = (cause: unknown, terminateProcess = true): void => {
     if (bridgeState === "failed" || bridgeState === "disposed") return;
+    const wasLive = bridgeState === "starting" || bridgeState === "ready";
     const failedProcessHandle = bridgeProcessHandle;
-    const terminate = terminateProcess && (bridgeState === "starting" || bridgeState === "ready");
+    const terminate = terminateProcess && wasLive;
     bridgeState = "failed";
     if (bridgeReadyTimeout !== null) globalThis.clearTimeout(bridgeReadyTimeout);
     bridgeReadyTimeout = null;
@@ -175,13 +222,52 @@ export function installDraftPrewarmPolicyBridge(
     bridgeReadyReject?.(error);
     bridgeReadyReject = null;
     bridgeReadyResolve = null;
-    for (const requestId of bridgeRequests.keys()) bridge.onError(requestId, error);
+    for (const [requestId, request] of bridgeRequests) {
+      if (request.timer !== null) globalThis.clearTimeout(request.timer);
+      if (request.settle) request.settle.reject(error);
+      else bridge.onError(requestId, error);
+    }
     bridgeRequests.clear();
+    // Tracked turns only exist if a live channel delivered turn/started (or a
+    // predecessor policy handed them over), and failure frames only originate
+    // from real channel death — settle unconditionally here.
+    if (usesExternalBridge) settleBridgedTurns(
+      `Harness Mix Host connection lost (${cause instanceof Error ? cause.message : String(cause)})`,
+    );
     if (isRemoteControlHost && terminate) {
       void Promise.resolve(
         originalSend.call(bridge, "process/kill", { processHandle: failedProcessHandle }),
       ).catch(() => undefined);
     }
+  };
+  // Mirror the Host's terminal projection (turn/completed + idle
+  // thread/status/changed, see protocol.js onCore) so a dead channel unwedges
+  // the composer instead of leaving a phantom running prompt.
+  const settleBridgedTurns = (message: string): void => {
+    const completedAt = Math.floor(Date.now() / 1000);
+    for (const [threadId, entry] of bridgedActiveTurns) {
+      const base: Record<string, unknown> = entry.turn ?? {};
+      const turn = {
+        ...base,
+        status: "failed",
+        error: { message, codexErrorInfo: null, additionalDetails: null },
+        completedAt,
+      };
+      // Without a turn identity Desktop cannot match the completion to its
+      // thread model; the idle status alone still unwedges the composer.
+      if (typeof entry.turnId === "string" || typeof base.id === "string") {
+        originalOnNotification.call(manager, "turn/completed", {
+          threadId,
+          ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+          turn,
+        });
+      }
+      originalOnNotification.call(manager, "thread/status/changed", {
+        threadId,
+        status: { type: "idle" },
+      });
+    }
+    bridgedActiveTurns.clear();
   };
   const resetFailedBridge = (): void => {
     if (bridgeState !== "failed") return;
@@ -271,6 +357,14 @@ export function installDraftPrewarmPolicyBridge(
       if (value.method === "thread/started" && isRecord(value.params)) {
         rememberExternalThread(value.params.thread);
       }
+      if (usesExternalBridge && isRecord(value.params) && typeof value.params.threadId === "string") {
+        const threadId = value.params.threadId;
+        if (value.method === "turn/started" && isRecord(value.params.turn)) {
+          bridgedActiveTurns.set(threadId, { turnId: value.params.turn.id, turn: value.params.turn });
+        } else if (value.method === "turn/completed") {
+          bridgedActiveTurns.delete(threadId);
+        }
+      }
       originalOnNotification.call(manager, value.method, value.params);
       return;
     }
@@ -286,7 +380,24 @@ export function installDraftPrewarmPolicyBridge(
       return;
     }
     const request = bridgeRequests.get(value.id);
+    if (request && request.timer !== null) globalThis.clearTimeout(request.timer);
     bridgeRequests.delete(value.id);
+    if (request?.settle) {
+      // Self-minted control request: settle its promise here, never touching
+      // Desktop's registry (which may belong to a long-dead manager).
+      if ("error" in value) {
+        const detail = value.error;
+        request.settle.reject(
+          detail instanceof Error
+            ? detail
+            : new Error(String((isRecord(detail) && detail.message) || detail)),
+        );
+      } else {
+        observeBridgeResult(request, value.result);
+        request.settle.resolve(value.result);
+      }
+      return;
+    }
     if ("error" in value) {
       bridge.onError(value.id, value.error, value.metrics);
       return;
@@ -433,9 +544,42 @@ export function installDraftPrewarmPolicyBridge(
   };
   const enqueueBridgeRequest = (method: string, parameters: unknown, options?: unknown): unknown =>
     bridge.enqueueRequest(method, parameters, options, (request) => {
-      bridgeRequests.set(request.id, { method, parameters });
+      const entry: { method: string; parameters: unknown; timer: ReturnType<typeof globalThis.setTimeout> | null } =
+        { method, parameters, timer: null };
+      bridgeRequests.set(request.id, entry);
+      // Fire-and-forget transports (local sidecar binding) lose frames
+      // without any error when the channel is gone; bound each request so
+      // Desktop's promise settles with an error instead of hanging forever.
+      entry.timer = globalThis.setTimeout(() => {
+        if (bridgeRequests.get(request.id) !== entry) return;
+        bridgeRequests.delete(request.id);
+        bridge.onError(
+          request.id,
+          transportError(`${method} timed out after ${bridgeRequestTimeoutMs}ms without a Host response`),
+        );
+      }, bridgeRequestTimeoutMs);
       void writeBridgeFrame(request).catch((error) => failBridge(error));
     });
+  /** harnessmix/* requests ride the own id space: mint, write, and settle in
+   * handleBridgeFrame without involving any Desktop-owned registry object. */
+  const enqueueControlRequest = (method: string, parameters: unknown): Promise<unknown> =>
+    new Promise<unknown>((resolve, reject) => {
+      const id = `${bridgeControlRequestIdPrefix}${bridgeProcessHandle}/${nextBridgeControlRequestOrdinal}`;
+      nextBridgeControlRequestOrdinal += 1;
+      const entry: { method: string; parameters: unknown; timer: ReturnType<typeof globalThis.setTimeout> | null; settle: { resolve: (value: unknown) => void; reject: (error: unknown) => void } } =
+        { method, parameters, timer: null, settle: { resolve, reject } };
+      bridgeRequests.set(id, entry);
+      entry.timer = globalThis.setTimeout(() => {
+        if (bridgeRequests.get(id) !== entry) return;
+        bridgeRequests.delete(id);
+        reject(transportError(`${method} timed out after ${bridgeRequestTimeoutMs}ms without a Host response`));
+      }, bridgeRequestTimeoutMs);
+      void writeBridgeFrame({ id, method, params: parameters }).catch((error) => failBridge(error));
+    });
+  const enqueueHarnessRequest = (method: string, parameters: unknown, options?: unknown): unknown =>
+    method.startsWith("harnessmix/")
+      ? enqueueControlRequest(method, parameters)
+      : enqueueBridgeRequest(method, parameters, options);
   const initializeBridgeProtocol = (): Promise<unknown> => {
     const initialization = enqueueBridgeRequest("initialize", {
       clientInfo: {
@@ -480,7 +624,7 @@ export function installDraftPrewarmPolicyBridge(
   };
   if (catalogStore && typeof originalObserveCatalogThreads === "function") {
     void initializeBridge()
-      .then(() => enqueueBridgeRequest("harnessmix/thread/list", { archived: false }))
+      .then(() => enqueueControlRequest("harnessmix/thread/list", { archived: false }))
       .then((page) => {
         if (bridgeState === "disposed" || !isRecord(page) || !Array.isArray(page.data)) return;
         externalCatalogThreads = page.data;
@@ -504,7 +648,7 @@ export function installDraftPrewarmPolicyBridge(
     const resolution = initializeBridge()
       .then(
         () =>
-          enqueueBridgeRequest("harnessmix/thread/ownership/list", {
+          enqueueControlRequest("harnessmix/thread/ownership/list", {
             threadIds: [threadId],
           }) as Promise<unknown>,
       )
@@ -598,7 +742,7 @@ export function installDraftPrewarmPolicyBridge(
     const routedParameters = method === "thread/start" ? routeThreadStart(parameters) : parameters;
     const sendBridged = (): Promise<unknown> =>
       initializeBridge().then(
-        () => enqueueBridgeRequest(method, routedParameters, options) as Promise<unknown>,
+        () => enqueueHarnessRequest(method, routedParameters, options) as Promise<unknown>,
       );
     const sendDirect = (): unknown => {
       const result = options === undefined
@@ -625,7 +769,7 @@ export function installDraftPrewarmPolicyBridge(
         if (!isRecord(official) || !Array.isArray(official.data)) return official;
         try {
           await initializeBridge();
-          const external = await enqueueBridgeRequest("harnessmix/thread/list", routedParameters);
+          const external = await enqueueControlRequest("harnessmix/thread/list", routedParameters);
           if (!isRecord(external) || !Array.isArray(external.data)) return official;
           const byId = new Map<string, unknown>();
           for (const thread of official.data) {
@@ -688,6 +832,23 @@ export function installDraftPrewarmPolicyBridge(
   };
   bridge.sendRequest = routedSend;
   bridge.prewarmThreadStart = routedPrewarm;
+  // Patch the manager's own sendRequest too. The renderer model client calls
+  // manager.sendRequest directly; after Desktop recreates the composer's
+  // request machinery, that call no longer reaches the patched bridge object
+  // (fresh unpatched requestClient) and harnessmix/* requests vanish into the
+  // official app-server, which never answers them (observed live: "Model
+  // catalog request timed out" while the Host saw no traffic). Our own
+  // namespace rides the self-minted control channel regardless of which
+  // manager object the caller holds; every other method passes through.
+  const originalManagerSendRequest = typeof manager.sendRequest === "function" ? manager.sendRequest : null;
+  const routedManagerSendRequest = originalManagerSendRequest === null ? null :
+    (method: string, parameters: unknown, options?: unknown): unknown =>
+      method.startsWith("harnessmix/")
+        ? initializeBridge().then(() => enqueueControlRequest(method, parameters))
+        : options === undefined
+          ? originalManagerSendRequest.call(manager, method, parameters)
+          : originalManagerSendRequest.call(manager, method, parameters, options);
+  if (routedManagerSendRequest !== null) manager.sendRequest = routedManagerSendRequest;
   const routedWindowMessage = (event: Event): void => {
     const message = (event as Event & { data?: unknown }).data;
     if (
@@ -786,6 +947,9 @@ export function installDraftPrewarmPolicyBridge(
     },
     dispose(): void {
       if (bridge.sendRequest === routedSend) bridge.sendRequest = originalSend;
+      if (routedManagerSendRequest !== null && manager.sendRequest === routedManagerSendRequest) {
+        manager.sendRequest = originalManagerSendRequest!;
+      }
       const exposedBridge = target.__harnessmixRequestBridgeV1 as { bridge?: unknown } | undefined;
       if (exposedBridge?.bridge === bridge) {
         delete target.__harnessmixRequestBridgeV1;
@@ -820,8 +984,21 @@ export function installDraftPrewarmPolicyBridge(
       bridgeState = "disposed";
       const disposedError = transportError("was disposed");
       bridgeReadyReject?.(disposedError);
-      for (const requestId of bridgeRequests.keys()) bridge.onError(requestId, disposedError);
+      for (const [requestId, request] of bridgeRequests) {
+        if (request.timer !== null) globalThis.clearTimeout(request.timer);
+        if (request.settle) request.settle.reject(disposedError);
+        else bridge.onError(requestId, disposedError);
+      }
       bridgeRequests.clear();
+      if (usesExternalBridge && bridgedActiveTurns.size > 0) {
+        // Hand the active-turn memory to the next policy install (composer
+        // rebuild); cleared again when that install reads it.
+        target.__harnessmixBridgedActiveTurnsV1 = {
+          hostId,
+          turns: [...bridgedActiveTurns.entries()],
+        };
+      }
+      bridgedActiveTurns.clear();
       bridgeServerRequests.clear();
       knownExternalThreadIds.clear();
       knownOfficialThreadIds.clear();
@@ -867,7 +1044,7 @@ export function installDraftPrewarmPolicyBridge(
           );
         }
         return Promise.resolve(initializeBridge()).then(
-          () => enqueueBridgeRequest(method, parameters) as Promise<unknown>,
+          () => enqueueControlRequest(method, parameters) as Promise<unknown>,
         );
       },
     },
