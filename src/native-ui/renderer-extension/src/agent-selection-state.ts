@@ -1,30 +1,15 @@
+import { RENDERER_AGENTS } from "@harnessmix/shared-contracts";
 import type {
   HarnessModelRef,
   HarnessPermissionModeId,
   HarnessThinkingOptionId,
+  RendererAgentId,
 } from "@harnessmix/shared-contracts";
 
-export const KNOWN_RENDERER_AGENTS = [
-  "codex",
-  "pi",
-  "claude-code",
-  "deepseek-harness",
-  "opencode",
-  "grok",
-  "omp",
-  "antigravity",
-  "kiro-cli",
-  "openclaw",
-  "hermes",
-  "qoder",
-  "codebuddy",
-  "zcode",
-  "trae",
-  "cursor-cli",
-  "cline",
-  "kimi-code",
-  "codex-harness",
-] as const;
+// Single-sourced with the desktop controller (shared-contracts RENDERER_AGENTS):
+// two independent hardcoded lists drifted once (kimi-code shipped renderer-side
+// only) and killed every controller reinstall after the next page reload.
+export const KNOWN_RENDERER_AGENTS = RENDERER_AGENTS;
 export const DEFAULT_RENDERER_AGENTS = [
   'codex',
   'pi',
@@ -45,7 +30,7 @@ export const DEFAULT_RENDERER_AGENTS = [
   'cline',
   'kimi-code',
   'codex-harness',
-] as const;
+] as const satisfies readonly RendererAgentId[];
 export type RendererAgent = (typeof KNOWN_RENDERER_AGENTS)[number];
 export type ExternalRendererAgent = Exclude<RendererAgent, "codex">;
 export type RendererAgentAvailability =

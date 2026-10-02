@@ -74,9 +74,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The renderer bundle and the controller keep independently ordered catalogs. */
-function sameAgentSet(actual: readonly string[], expected: readonly string[]): boolean {
-  return actual.length === expected.length && expected.every((agent) => actual.includes(agent));
+/** The renderer bundle and the controller keep independently ordered catalogs.
+ * The page may know MORE agents than the controller (a bundle rebuilt with a
+ * new Harness while the controller process kept its older list — observed
+ * live: adding kimi-code flipped every reinstall into a permanent
+ * "invalid status" failure loop); only agents the controller expects but the
+ * page does not report are a real skew failure. */
+function missingAgents(actual: readonly string[], expected: readonly string[]): string[] {
+  return expected.filter((agent) => !actual.includes(agent));
 }
 
 function isPrimaryRendererUrl(value: string): boolean {
@@ -123,10 +128,15 @@ function validateBindingStatus(
     value.version !== 2 ||
     !Array.isArray(value.enabledAgents) ||
     value.enabledAgents.some((agent) => typeof agent !== "string") ||
-    !sameAgentSet(value.enabledAgents as string[], expectedAgents) ||
     !isRecord(value.adapter)
   ) {
     throw new Error("Production Renderer binding returned an invalid status");
+  }
+  const missing = missingAgents(value.enabledAgents as string[], expectedAgents);
+  if (missing.length > 0) {
+    throw new Error(
+      `Production Renderer binding is missing enabled agents: ${missing.join(", ")}`,
+    );
   }
   if (value.adapter.state !== "ready" || typeof value.adapter.reason !== "string") {
     throw new RendererAdapterReadinessError(
@@ -222,6 +232,7 @@ async function installTarget(
   timeoutMs: number,
   pollIntervalMs: number,
   operations: CdpOperations,
+  previousRenderer?: RendererConnection,
 ): Promise<InstalledTarget> {
   const renderer = await operations.connect(target.webSocketDebuggerUrl);
   let detachSidecar: (() => void) | undefined;
@@ -276,6 +287,15 @@ async function installTarget(
   } catch (error) {
     detachSidecar?.();
     renderer.close();
+    // The swap above removed the previous connection's binding registration;
+    // when the replacement fails mid-flight that registration must be handed
+    // back, or the page binding outlives every live session and the renderer
+    // loses its whole request channel (frames dispatched to nobody).
+    if (sidecar && previousRenderer) {
+      await previousRenderer
+        .command("Runtime.addBinding", { name: "__harnessmixSidecarSendV1" })
+        .catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -366,6 +386,7 @@ class ActiveRendererCdpControlSession implements RendererCdpControlSession {
       this.timeoutMs,
       this.pollIntervalMs,
       this.operations,
+      this.#renderer,
     );
     this.#detachSidecar?.();
     this.#renderer.close();

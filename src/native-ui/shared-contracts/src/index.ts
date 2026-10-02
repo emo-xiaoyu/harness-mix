@@ -196,6 +196,8 @@ export type {
 } from "./thread-harness-switch.js";
 
 export { REASONING_TRANSCRIPT_COMMAND } from "./reasoning-transcript.js";
+export { RENDERER_AGENTS } from "./renderer-agents.js";
+export type { RendererAgentId } from "./renderer-agents.js";
 export { harnessmixErrorSchema } from "./errors.js";
 export type { HarnessMixError } from "./errors.js";
 

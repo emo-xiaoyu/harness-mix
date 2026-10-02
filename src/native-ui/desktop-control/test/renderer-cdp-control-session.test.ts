@@ -296,4 +296,102 @@ describe("Renderer CDP Control Session", () => {
     expect(replacement.close).toHaveBeenCalledOnce();
     session.close();
   });
+
+  it("accepts a page binding that knows more agents than the controller list", async () => {
+    // The renderer bundle is rebuilt independently of the running controller
+    // (new Harness added); the persisted page probe reports the larger set and
+    // must not invalidate every reinstall.
+    const client = rendererClient({
+      version: 2,
+      enabledAgents: ["codex", "pi", "kimi-code"],
+      adapter: { state: "ready", reason: "ready" },
+    });
+    const session = await createRendererCdpControlSession({
+      rendererCdpEndpoint: "http://127.0.0.1:43123",
+      rendererSource: "production renderer",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+      operations: {
+        listTargets: vi.fn(async () => [target("page-1")]),
+        connect: vi.fn(async () => client),
+        installDraftPrewarmPolicy: vi.fn(async () => ({
+          state: "ready" as const,
+          reason: "owned-request-bridge" as const,
+        })),
+      },
+    });
+    expect(session.snapshot.binding.enabledAgents).toEqual(["codex", "pi", "kimi-code"]);
+    session.close();
+  });
+
+  it("names the missing agents when the page binding lacks a controller agent", async () => {
+    const client = rendererClient({
+      version: 2,
+      enabledAgents: ["codex"],
+      adapter: { state: "ready", reason: "ready" },
+    });
+    await expect(
+      createRendererCdpControlSession({
+        rendererCdpEndpoint: "http://127.0.0.1:43123",
+        rendererSource: "production renderer",
+        pollIntervalMs: 1,
+        timeoutMs: 50,
+        operations: {
+          listTargets: vi.fn(async () => [target("page-1")]),
+          connect: vi.fn(async () => client),
+          installDraftPrewarmPolicy: vi.fn(async () => ({
+            state: "ready" as const,
+            reason: "owned-request-bridge" as const,
+          })),
+        },
+      }),
+    ).rejects.toThrow(/missing enabled agents: pi/);
+    expect(client.close).toHaveBeenCalledOnce();
+  });
+
+  it("restores the previous connection's sidecar binding when a replacement install fails", async () => {
+    const first = rendererClient();
+    Object.assign(first, {
+      on: vi.fn(() => () => undefined),
+    });
+    const replacement = rendererClient();
+    Object.assign(replacement, {
+      on: vi.fn(() => () => undefined),
+    });
+    let inventory = [target("page-1")];
+    let installs = 0;
+    const sidecar = {
+      send: vi.fn(),
+      onFrame: vi.fn(() => () => undefined),
+      close: vi.fn(),
+    };
+    const session = await createRendererCdpControlSession({
+      rendererCdpEndpoint: "http://127.0.0.1:43123",
+      rendererSource: "production renderer",
+      sidecar,
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+      operations: {
+        listTargets: vi.fn(async () => inventory),
+        connect: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(replacement),
+        installDraftPrewarmPolicy: vi.fn(async () => {
+          installs += 1;
+          if (installs > 1) throw new Error("request manager unavailable");
+          return { state: "ready" as const, reason: "owned-request-bridge" as const };
+        }),
+      },
+    });
+
+    inventory = [target("page-2")];
+    await expect(session.ensureInstalled()).rejects.toThrow("request manager unavailable");
+    expect(session.snapshot.target.id).toBe("page-1");
+    expect(first.close).not.toHaveBeenCalled();
+    expect(replacement.close).toHaveBeenCalledOnce();
+    // The replacement's removeBinding orphaned the page binding; the failure
+    // path must re-register it on the still-live previous connection.
+    expect(first.command).toHaveBeenLastCalledWith("Runtime.addBinding", {
+      name: "__harnessmixSidecarSendV1",
+    });
+    session.close();
+  });
 });

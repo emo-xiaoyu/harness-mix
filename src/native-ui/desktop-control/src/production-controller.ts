@@ -6,6 +6,7 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { RENDERER_AGENTS } from "@harnessmix/shared-contracts";
 import { startLocalSidecar, type LocalSidecar } from "./local-sidecar.js";
 
 import {
@@ -264,26 +265,10 @@ export async function runDesktopController(
         rendererCdpEndpoint: options.rendererCdpEndpoint,
         rendererSource: `${RENDERER_CSP_BOOTSTRAP}\n${configuration}\n${rendererSource}`,
         ...(sidecar ? { sidecar } : {}),
-        enabledAgents: [
-          "codex",
-          "pi",
-          "claude-code",
-          "deepseek-harness",
-          "omp",
-          "opencode",
-          "grok",
-          "openclaw",
-          "hermes",
-          "antigravity",
-          "qoder",
-          "codebuddy",
-          "kiro-cli",
-          "cursor-cli",
-          "codex-harness",
-          "zcode",
-          "trae",
-          "cline",
-        ],
+        // Single-sourced with the renderer bundle (shared-contracts
+        // RENDERER_AGENTS): a local hardcoded copy here drifted from the
+        // bundle's list once and permanently broke reinstall validation.
+        enabledAgents: [...RENDERER_AGENTS],
         timeoutMs: PRODUCTION_INSTALL_TIMEOUT_MS,
       },
       dependencies,
@@ -323,6 +308,15 @@ export async function runDesktopController(
       session?.close();
       session = undefined;
       scheduleRecoveryFailure();
+      // The monitor retries silently on a bounded ladder; an integration that
+      // stays down for minutes is invisible without this line (the 2026-10-01
+      // channel outage was diagnosed only from Host traffic logs).
+      console.error(
+        `[harnessmix] Renderer session recovery failed; retrying in >=${Math.round(
+          recoveryDelayMs / 1000,
+        )}s:`,
+        error instanceof Error ? error.message : error,
+      );
       throw error;
     }
   };
