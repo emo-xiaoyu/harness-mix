@@ -639,8 +639,30 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   const proxyEnv = await systemProxyEnv();
   assert.equal(typeof proxyEnv, 'object');
   for (const value of Object.values(proxyEnv)) assert.equal(typeof value, 'string');
+  // Host env never gains injected keys it already defines (per-variable precedence).
+  for (const key of Object.keys(proxyEnv)) {
+    assert.equal(process.env[key], undefined, `injected ${key} must not override host env`);
+  }
 
-  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, turn pruning, and system proxy passthrough passed');
+  // 21. PAC (AutoConfigURL) directive extraction + per-variable env gap fill.
+  // A PAC-only proxy setup and an incomplete explicit env previously both fell
+  // back to direct connections, re-triggering agy login on every spawn.
+  const { parsePacProxyDirectives, fillProxyEnvGaps } = require('../src/main/native/process-utils');
+  assert.deepEqual(
+    parsePacProxyDirectives('function FindProxyForURL(url, host) { return "PROXY 127.0.0.1:7897; DIRECT"; }'),
+    { http: '127.0.0.1:7897', https: '127.0.0.1:7897' },
+  );
+  assert.deepEqual(parsePacProxyDirectives('return "SOCKS5 127.0.0.1:7890; DIRECT"'), { http: 'socks5://127.0.0.1:7890', https: 'socks5://127.0.0.1:7890' });
+  assert.equal(parsePacProxyDirectives('return "DIRECT"'), null);
+  assert.equal(parsePacProxyDirectives(''), null);
+  assert.deepEqual(
+    fillProxyEnvGaps({ HTTPS_PROXY: 'http://explicit:1' }, { HTTP_PROXY: 'a', http_proxy: 'a', HTTPS_PROXY: 'b', https_proxy: 'b', NO_PROXY: 'c', no_proxy: 'c' }),
+    { HTTP_PROXY: 'a', http_proxy: 'a', NO_PROXY: 'c', no_proxy: 'c' },
+  );
+  assert.deepEqual(fillProxyEnvGaps({ http_proxy: 'x' }, { HTTP_PROXY: 'a', http_proxy: 'a' }), {});
+  assert.deepEqual(fillProxyEnvGaps(null, { HTTP_PROXY: 'a' }), { HTTP_PROXY: 'a' });
+
+  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, turn pruning, system proxy passthrough and PAC/env-gap fill passed');
 })().catch((err) => {
   console.error(err);
   process.exitCode = 1;

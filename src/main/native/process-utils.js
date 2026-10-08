@@ -2,6 +2,9 @@
 // On Windows a plain child.kill() only terminates the direct child, so CLI
 // wrappers (cmd → npm → node) need taskkill /T to reach the whole tree.
 const { spawn, execFile } = require('node:child_process');
+const fs = require('node:fs');
+const http = require('node:http');
+const https = require('node:https');
 
 function descendantPids(rows, root) {
   const children = new Map();
@@ -60,10 +63,12 @@ function terminateTree(pid, { timeoutMs = 5000 } = {}) {
 // API traffic black-hole even though the system proxy is up — for agy this
 // re-triggers interactive login on every start. Expose the WinINET settings as
 // standard proxy env vars; callers merge this into the child env. Explicit
-// proxy env on the host always wins.
+// proxy env on the host wins per variable (only unset variables are filled).
 const WININET_INTERNET_SETTINGS_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 const SYSTEM_PROXY_ENV_TTL_MS = 5 * 60 * 1000;
+const PAC_FETCH_TIMEOUT_MS = 3000;
+const PAC_MAX_BYTES = 256 * 1024;
 let systemProxyEnvCache = { env: null, at: 0 };
 
 function parseWininetProxyTarget(raw) {
@@ -118,7 +123,7 @@ function readWininetProxySettings() {
         if (error || !stdout) return resolve(null);
         const values = {};
         for (const line of String(stdout).split(/\r?\n/)) {
-          const match = line.match(/^\s*(ProxyEnable|ProxyServer|ProxyOverride)\s+\S+\s+(.*?)\s*$/);
+          const match = line.match(/^\s*(ProxyEnable|ProxyServer|ProxyOverride|AutoConfigURL)\s+\S+\s+(.*?)\s*$/);
           if (match) values[match[1]] = match[2];
         }
         resolve(values);
@@ -127,31 +132,86 @@ function readWininetProxySettings() {
   });
 }
 
-function hasExplicitProxyEnv(env) {
-  return Boolean(env.HTTP_PROXY || env.http_proxy || env.HTTPS_PROXY || env.https_proxy || env.ALL_PROXY || env.all_proxy);
+// PAC（AutoConfigURL）模式下注册表没有固定 ProxyServer。完整求值 PAC 需要 JS
+// 引擎，这里不做：Clash/v2ray 等工具生成的 PAC 几乎都以 `return "PROXY host:port;
+// DIRECT"` 收尾，抽取第一个 PROXY/SOCKS5 指令就足够 Go 子进程使用。解析不出任何
+// 指令时返回 null，维持不注入的现状。
+function parsePacProxyDirectives(raw) {
+  const text = String(raw || '');
+  const proxy = /\bPROXY\s+([^\s;"]+:\d+)/i.exec(text);
+  if (proxy) return { http: proxy[1], https: proxy[1] };
+  const socks = /\bSOCKS5?\s+([^\s;"]+:\d+)/i.exec(text);
+  if (socks) return { http: `socks5://${socks[1]}`, https: `socks5://${socks[1]}` };
+  return null;
+}
+
+function fetchPacScript(rawUrl) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => { if (!settled) { settled = true; resolve(value); } };
+    let url;
+    try { url = new URL(String(rawUrl || '').trim()); } catch { return done(null); }
+    if (url.protocol === 'file:') {
+      fs.promises.readFile(url, 'utf8').then(done, () => done(null));
+      return;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return done(null);
+    const request = (url.protocol === 'https:' ? https : http).get(url, { timeout: PAC_FETCH_TIMEOUT_MS }, (response) => {
+      if (response.statusCode !== 200) { response.resume(); return done(null); }
+      const chunks = [];
+      let size = 0;
+      response.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > PAC_MAX_BYTES) { request.destroy(); done(null); return; }
+        chunks.push(chunk);
+      });
+      response.on('end', () => done(Buffer.concat(chunks).toString('utf8')));
+      response.on('error', () => done(null));
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => done(null));
+  });
+}
+
+// 宿主已显式设置的代理变量按变量级优先：只补缺失的键（大小写两种写法都视为已
+// 设置），而不是之前的存在任意一个代理变量就整体放弃注入——那会把只配了
+// HTTP_PROXY、漏配 HTTPS_PROXY 的宿主也变成直连。
+function fillProxyEnvGaps(hostEnv, resolved) {
+  const present = new Set(Object.keys(hostEnv || {}));
+  const out = {};
+  for (const [key, value] of Object.entries(resolved || {})) {
+    if (present.has(key)) continue;
+    const twin = key === key.toUpperCase() ? key.toLowerCase() : key.toUpperCase();
+    if (present.has(twin)) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 async function systemProxyEnv() {
   if (process.platform !== 'win32') return {};
-  if (hasExplicitProxyEnv(process.env)) return {};
   const now = Date.now();
   if (systemProxyEnvCache.env && now - systemProxyEnvCache.at < SYSTEM_PROXY_ENV_TTL_MS) {
-    return systemProxyEnvCache.env;
+    return fillProxyEnvGaps(process.env, systemProxyEnvCache.env);
   }
   const values = await readWininetProxySettings();
-  let resolved = {};
+  let targets = null;
   if (values && String(values.ProxyEnable || '').trim() === '0x1') {
-    const targets = parseWininetProxyTarget(values.ProxyServer);
-    if (targets) {
-      resolved = {};
-      if (targets.http) resolved.HTTP_PROXY = resolved.http_proxy = withProxyScheme(targets.http);
-      if (targets.https) resolved.HTTPS_PROXY = resolved.https_proxy = withProxyScheme(targets.https);
-      const noProxy = parseWininetProxyOverride(values.ProxyOverride);
-      if (noProxy) resolved.NO_PROXY = resolved.no_proxy = noProxy;
-    }
+    targets = parseWininetProxyTarget(values.ProxyServer);
+  }
+  if (!targets && values?.AutoConfigURL) {
+    const pac = await fetchPacScript(values.AutoConfigURL);
+    targets = pac ? parsePacProxyDirectives(pac) : null;
+  }
+  let resolved = {};
+  if (targets) {
+    if (targets.http) resolved.HTTP_PROXY = resolved.http_proxy = withProxyScheme(targets.http);
+    if (targets.https) resolved.HTTPS_PROXY = resolved.https_proxy = withProxyScheme(targets.https);
+    const noProxy = parseWininetProxyOverride(values.ProxyOverride);
+    if (noProxy) resolved.NO_PROXY = resolved.no_proxy = noProxy;
   }
   systemProxyEnvCache = { env: resolved, at: now };
-  return resolved;
+  return fillProxyEnvGaps(process.env, resolved);
 }
 
-module.exports = { terminateTree, descendantPids, systemProxyEnv, parseWininetProxyTarget, parseWininetProxyOverride, withProxyScheme };
+module.exports = { terminateTree, descendantPids, systemProxyEnv, parseWininetProxyTarget, parseWininetProxyOverride, parsePacProxyDirectives, fillProxyEnvGaps, withProxyScheme };
