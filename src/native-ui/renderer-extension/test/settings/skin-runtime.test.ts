@@ -196,6 +196,8 @@ describe("renderer skin runtime", () => {
       expect(css).toContain('[data-app-shell-header-toolbar] > div:first-child {');
       expect(css).toContain('> button[aria-haspopup="menu"][data-state="open"]');
       expect(css).toContain("background: transparent !important;");
+      expect(css).toContain('[data-app-shell-main-content-top-fade] > [aria-hidden="true"][class*="_MainContentTopFade_"]');
+      expect(css).not.toContain('opacity: 0 !important');
     }
   });
 });

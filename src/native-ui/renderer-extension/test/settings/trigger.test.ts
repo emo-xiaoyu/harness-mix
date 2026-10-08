@@ -123,7 +123,7 @@ describe("Renderer settings header trigger", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mounts directly before the application header end slot without Thread actions", () => {
+  it.each(['legacy', 'page-toolbar'])("restores the trigger after replacing the %s header", (layout) => {
     class FakeElement {
       readonly attributes = new Map<string, string>();
       readonly children: FakeElement[] = [];
@@ -135,6 +135,7 @@ describe("Renderer settings header trigger", () => {
       parentElement: FakeElement | null = null;
       title = "";
       type = "";
+      visible = true;
 
       constructor(readonly left = 0) {
         this.style.setProperty = (name: string, value: string) => {
@@ -165,8 +166,8 @@ describe("Renderer settings header trigger", () => {
           right: this.left + 80,
           top: 0,
           bottom: 46,
-          width: 80,
-          height: 46,
+          width: this.visible ? 80 : 0,
+          height: this.visible ? 46 : 0,
         } as DOMRect;
       }
       insertBefore(child: FakeElement, before: FakeElement | null): FakeElement {
@@ -182,6 +183,14 @@ describe("Renderer settings header trigger", () => {
         return selector === ':scope > [data-test-id="header-shell-slot"]'
           ? this.children.filter((child) => child.attributes.has("data-test-id"))
           : [];
+      }
+      querySelector(selector: string): FakeElement | null {
+        return selector === ':scope > [data-app-shell-header-toolbar]'
+          ? this.children.find(child => child.hasAttribute('data-app-shell-header-toolbar')) ?? null
+          : null;
+      }
+      hasAttribute(name: string): boolean {
+        return this.attributes.has(name);
       }
       remove(): void {
         if (this.parentElement) {
@@ -209,14 +218,23 @@ describe("Renderer settings header trigger", () => {
     const content = new FakeElement(240);
     const endSlot = new FakeElement(1120);
     endSlot.setAttribute("data-test-id", "header-shell-slot");
-    header.append(startSlot, content, endSlot);
+    const toolbar = new FakeElement(1000);
+    toolbar.setAttribute('data-app-shell-header-toolbar', 'true');
+    const actions = new FakeElement(1120);
+    toolbar.append(actions);
+    if (layout === 'legacy') header.append(startSlot, content, endSlot);
+    else header.append(content, toolbar);
+    const hiddenHeader = new FakeElement();
+    hiddenHeader.visible = false;
     let currentHeader = header;
     const document = {
       createElement: () => new FakeElement(),
       createElementNS: () => new FakeElement(),
       querySelector: (selector: string) =>
         selector === 'header[data-pip-obstacle="app-shell-header"]' ? currentHeader : null,
-      querySelectorAll: () => [],
+      querySelectorAll: (selector: string) =>
+        selector === (layout === 'legacy' ? 'header[data-pip-obstacle="app-shell-header"]' : '[data-app-shell-page-header]')
+          ? [hiddenHeader, currentHeader] : [],
     } as unknown as Document;
     vi.stubGlobal("document", document);
 
@@ -228,7 +246,10 @@ describe("Renderer settings header trigger", () => {
       });
 
       expect(control.root).not.toBeNull();
-      expect(header.children).toEqual([startSlot, content, control.root, endSlot]);
+      if (layout === 'legacy') expect(header.children).toEqual([startSlot, content, control.root, endSlot]);
+      else expect(toolbar.children).toEqual([control.root, actions]);
+      const originalRoot = control.root;
+      control.setUpdateAvailable(true);
 
       const replacementHeader = new FakeElement();
       const replacementStartSlot = new FakeElement(0);
@@ -236,17 +257,24 @@ describe("Renderer settings header trigger", () => {
       const replacementContent = new FakeElement(240);
       const replacementEndSlot = new FakeElement(1120);
       replacementEndSlot.setAttribute("data-test-id", "header-shell-slot");
-      replacementHeader.append(replacementStartSlot, replacementContent, replacementEndSlot);
+      const replacementToolbar = new FakeElement(1000);
+      replacementToolbar.setAttribute('data-app-shell-header-toolbar', 'true');
+      const replacementActions = new FakeElement(1120);
+      replacementToolbar.append(replacementActions);
+      if (layout === 'legacy') replacementHeader.append(replacementStartSlot, replacementContent, replacementEndSlot);
+      else replacementHeader.append(replacementContent, replacementToolbar);
       currentHeader = replacementHeader;
 
       expect(control.refresh()).toBe(true);
-      expect(header.children).toEqual([startSlot, content, endSlot]);
-      expect(replacementHeader.children).toEqual([
-        replacementStartSlot,
-        replacementContent,
-        control.root,
-        replacementEndSlot,
-      ]);
+      expect(control.root).toBe(originalRoot);
+      expect((control.root as unknown as FakeElement).attributes.has('data-update-available')).toBe(true);
+      if (layout === 'legacy') {
+        expect(header.children).toEqual([startSlot, content, endSlot]);
+        expect(replacementHeader.children).toEqual([replacementStartSlot, replacementContent, control.root, replacementEndSlot]);
+      } else {
+        expect(toolbar.children).toEqual([actions]);
+        expect(replacementToolbar.children).toEqual([control.root, replacementActions]);
+      }
       control.dispose();
     } finally {
       vi.unstubAllGlobals();
@@ -266,5 +294,135 @@ describe("Renderer settings header trigger", () => {
         },
       ]),
     ).toBeNull();
+  });
+
+  it("pins absolutely to the header's right edge on the 26.1002 titlebar", () => {
+    class TitlebarElement {
+      readonly attributes = new Map<string, string>();
+      readonly children: TitlebarElement[] = [];
+      readonly listeners = new Map<string, (event: { stopPropagation(): void }) => void>();
+      readonly classList = { add: vi.fn() };
+      readonly style: Record<string, string | ((name: string, value: string) => void)> = {};
+      disabled = false;
+      isConnected = true;
+      parentElement: TitlebarElement | null = null;
+      title = "";
+      type = "";
+
+      constructor(readonly left = 0) {
+        this.style.setProperty = (name: string, value: string) => {
+          this.style[name] = value;
+        };
+      }
+
+      get nextSibling(): TitlebarElement | null {
+        if (!this.parentElement) return null;
+        const index = this.parentElement.children.indexOf(this);
+        return this.parentElement.children[index + 1] ?? null;
+      }
+      addEventListener(name: string, listener: (event: { stopPropagation(): void }) => void): void {
+        this.listeners.set(name, listener);
+      }
+      append(...children: TitlebarElement[]): void {
+        for (const child of children) this.insertBefore(child, null);
+      }
+      appendChild(child: TitlebarElement): TitlebarElement {
+        return this.insertBefore(child, null);
+      }
+      getBoundingClientRect(): DOMRect {
+        return {
+          left: this.left,
+          right: this.left + 80,
+          top: 0,
+          bottom: 46,
+          width: 80,
+          height: 46,
+        } as DOMRect;
+      }
+      insertBefore(child: TitlebarElement, before: TitlebarElement | null): TitlebarElement {
+        child.remove();
+        child.parentElement = this;
+        child.isConnected = true;
+        const index = before ? this.children.indexOf(before) : -1;
+        if (index < 0) this.children.push(child);
+        else this.children.splice(index, 0, child);
+        return child;
+      }
+      getAttribute(name: string): string | null {
+        return this.attributes.has(name) ? (this.attributes.get(name) as string) : null;
+      }
+      hasAttribute(name: string): boolean {
+        return this.attributes.has(name);
+      }
+      querySelector(selector: string): TitlebarElement | null {
+        if (selector !== '[data-testid="app-shell-header-context-menu-surface"]') return null;
+        return this.children.find((child) => child.attributes.has("data-testid")) ?? null;
+      }
+      querySelectorAll(selector: string): TitlebarElement[] {
+        return selector === ':scope > [data-test-id="header-shell-slot"]'
+          ? this.children.filter((child) => child.attributes.has("data-test-id"))
+          : [];
+      }
+      remove(): void {
+        if (this.parentElement) {
+          const index = this.parentElement.children.indexOf(this);
+          if (index >= 0) this.parentElement.children.splice(index, 1);
+        }
+        this.parentElement = null;
+        this.isConnected = false;
+      }
+      removeEventListener(name: string): void {
+        this.listeners.delete(name);
+      }
+      setAttribute(name: string, value: string): void {
+        this.attributes.set(name, value);
+      }
+      toggleAttribute(name: string, force: boolean): void {
+        if (force) this.attributes.set(name, "");
+        else this.attributes.delete(name);
+      }
+    }
+
+    const header = new TitlebarElement(240);
+    const startSlot = new TitlebarElement(240);
+    startSlot.setAttribute("data-test-id", "header-shell-slot");
+    startSlot.setAttribute("data-app-shell-header-slot", "start");
+    const surface = new TitlebarElement(240);
+    surface.setAttribute("data-testid", "app-shell-header-context-menu-surface");
+    const clipOverlay = new TitlebarElement(240);
+    clipOverlay.setAttribute("style", "clip-path: inset(0px 47px 0px 6px);");
+    const endSlot = new TitlebarElement(1120);
+    endSlot.setAttribute("data-test-id", "header-shell-slot");
+    endSlot.setAttribute("data-app-shell-header-slot", "end");
+    header.append(startSlot, surface, clipOverlay, endSlot);
+    const document = {
+      createElement: () => new TitlebarElement(),
+      createElementNS: () => new TitlebarElement(),
+      querySelector: (selector: string) =>
+        selector === 'header[data-pip-obstacle="app-shell-header"]' ? header : null,
+      querySelectorAll: (selector: string) =>
+        selector === 'header[data-pip-obstacle="app-shell-header"]' ? [header] : [],
+    } as unknown as Document;
+    vi.stubGlobal("document", document);
+
+    try {
+      const control = installRendererSettingsHeaderTrigger({
+        available: true,
+        onOpen: vi.fn(),
+        ownerDocument: document,
+      });
+
+      expect(control.root).not.toBeNull();
+      expect(control.root?.parentElement).toBe(header);
+      // Before the end slot in DOM, but out of the flex flow and pinned right
+      // past the 47px native reserve.
+      expect(header.children).toEqual([startSlot, surface, clipOverlay, control.root, endSlot]);
+      expect(control.root?.style.position).toBe("absolute");
+      expect(control.root?.style.right).toBe("55px");
+      expect(control.root?.style.top).toBe("50%");
+      control.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

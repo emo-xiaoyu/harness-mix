@@ -12,6 +12,8 @@ export const SETTINGS_HEADER_SURFACE_SELECTOR =
   '[data-testid="app-shell-header-context-menu-surface"]';
 const SETTINGS_APPLICATION_HEADER_SELECTOR = 'header[data-pip-obstacle="app-shell-header"]';
 const SETTINGS_HEADER_SLOT_SELECTOR = ':scope > [data-test-id="header-shell-slot"]';
+const SETTINGS_PAGE_HEADER_SELECTOR = '[data-app-shell-page-header]';
+const SETTINGS_PAGE_TOOLBAR_SELECTOR = ':scope > [data-app-shell-header-toolbar]';
 
 export interface RendererSettingsTriggerControl {
   root: HTMLElement;
@@ -47,6 +49,13 @@ export interface RendererSettingsHeaderTriggerControl {
 interface RendererSettingsHeaderInsertionPoint {
   parent: HTMLElement;
   before: ChildNode | null;
+  /**
+   * Desktop 26.1002+ titlebar: the header is a fixed drag strip whose only
+   * in-flow children are zero-width anchor slots plus a full-width absolute
+   * title surface. A flex-item trigger lands on top of the thread title, so
+   * the trigger is pinned absolutely to the header's right edge instead.
+   */
+  pinnedRight?: string;
 }
 
 export interface RendererSettingsContractInspection {
@@ -104,12 +113,12 @@ export function selectRendererSettingsHeaderSlot<T>(
 export function inspectRendererSettingsContract(
   ownerDocument: Document = document,
 ): RendererSettingsContractInspection {
-  const headers = [
-    ...ownerDocument.querySelectorAll<HTMLElement>(SETTINGS_APPLICATION_HEADER_SELECTOR),
-  ];
+  const headers = [...ownerDocument.querySelectorAll<HTMLElement>(
+    `${SETTINGS_APPLICATION_HEADER_SELECTOR}, ${SETTINGS_PAGE_HEADER_SELECTOR}`,
+  )];
   const visibleHeaders = headers.filter((header) => isVisiblyLaidOut(measuredBounds(header)));
   const insertionPointCount = visibleHeaders.filter((header) =>
-    [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)].some((slot) =>
+    [...header.querySelectorAll<HTMLElement>(`${SETTINGS_HEADER_SLOT_SELECTOR}, ${SETTINGS_PAGE_TOOLBAR_SELECTOR}`)].some((slot) =>
       isVisiblyLaidOut(measuredBounds(slot)),
     ),
   ).length;
@@ -120,23 +129,73 @@ export function inspectRendererSettingsContract(
   };
 }
 
-// Locates where the trigger belongs: the rightmost visible direct slot child
-// of the visible application header. The trigger is inserted before that slot.
+// Prefer the visible page toolbar, retaining the application header end slot
+// for older Desktop versions and pages without a chat toolbar.
 function findRendererSettingsHeaderInsertionPoint(
   ownerDocument: Document,
 ): RendererSettingsHeaderInsertionPoint | null {
-  const header = ownerDocument.querySelector<HTMLElement>(SETTINGS_APPLICATION_HEADER_SELECTOR);
-  if (!header) return null;
+  // Recent Desktop versions put chat actions in the page toolbar instead of
+  // the old application-header slots. Do not depend on button labels or icons.
+  for (const header of ownerDocument.querySelectorAll<HTMLElement>(SETTINGS_PAGE_HEADER_SELECTOR)) {
+    if (!isVisiblyLaidOut(measuredBounds(header))) continue;
+    const toolbar = header.querySelector<HTMLElement>(SETTINGS_PAGE_TOOLBAR_SELECTOR);
+    if (!toolbar || !isVisiblyLaidOut(measuredBounds(toolbar))) continue;
+    const before = [...toolbar.children].find(child => !child.hasAttribute(SETTINGS_TRIGGER_ATTRIBUTE)) ?? null;
+    return { parent: toolbar, before };
+  }
+  for (const header of ownerDocument.querySelectorAll<HTMLElement>(SETTINGS_APPLICATION_HEADER_SELECTOR)) {
+    if (!isVisiblyLaidOut(measuredBounds(header))) continue;
+    const titleSurface = header.querySelector<HTMLElement>(SETTINGS_HEADER_SURFACE_SELECTOR);
+    if (titleSurface && titleSurface.parentElement === header) {
+      return { parent: header, before: findHeaderEndSlot(header), pinnedRight: `${measureHeaderTrailingReserve(header) + 8}px` };
+    }
+    const visibleSlots = [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)]
+      .filter((slot) => isVisiblyLaidOut(measuredBounds(slot)));
+    const endSlot = visibleSlots.toSorted(
+      (left, right) => measuredBounds(right).left - measuredBounds(left).left,
+    )[0];
+    if (endSlot) return { parent: header, before: endSlot };
+  }
+  return null;
+}
 
-  const headerBounds = measuredBounds(header);
-  if (!isVisiblyLaidOut(headerBounds)) return null;
+function findHeaderEndSlot(header: HTMLElement): HTMLElement | null {
+  const slots = [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)];
+  return (
+    slots.find((slot) => slot.getAttribute?.("data-app-shell-header-slot") === "end") ?? null
+  );
+}
 
-  const visibleSlots = [...header.querySelectorAll<HTMLElement>(SETTINGS_HEADER_SLOT_SELECTOR)]
-    .filter((slot) => isVisiblyLaidOut(measuredBounds(slot)));
-  const endSlot = visibleSlots.toSorted(
-    (left, right) => measuredBounds(right).left - measuredBounds(left).left,
-  )[0];
-  return endSlot ? { parent: header, before: endSlot } : null;
+/**
+ * The new titlebar keeps its right edge clear for native chrome via a
+ * clip-path overlay child (`inset(0px 47px 0px 6px)`); the second inset
+ * component is the reserved band. Falls back to a conservative default.
+ */
+function measureHeaderTrailingReserve(header: HTMLElement): number {
+  const bounds = measuredBounds(header);
+  let reserve = 48;
+  for (const child of header.children) {
+    const style = (child as HTMLElement).getAttribute?.("style") ?? "";
+    const clipped = style.match(/clip-path:\s*inset\(([^)]*)\)/);
+    const inset = clipped?.[1];
+    if (!inset) continue;
+    const parts = inset.match(/-?\d+(?:\.\d+)?px/g);
+    const rightPx = parts?.[1];
+    if (rightPx !== undefined) {
+      const right = Number.parseFloat(rightPx);
+      if (Number.isFinite(right) && right >= 0) { reserve = right; break; }
+    }
+  }
+  // The clip only reserves the end slot. Chat actions are inside the full-width
+  // title surface, so include their real boxes rather than covering them.
+  for (const control of header.querySelectorAll<HTMLElement>('button, [role="button"], a')) {
+    if (control.closest(`[${SETTINGS_TRIGGER_ATTRIBUTE}]`)) continue;
+    const box = measuredBounds(control);
+    if (!isVisiblyLaidOut(box) || box.left < bounds.left + bounds.width / 2 ||
+        box.right > bounds.right + 1 || box.top >= bounds.bottom || box.bottom <= bounds.top) continue;
+    reserve = Math.max(reserve, bounds.right - box.left);
+  }
+  return reserve;
 }
 
 function makeFlexAndNonDrag(element: HTMLElement): void {
@@ -312,9 +371,35 @@ export function installRendererSettingsHeaderTrigger(options: {
     ) {
       insertionPoint.parent.insertBefore(trigger.root, insertionPoint.before);
     }
+    const position = insertionPoint.pinnedRight
+      ? { position: 'absolute', top: '50%', transform: 'translateY(-50%)', right: insertionPoint.pinnedRight }
+      : { position: '', top: '', transform: '', right: '' };
+    for (const [name, value] of Object.entries(position)) {
+      const property = name as 'position' | 'top' | 'transform' | 'right';
+      if (trigger.root.style[property] !== value) trigger.root.style[property] = value;
+    }
     return true;
   };
 
+  const ownerWindow = ownerDocument.defaultView;
+  let refreshFrame: number | null = null;
+  const scheduleRefresh = (): void => {
+    if (disposed || !ownerWindow || refreshFrame !== null) return;
+    refreshFrame = ownerWindow.requestAnimationFrame(() => {
+      refreshFrame = null;
+      refresh();
+    });
+  };
+  const observer = ownerWindow?.MutationObserver ? new ownerWindow.MutationObserver((records) => {
+    if (records.some(record => !(record.target as Element).closest?.(`[${SETTINGS_TRIGGER_ATTRIBUTE}]`))) scheduleRefresh();
+  }) : null;
+  observer?.observe(ownerDocument.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['hidden', 'aria-hidden', 'class', 'style', 'data-app-shell-page-header', 'data-app-shell-header-toolbar'],
+  });
+  ownerWindow?.addEventListener('resize', scheduleRefresh);
   refresh();
   return {
     get root() {
@@ -328,6 +413,9 @@ export function installRendererSettingsHeaderTrigger(options: {
     dispose() {
       if (disposed) return;
       disposed = true;
+      observer?.disconnect();
+      ownerWindow?.removeEventListener('resize', scheduleRefresh);
+      if (refreshFrame !== null) ownerWindow?.cancelAnimationFrame(refreshFrame);
       trigger?.dispose();
       trigger = null;
     },

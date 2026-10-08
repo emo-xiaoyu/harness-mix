@@ -695,10 +695,12 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-pip-obstacle="app-shell-head
   background: transparent !important;
   background-color: transparent !important;
 }
-html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-main-content-top-fade] {
+/* Desktop now puts the fade marker on the content parent. Only clear its
+   background; changing parent opacity also hides the timeline and composer. */
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-main-content-top-fade],
+html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-main-content-top-fade] > [aria-hidden="true"][class*="_MainContentTopFade_"] {
   background: none !important;
   background-image: none !important;
-  opacity: 0 !important;
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-shell-page-header] > [data-app-shell-header-toolbar] > div:first-child {
   background: transparent !important;
@@ -835,6 +837,7 @@ html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-app-action-sidebar-thread-ac
 }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] :where(.border-border, .border-sidebar-border) { border-color: color-mix(in srgb, ${text} 14%, transparent) !important; }
 html[${RENDERER_SKIN_ATTRIBUTE}="${skin.id}"] [data-harnessmix-settings-shell] {
+  --settings-header-bg: ${surface};
   --settings-bg: color-mix(in srgb, ${surface} 90%, transparent);
   --settings-sidebar: color-mix(in srgb, ${surface} 86%, ${secondary});
   --settings-panel: color-mix(in srgb, ${surface} 90%, transparent);

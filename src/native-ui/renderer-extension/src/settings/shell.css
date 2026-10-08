@@ -69,10 +69,11 @@ button {
 
 .harnessmix-settings-dialog {
   width: min(1200px, calc(100vw - 32px));
-  height: min(880px, calc(100vh - 48px));
+  height: min(880px, calc(100vh - 64px));
   max-width: none;
-  max-height: calc(100vh - 48px);
-  margin-top: max(24px, calc((100vh - 880px) / 2));
+  max-height: calc(100vh - 64px);
+  /* Leave the Desktop application menu/window controls clear. */
+  margin-top: max(48px, calc((100vh - 880px) / 2));
   margin-inline: auto;
   margin-bottom: auto;
   padding: 0;
@@ -127,6 +128,7 @@ button {
   height: 50px;
   flex: none;
   padding: 0 16px;
+  background: var(--settings-header-bg, var(--settings-bg));
   border-bottom: 1px solid var(--settings-border);
 }
 
@@ -2021,7 +2023,7 @@ button {
 @media (max-width: 720px) {
   .harnessmix-settings-dialog {
     width: calc(100vw - 16px);
-    height: calc(100vh - 16px);
+    height: calc(100vh - 64px);
     border-radius: 10px;
   }
 
