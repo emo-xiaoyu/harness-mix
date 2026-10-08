@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 
@@ -442,23 +443,58 @@ function proxyAgentFor(proxyUrl) {
   return agent;
 }
 
-function getProxyDispatcher(targetUrl, env = process.env) {
+function resolveProxyUrl(targetUrl, env = process.env) {
   if (isLoopbackTarget(targetUrl)) return undefined;
   const proxy = env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || windowsSystemProxyUrl(env);
-  if (!proxy) return undefined;
-  try {
-    return proxyAgentFor(proxy) ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return proxy || undefined;
+}
+
+// http:// 目标经正向代理：用 node:http 直发绝对形态请求（forward proxy 对明文 HTTP 的
+// 标准语义）。undici 的 ProxyAgent 在部分 Linux/macOS 组合（Node 22 + undici 8）上对
+// 明文目标的绝对形态请求会静默挂起——代理端零连接直到超时（Windows 上同版本正常），
+// 所以明文路径不依赖 undici，全部平台行为一致。
+function fetchHttpViaProxy(targetUrl, proxyUrl, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    let target;
+    try { target = new URL(targetUrl); } catch { return reject(new Error(`Invalid URL: ${targetUrl}`)); }
+    let proxy;
+    try { proxy = new URL(proxyUrl); } catch { return reject(new Error(`Invalid proxy URL: ${proxyUrl}`)); }
+    const req = http.request({
+      protocol: proxy.protocol,
+      hostname: proxy.hostname,
+      port: proxy.port || 80,
+      method: 'GET',
+      path: targetUrl,
+      headers: { host: target.host },
+      signal,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('error', reject);
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          headers: { get: (name) => res.headers[String(name).toLowerCase()] ?? null },
+          body: { cancel: () => res.destroy() },
+          arrayBuffer: async () => buffer,
+        });
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 async function fetchWithProxy(url, options = {}, env = process.env) {
-  const dispatcher = getProxyDispatcher(url, env);
-  if (!dispatcher) return fetch(url, options);
+  const proxyUrl = resolveProxyUrl(url, env);
+  if (!proxyUrl) return fetch(url, options);
+  if (String(url).startsWith('http://')) return fetchHttpViaProxy(url, proxyUrl, options);
+  const dispatcher = proxyAgentFor(proxyUrl);
   const undici = loadUndici();
   // dispatcher 存在意味着 undici 已成功加载；再兜一层直连以防 fetch 导出缺失
-  if (undici && typeof undici.fetch === 'function') return undici.fetch(url, { ...options, dispatcher });
+  if (dispatcher && undici && typeof undici.fetch === 'function') return undici.fetch(url, { ...options, dispatcher });
   return fetch(url, options);
 }
 
