@@ -12,6 +12,7 @@ const {
   validatePetMetadata,
   parseWindowsProxySettings,
   isLoopbackTarget,
+  downloadSpritesheet,
   CURATED_COMMUNITY_PETS,
   PET_ID_PATTERN,
 } = require('../src/main/native/pets');
@@ -83,8 +84,10 @@ function webpPayload(label) {
   };
   const selectionFile = path.join(env.HARNESSMIX_DATA_DIR, 'pet-selection.json');
 
-  // 本地 HTTP 服务器模拟社区下载源，覆盖 成功/500/坏签名/超大/截断/慢响应 场景
+  // 本地 HTTP 服务器模拟社区下载源，覆盖 成功/500/坏签名/超大/截断/慢响应/断流 场景
   const communityQueries = [];
+  let flakyAttempts = 0;
+  let delayedHits = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (url.pathname === '/api/pets') {
@@ -135,6 +138,38 @@ function webpPayload(label) {
         res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length });
         res.end(body);
       }, 300);
+      return;
+    }
+    if (url.pathname === '/flaky.webp') {
+      // 模拟劣化链路断流：首次连接声明超长并中途摧毁 socket，第二次完整返回
+      flakyAttempts += 1;
+      const body = webpPayload('flaky');
+      if (flakyAttempts === 1) {
+        res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length + 100 });
+        res.write(body.subarray(0, 10));
+        res.destroy();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length });
+      res.end(body);
+      return;
+    }
+    if (url.pathname === '/always-cut.webp') {
+      // 每次连接都在中途被切：验证重试上限与最终报错
+      const body = webpPayload('always-cut');
+      res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length + 100 });
+      res.write(body.subarray(0, 10));
+      res.destroy();
+      return;
+    }
+    if (url.pathname === '/delayed.webp') {
+      // 响应头延迟 600ms 才到：配合短超时构造「超时中止」场景
+      delayedHits += 1;
+      setTimeout(() => {
+        const body = webpPayload('delayed');
+        res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length });
+        res.end(body);
+      }, 600);
       return;
     }
     res.writeHead(500);
@@ -319,6 +354,43 @@ function webpPayload(label) {
     assert.equal(loopbackCommunity.source, 'online', 'loopback community API bypasses the configured proxy');
     loopbackMarket.uninstall({ id: 'loopback-pet' });
 
+    // 7d. 代理路径回归：非环回目标必须经代理下载成功。npm undici 的 ProxyAgent 若被传给
+    // Node 内置全局 fetch，会在发请求前就抛 UND_ERR_INVALID_ARG（历史 bug：安装失败 fetch failed）；
+    // fetchWithProxy 必须用与 ProxyAgent 同一副本的 undici.fetch。
+    const proxiedRequests = [];
+    const mockProxy = http.createServer((req, res) => {
+      // 正向代理收到绝对形态 URI（http 目标不走 CONNECT）
+      proxiedRequests.push(req.url);
+      const body = webpPayload('via-proxy');
+      res.writeHead(200, { 'content-type': 'image/webp', 'content-length': body.length });
+      res.end(body);
+    });
+    await new Promise((resolve, reject) => {
+      mockProxy.once('error', reject);
+      mockProxy.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const proxyEnv = {
+        ...env,
+        HTTPS_PROXY: `http://127.0.0.1:${mockProxy.address().port}`,
+        HTTP_PROXY: `http://127.0.0.1:${mockProxy.address().port}`,
+      };
+      const proxyMarket = createPetMarket({ env: proxyEnv });
+      const proxyInstall = await proxyMarket.install({
+        id: 'proxied-pet',
+        displayName: 'Proxied Pet',
+        spritesheetUrl: 'http://pet-cdn.test/sheet.webp',
+      });
+      assert.equal(proxyInstall.installed, true, 'non-loopback download must succeed through the proxy dispatcher');
+      assert.equal(proxiedRequests.length, 1, 'spritesheet request must traverse the proxy exactly once');
+      assert.ok(proxiedRequests[0].includes('pet-cdn.test/sheet.webp'), 'proxy must see the absolute-form target URI');
+      const proxiedSheet = fs.readFileSync(path.join(petsDir, 'proxied-pet', 'spritesheet.webp'));
+      assert.equal(proxiedSheet.toString('utf8'), webpPayload('via-proxy').toString('utf8'), 'proxied bytes land on disk');
+      proxyMarket.uninstall({ id: 'proxied-pet' });
+    } finally {
+      await new Promise(resolve => mockProxy.close(resolve));
+    }
+
     // 8. 下载失败（HTTP 500）：拒绝安装且不留下任何目录
     await assert.rejects(
       market.install({ id: 'dl-fail-pet', spritesheetUrl: `${baseUrl}/missing.webp` }),
@@ -348,6 +420,25 @@ function webpPayload(label) {
       market.install({ id: 'truncated-pet', spritesheetUrl: `${baseUrl}/truncated.webp` }),
     );
     assert.ok(!fs.existsSync(path.join(petsDir, 'truncated-pet')));
+    assert.deepEqual(leftoverArtifacts(), []);
+
+    // 11b. 断流重试：首次连接中途被切，换新连接整包重试后安装成功
+    const flakyInstall = await market.install({
+      id: 'flaky-pet',
+      displayName: 'Flaky Pet',
+      spritesheetUrl: `${baseUrl}/flaky.webp`,
+    });
+    assert.equal(flakyInstall.installed, true, 'mid-stream cut must be retried with a fresh connection');
+    assert.equal(flakyAttempts, 2, 'flaky source should be hit exactly twice');
+    assert.deepEqual(leftoverArtifacts(), []);
+    market.uninstall({ id: 'flaky-pet' });
+
+    // 11c. 持续断流：达到重试上限后失败，报错带尝试次数，不残留目录
+    await assert.rejects(
+      market.install({ id: 'always-cut-pet', spritesheetUrl: `${baseUrl}/always-cut.webp` }),
+      /after 3 attempts/,
+    );
+    assert.ok(!fs.existsSync(path.join(petsDir, 'always-cut-pet')));
     assert.deepEqual(leftoverArtifacts(), []);
 
     // 12. pet.json 必填字段校验：displayName 非法时在下载前拒绝，不创建目录
@@ -430,6 +521,15 @@ function webpPayload(label) {
     assert.equal(isWebpBuffer(Buffer.from('WEBP....RIFF', 'latin1')), false);
     assert.equal(isWebpBuffer(Buffer.from('RIFF', 'latin1')), false);
     assert.equal(isWebpBuffer(Buffer.alloc(0)), false);
+
+    // 18b. downloadSpritesheet 单元：成功路径 + 超时中止不重试（慢链路下整包重试同样会超时）
+    const directBuffer = await downloadSpritesheet(`${baseUrl}/ok.webp`, env, { timeoutMs: 5000, attempts: 2 });
+    assert.equal(directBuffer.toString('utf8'), webpPayload('community').toString('utf8'), 'direct download returns the full body');
+    await assert.rejects(
+      downloadSpritesheet(`${baseUrl}/delayed.webp`, env, { timeoutMs: 200, attempts: 3 }),
+      /aborted due to timeout/,
+    );
+    assert.equal(delayedHits, 1, 'timeout abort must fail without retrying');
 
     // Windows 系统代理解析（reg query 输出 -> 代理 URL）
     const regHeader = 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';

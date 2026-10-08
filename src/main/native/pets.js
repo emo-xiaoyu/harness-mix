@@ -13,6 +13,11 @@ const path = require('path');
 const PET_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SPRITESHEET_PATTERN = /^([a-z0-9]+(?:-[a-z0-9]+)*)-spritesheet-v\d+-[0-9a-f]+\.webp$/;
 const MAX_SPRITESHEET_BYTES = 16 * 1024 * 1024;
+// 劣化代理链路下大文件可慢至 ~5KB/s（2MB 约 400s），超时需覆盖慢链路的中小文件；
+// CDN 不支持 Range 无法续传，断流/连接错误按 DOWNLOAD_ATTEMPTS 次换新连接整包重试，
+// 但「超时中止」说明链路本身慢，重试同样会超时，直接失败
+const DOWNLOAD_TIMEOUT_MS = 300 * 1000;
+const DOWNLOAD_ATTEMPTS = 3;
 const WEBP_MIN_BYTES = 12; // RIFF(4) + size(4) + WEBP(4)
 const TEMP_DIR_MAX_AGE_MS = 10 * 60 * 1000; // 超过该年龄的 .tmp-*/.bak-* 视为崩溃残留
 const RENAME_RETRY_DELAYS_MS = [0, 80, 160, 320, 640]; // Windows 上目录被占用时 rename 可能 EPERM/EBUSY，做有限重试
@@ -415,12 +420,22 @@ function windowsSystemProxyUrl(env = process.env) {
   return cachedSystemProxy;
 }
 
+// npm undici 懒加载：ProxyAgent 与 fetch 必须取自同一副本。给 Node 内置全局 fetch 传
+// npm undici 的 ProxyAgent 会在请求发出前就抛 UND_ERR_INVALID_ARG（用户侧表现为「安装失败 fetch failed」）。
+let undiciModule; // undefined = 未加载；null = 依赖缺失（按无代理处理）
+function loadUndici() {
+  if (undiciModule !== undefined) return undiciModule;
+  try { undiciModule = require('undici'); } catch { undiciModule = null; }
+  return undiciModule;
+}
+
 const proxyAgentCache = new Map(); // proxy URL -> ProxyAgent（复用连接池，避免每次 fetch 新建）
 function proxyAgentFor(proxyUrl) {
   let agent = proxyAgentCache.get(proxyUrl);
   if (!agent) {
-    const { ProxyAgent } = require('undici');
-    agent = new ProxyAgent(proxyUrl);
+    const undici = loadUndici();
+    if (!undici || typeof undici.ProxyAgent !== 'function') return null;
+    agent = new undici.ProxyAgent(proxyUrl);
     if (proxyAgentCache.size >= 4) proxyAgentCache.delete(proxyAgentCache.keys().next().value);
     proxyAgentCache.set(proxyUrl, agent);
   }
@@ -432,7 +447,7 @@ function getProxyDispatcher(targetUrl, env = process.env) {
   const proxy = env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || windowsSystemProxyUrl(env);
   if (!proxy) return undefined;
   try {
-    return proxyAgentFor(proxy);
+    return proxyAgentFor(proxy) ?? undefined;
   } catch {
     return undefined;
   }
@@ -440,9 +455,52 @@ function getProxyDispatcher(targetUrl, env = process.env) {
 
 async function fetchWithProxy(url, options = {}, env = process.env) {
   const dispatcher = getProxyDispatcher(url, env);
-  const opts = { ...options };
-  if (dispatcher) opts.dispatcher = dispatcher;
-  return fetch(url, opts);
+  if (!dispatcher) return fetch(url, options);
+  const undici = loadUndici();
+  // dispatcher 存在意味着 undici 已成功加载；再兜一层直连以防 fetch 导出缺失
+  if (undici && typeof undici.fetch === 'function') return undici.fetch(url, { ...options, dispatcher });
+  return fetch(url, options);
+}
+
+// fetch 网络层错误的 message 只有「fetch failed」，带上 cause 里的原因码才可诊断
+function describeNetworkError(err) {
+  const cause = err && err.cause && (err.cause.code || err.cause.message);
+  return cause ? `${err.message} (${cause})` : String(err && err.message || err);
+}
+
+// 社区精灵图下载：HTTP 状态错误与体积超限是确定性失败，立刻抛；
+// 连接建立失败/断流/截断按 attempts 次整包重试（每次换新连接）；超时中止不重试
+async function downloadSpritesheet(targetUrl, env, { timeoutMs = DOWNLOAD_TIMEOUT_MS, attempts = DOWNLOAD_ATTEMPTS } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const signal = AbortSignal.timeout(timeoutMs);
+    let res;
+    try {
+      res = await fetchWithProxy(targetUrl, { signal }, env);
+    } catch (err) {
+      if (signal.aborted) throw new Error(`Download failed: ${describeNetworkError(err)}`);
+      lastError = new Error(`Download failed: ${describeNetworkError(err)}`);
+      continue;
+    }
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const lengthHeader = res.headers.get('content-length');
+    const declaredLength = lengthHeader !== null && /^\d+$/.test(lengthHeader.trim()) ? Number(lengthHeader) : null;
+    if (declaredLength !== null && declaredLength > MAX_SPRITESHEET_BYTES) {
+      try { await res.body?.cancel(); } catch { /* 中断下载失败可忽略 */ }
+      throw new Error(`Spritesheet too large (${declaredLength} bytes)`);
+    }
+    try {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (declaredLength !== null && buffer.length !== declaredLength) {
+        throw new Error(`Download incomplete (${buffer.length}/${declaredLength} bytes)`);
+      }
+      return buffer;
+    } catch (err) {
+      if (signal.aborted) throw new Error(`Download failed: ${describeNetworkError(err)}`);
+      lastError = err; // 断流/截断：丢弃半包，换新连接重试
+    }
+  }
+  throw new Error(`${describeNetworkError(lastError)} (after ${attempts} attempts)`);
 }
 
 // WebP 容器魔数：bytes 0-3 = 'RIFF'，bytes 8-11 = 'WEBP'
@@ -736,21 +794,10 @@ function createPetMarket({ env = process.env } = {}) {
           spritesheetPath: 'spritesheet.webp',
         }, id);
 
-        // 1) 获取精灵图字节：社区走 HTTPS 下载，官方从 app.asar 按需提取
+        // 1) 获取精灵图字节：社区走 HTTPS 下载（有界重试），官方从 app.asar 按需提取
         let buffer;
         if (targetUrl) {
-          const res = await fetchWithProxy(targetUrl, { signal: AbortSignal.timeout(30000) }, env);
-          if (!res.ok) throw new Error(`Download failed (${res.status})`);
-          const lengthHeader = res.headers.get('content-length');
-          const declaredLength = lengthHeader !== null && /^\d+$/.test(lengthHeader.trim()) ? Number(lengthHeader) : null;
-          if (declaredLength !== null && declaredLength > MAX_SPRITESHEET_BYTES) {
-            try { await res.body?.cancel(); } catch { /* 中断下载失败可忽略 */ }
-            throw new Error(`Spritesheet too large (${declaredLength} bytes)`);
-          }
-          buffer = Buffer.from(await res.arrayBuffer());
-          if (declaredLength !== null && buffer.length !== declaredLength) {
-            throw new Error(`Download incomplete (${buffer.length}/${declaredLength} bytes)`);
-          }
+          buffer = await downloadSpritesheet(targetUrl, env);
         } else {
           const official = officialPets();
           const pet = official.pets.find(entry => entry.id === id);
@@ -874,6 +921,7 @@ module.exports = {
   validatePetMetadata,
   parseWindowsProxySettings,
   isLoopbackTarget,
+  downloadSpritesheet,
   CURATED_COMMUNITY_PETS,
   PET_ID_PATTERN,
 };
