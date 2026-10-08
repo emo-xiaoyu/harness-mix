@@ -28,6 +28,10 @@ export function ensureRendererTriggerChipStyle(ownerDocument: Document): void {
       color: inherit;
       white-space: nowrap;
       cursor: pointer;
+      /* Lets the chip ellipsize inside the shrinkable trailing host instead of
+         pushing the native voice/stop cluster out of the composer card. */
+      min-width: 0;
+      flex-shrink: 1;
     }
     .${TRIGGER_CHIP_CLASS}:hover:not(:disabled) {
       background: rgba(127, 127, 127, 0.08);

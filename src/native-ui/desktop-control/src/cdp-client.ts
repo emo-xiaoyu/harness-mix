@@ -158,7 +158,16 @@ export async function listCdpTargets(
   if (!response.ok) throw new Error(`CDP target discovery failed with HTTP ${response.status}`);
   const value = await response.json();
   if (!Array.isArray(value)) throw new Error("CDP target discovery did not return an array");
-  return value.map(decodeTarget);
+  // Chromium lists half-initialized targets (e.g. url still empty before a
+  // navigation commits); one such entry must not veto discovery for the rest.
+  // Skipping also keeps non-loopback debugger URLs unsurfaced rather than fatal.
+  return value.flatMap((entry) => {
+    try {
+      return [decodeTarget(entry)];
+    } catch {
+      return [];
+    }
+  });
 }
 
 /** Polls `/json/list` until a Codex renderer page (app:// origin) appears. */

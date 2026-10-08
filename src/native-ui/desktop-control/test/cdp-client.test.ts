@@ -114,7 +114,46 @@ describe("CDP client", () => {
     });
   });
 
-  it("rejects non-loopback discovery and target endpoints", async () => {
+  it("drops targets that cannot be decoded instead of vetoing discovery", async () => {
+    const fetchImpl: CdpFetch = async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return [
+          // Regression: Desktop 26.1002.7124.0 serves a page target whose url
+          // is still empty before its navigation commits; it used to fail the
+          // whole /json/list parse and renderer recovery never converged.
+          {
+            id: "page-0",
+            type: "page",
+            title: "",
+            url: "",
+            webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/page-0",
+          },
+          "not-a-target",
+          {
+            id: "page-1",
+            type: "page",
+            title: "Codex",
+            url: "app://-/index.html",
+            webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/page-1",
+          },
+        ];
+      },
+    });
+
+    await expect(listCdpTargets("http://127.0.0.1:9222", fetchImpl)).resolves.toEqual([
+      {
+        id: "page-1",
+        type: "page",
+        title: "Codex",
+        url: "app://-/index.html",
+        webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/page-1",
+      },
+    ]);
+  });
+
+  it("rejects non-loopback discovery and drops non-loopback target endpoints", async () => {
     await expect(listCdpTargets("http://example.com:9222")).rejects.toThrow("loopback");
     const fetchImpl: CdpFetch = async () => ({
       ok: true,
@@ -131,7 +170,7 @@ describe("CDP client", () => {
         ];
       },
     });
-    await expect(listCdpTargets("http://127.0.0.1:9222", fetchImpl)).rejects.toThrow("loopback");
+    await expect(listCdpTargets("http://127.0.0.1:9222", fetchImpl)).resolves.toEqual([]);
   });
 
   it("correlates commands and unwraps Runtime.evaluate values", async () => {

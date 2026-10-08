@@ -46,14 +46,17 @@ import {
   rendererProbeCoversAgents,
 } from "../src/renderer-binding-probe.js";
 import {
+  composerSendSlotButton,
   editorForElement,
   isComposerInputIntent,
   isComposerSubmissionKey,
   isComposerSubmitButton,
+  isComposerStopButton,
   isComposerVoiceButton,
   creditsPlacementAnchor,
   isNativeContextUsageControlCandidate,
   nativeContextUsageControlForComposer,
+  nativeTrailingClusterPlacement,
   reconcileComposerNativeControls,
   trailingActionAnchor,
   type ComposerAgentControl,
@@ -1040,6 +1043,114 @@ describe("Renderer Composer DOM behavior", () => {
 
     expect(insertBefore).toHaveBeenCalledWith(modelRoot, pause);
     expect(insertBefore).toHaveBeenCalledWith(agentRoot, pause);
+  });
+
+  it("recognizes localized stop variants in the send slot", () => {
+    const button = (label: string) =>
+      ({
+        type: "button",
+        hasAttribute: () => false,
+        getAttribute: (name: string) => (name === "aria-label" ? label : null),
+        contains: () => false,
+      }) as unknown as HTMLButtonElement;
+
+    expect(isComposerStopButton(button("停止"))).toBe(true);
+    expect(isComposerStopButton(button("停止生成"))).toBe(true);
+    expect(isComposerStopButton(button("Stop"))).toBe(true);
+    expect(isComposerStopButton(button("Stop response"))).toBe(true);
+    expect(isComposerStopButton(button("暂停"))).toBe(true);
+    expect(isComposerStopButton(button("发送"))).toBe(false);
+    expect(isComposerStopButton(button("添加文件等内容"))).toBe(false);
+  });
+
+  it("prefers the stop button over renderer-owned menu buttons for the send slot", () => {
+    const stop = {
+      type: "button",
+      hasAttribute: () => false,
+      getAttribute: (name: string) => (name === "aria-label" ? "停止" : null),
+      parentElement: null,
+    };
+    const menuButton = {
+      type: "button",
+      hasAttribute: () => false,
+      getAttribute: () => null,
+      parentElement: { hasAttribute: () => true },
+    };
+    const composer = {
+      querySelectorAll: (_selector: string) => [menuButton, stop],
+    } as unknown as Element;
+
+    expect(composerSendSlotButton(composer)).toBe(stop);
+  });
+
+  it("anchors the trailing host outside the native cluster in the responsive footer", () => {
+    const footer = { children: [] };
+    const cell = { children: [], parentElement: footer };
+    const mid = { children: [], parentElement: cell };
+    const wrapper = { children: [], parentElement: mid };
+    const sendStopWrapper = { children: [], parentElement: wrapper };
+    const stop = {
+      type: "button",
+      hasAttribute: () => false,
+      getAttribute: (name: string) => (name === "aria-label" ? "停止" : null),
+      parentElement: sendStopWrapper,
+      closest: (selector: string) =>
+        selector === "[data-composer-footer-responsive]" ? footer : null,
+    };
+
+    const placement = nativeTrailingClusterPlacement(stop as unknown as HTMLButtonElement);
+
+    expect(placement).toEqual({ parent: mid, before: wrapper });
+  });
+
+  it("places the trailing host before the native cluster and orders its children", () => {
+    const footer = { children: [] };
+    const cell = { children: [], parentElement: footer };
+    const insertBefore = vi.fn();
+    const mid = { children: [], parentElement: cell, insertBefore };
+    const wrapper = { children: [], parentElement: mid };
+    const sendStopWrapper = { children: [], parentElement: wrapper };
+    const stop = {
+      type: "button",
+      hasAttribute: () => false,
+      getAttribute: (name: string) => (name === "aria-label" ? "停止" : null),
+      parentElement: sendStopWrapper,
+      closest: (selector: string) =>
+        selector === "[data-composer-footer-responsive]" ? footer : null,
+    };
+    const append = vi.fn();
+    const host = { children: [], parentElement: null, nextElementSibling: null, append };
+    const commandsRoot = { parentElement: null, nextElementSibling: null };
+    const usageRoot = { parentElement: null, nextElementSibling: null, remove: vi.fn() };
+    const modelRoot = { parentElement: null, nextElementSibling: null };
+    const agentRoot = { parentElement: null, nextElementSibling: null };
+    const control = {
+      composer: { querySelectorAll: () => [] },
+      sendButton: stop,
+      root: agentRoot,
+      picker: { root: agentRoot },
+      modelPicker: { root: modelRoot, trigger: {} },
+      nativeModelControl: null,
+      nativePermissionModeControl: null,
+      harnessCommands: { root: commandsRoot },
+      trailingHost: host,
+      credits: {
+        anchor: null,
+        place: vi.fn(),
+        root: { remove: vi.fn() },
+      },
+      usage: {
+        anchor: null,
+        place: vi.fn(),
+        root: usageRoot,
+      },
+    } as unknown as ComposerAgentControl;
+
+    reconcileComposerNativeControls(control, true, false);
+
+    expect(insertBefore).toHaveBeenCalledWith(host, wrapper);
+    // Usage is owned by repositionUsage; the host only orders commands/model/agent.
+    expect(append).toHaveBeenCalledWith(commandsRoot, modelRoot, agentRoot);
   });
 
   it("freezes only on a non-composing Enter without Shift", () => {

@@ -41,6 +41,7 @@ import {
   reconcileComposerNativeControls,
   renderComposerAgentControl,
   isComposerStopButton,
+  composerSendSlotButton,
   sendButtonWithin,
   type ComposerAgentControl,
   type ExternalModelControlView,
@@ -935,6 +936,13 @@ export function installRendererBindingProbe(
         .map(template => ({ ...template, members: template.members.filter(member => member && typeof member.name === 'string') }))
       : [];
     return { agents, sessions, templates, canDelegate: agents.some(agent => agent.id === state.agent && agent.lead) };
+  }, {
+    getComposerIdentity(composer) {
+      const target = findComposerModelTarget(composer);
+      if (!target) return null;
+      const hostId = composerEntries.get(composer)?.hostId ?? modelControl?.currentHostId?.() ?? 'local';
+      return JSON.stringify([hostId, ...target]);
+    },
   });
   const collaborationCards = installCollabCards({
     openThread: (threadId) => openRendererThread(threadId, { hostId: 'local' }),
@@ -3013,7 +3021,7 @@ export function installRendererBindingProbe(
       return;
     }
     const allButtons = [...composer.querySelectorAll<HTMLButtonElement>("button")];
-    const sendButton = sendButtonWithin(composer) ?? allButtons.at(-1) ?? null;
+    const sendButton = composerSendSlotButton(composer) ?? allButtons.at(-1) ?? null;
     if (!sendButton) return;
     const modelTarget = findComposerModelTarget(composer);
     const hostId = activeModelHostId();

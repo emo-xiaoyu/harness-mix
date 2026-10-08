@@ -60,6 +60,11 @@ export type ExternalPermissionModeControlView = RendererPermissionModeControlVie
 export type PiModelControlView = ExternalModelControlView;
 export const CODEX_COMPOSER_SELECTOR = "[data-codex-composer-root]";
 export const EDITOR_SELECTOR = 'textarea, [contenteditable="true"], [role="textbox"]';
+// Desktop 26.1002+ renders the composer footer as a responsive grid whose
+// trailing cell hosts [spacer][native cluster: voice, stop]. The attribute is
+// the semantic marker for that layout; hashed CSS classes are not stable.
+export const CODEX_COMPOSER_FOOTER_SELECTOR = "[data-composer-footer-responsive]";
+export const TRAILING_HOST_ATTRIBUTE = "data-harnessmix-trailing-host";
 
 /** How a native control looked before we hid it, so it can be restored. */
 interface HiddenControlSnapshot {
@@ -100,6 +105,7 @@ export interface ComposerAgentControl {
   composerId: string;
   harnessCommands: RendererHarnessCommandControl;
   harnessHandoff: RendererHarnessHandoffControl;
+  trailingHost: HTMLElement;
   sendButton: HTMLButtonElement;
   sendDisabledBeforeSwitch: boolean | null;
 }
@@ -131,8 +137,16 @@ function isRendererOwnedControl(element: Element): boolean {
     element.hasAttribute("data-harnessmix-permission-mode-control") ||
     element.hasAttribute("data-harnessmix-usage-control") ||
     element.hasAttribute("data-harnessmix-credits-control") ||
-    element.hasAttribute("data-harnessmix-harness-command-control")
+    element.hasAttribute("data-harnessmix-harness-command-control") ||
+    element.hasAttribute(TRAILING_HOST_ATTRIBUTE)
   );
+}
+
+export function isWithinRendererOwnedControl(element: Element): boolean {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    if (typeof node.hasAttribute === "function" && isRendererOwnedControl(node)) return true;
+  }
+  return false;
 }
 
 export function isComposerSubmitButton(button: HTMLButtonElement): boolean {
@@ -142,7 +156,16 @@ export function isComposerSubmitButton(button: HTMLButtonElement): boolean {
 }
 
 export function isComposerStopButton(button: HTMLButtonElement): boolean {
-  return /^(停止|stop)$/iu.test((button.getAttribute("aria-label") ?? button.getAttribute("title") ?? button.textContent ?? "").trim());
+  const label = (
+    button.getAttribute?.("aria-label") ??
+    button.getAttribute?.("title") ??
+    button.textContent ??
+    ""
+  ).trim();
+  // The native composer swaps its send slot to Stop while a turn runs. Keep
+  // matching generous enough for localized variants ("停止生成", "Stop response")
+  // so the interrupt slot is never mistaken for a plain action button.
+  return /^(?:停止|stop|暂停|pause)(?:\s|$)/iu.test(label) || /^(?:停止|stop)(?:生成|响应|回答)?$/iu.test(label);
 }
 
 const VOICE_CONTROL_PATTERN =
@@ -176,10 +199,26 @@ function isTrailingClusterNode(element: Element): boolean {
 
 export function sendButtonWithin(root: Element): HTMLButtonElement | null {
   return (
-    [...root.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-      isComposerSubmitButton(button),
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => isComposerSubmitButton(button) || isComposerStopButton(button),
     ) ?? null
   );
+}
+
+/**
+ * The composer's send slot: submit button, the stop button that replaces it
+ * mid-turn, or — degraded — the last native (non-renderer-owned) button so a
+ * mid-turn remount never anchors onto one of our own picker-menu buttons.
+ */
+export function composerSendSlotButton(root: Element): HTMLButtonElement | null {
+  const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
+  const slot = sendButtonWithin(root);
+  if (slot) return slot;
+  for (let index = buttons.length - 1; index >= 0; index -= 1) {
+    const button = buttons[index];
+    if (button && !isWithinRendererOwnedControl(button)) return button;
+  }
+  return buttons.at(-1) ?? null;
 }
 
 /** Leftmost sibling before `boundary` that belongs to the trailing cluster. */
@@ -207,6 +246,67 @@ export function trailingActionAnchor(sendButton: HTMLButtonElement): HTMLElement
     container = container.parentElement;
   }
   return sendButton;
+}
+
+export interface TrailingClusterPlacement {
+  parent: HTMLElement;
+  before: HTMLElement;
+}
+
+/**
+ * Responsive-footer placement (Desktop 26.1002+): the send slot sits inside a
+ * native cluster wrapper (`flex shrink-0`) which itself lives in the trailing
+ * grid cell. Injecting INSIDE that wrapper displaces the native voice/stop
+ * buttons when the cluster gets wide. Anchor our host to the OUTSIDE of the
+ * wrapper instead: [our host][native voice][native stop] — the interrupt
+ * control keeps its right-edge slot no matter how wide our controls are.
+ */
+export function nativeTrailingClusterPlacement(
+  sendButton: HTMLButtonElement,
+): TrailingClusterPlacement | null {
+  const footer =
+    typeof sendButton.closest === "function"
+      ? (sendButton.closest(CODEX_COMPOSER_FOOTER_SELECTOR) as HTMLElement | null)
+      : null;
+  if (!footer) return null;
+  const chain: HTMLElement[] = [];
+  for (
+    let node: HTMLElement | null = sendButton;
+    node && node !== footer;
+    node = node.parentElement
+  ) {
+    chain.push(node);
+  }
+  if (chain.length === 0) return null;
+  // The chain ends at the footer's direct child (the trailing grid cell).
+  const cell = chain[chain.length - 1];
+  if (!cell || cell.parentElement !== footer) return null;
+  // Walk the chain downward: cell → mid container → cluster wrapper.
+  const mid = chain.length >= 2 ? chain[chain.length - 2] : undefined;
+  const wrapper = chain.length >= 3 ? chain[chain.length - 3] : undefined;
+  if (wrapper && mid && mid.parentElement === cell) {
+    return { parent: mid, before: wrapper };
+  }
+  if (mid && mid.parentElement === cell) {
+    return { parent: cell, before: mid };
+  }
+  return sendButton.parentElement ? { parent: cell, before: sendButton } : null;
+}
+
+export function createTrailingHost(ownerDocument: Document): HTMLElement {
+  const host = ownerDocument.createElement("div");
+  host.setAttribute(TRAILING_HOST_ATTRIBUTE, "true");
+  // Shrink (not wrap): when the trailing cell runs out of room our chips
+  // ellipsize while the native voice/stop cluster keeps its slot untouched.
+  host.style.display = "flex";
+  host.style.alignItems = "center";
+  host.style.justifyContent = "flex-end";
+  host.style.flex = "0 1 auto";
+  host.style.minWidth = "0";
+  host.style.maxWidth = "100%";
+  host.style.columnGap = "8px";
+  host.style.marginInlineEnd = "8px";
+  return host;
 }
 
 export function editorForElement(element: Element): Element | null {
@@ -499,6 +599,46 @@ function repositionTrailingCluster(control: ComposerAgentControl): void {
   const modelRoot = control.modelPicker?.root;
   const agentRoot = control.root ?? control.picker?.root;
   if (!sendButton || !modelRoot || !agentRoot) return;
+  const host = control.trailingHost;
+  if (host && typeof host.append === "function") {
+    // Responsive-footer aware placement: our cluster sits OUTSIDE the native
+    // trailing wrapper so the voice/stop buttons keep their native slot.
+    const placement = nativeTrailingClusterPlacement(sendButton);
+    let placed = false;
+    if (placement && typeof placement.parent.insertBefore === "function") {
+      if (host.parentElement !== placement.parent || host.nextElementSibling !== placement.before) {
+        placement.parent.insertBefore(host, placement.before);
+      }
+      placed = true;
+    }
+    if (!placed) {
+      const anchor = trailingActionAnchor(sendButton);
+      const parent = anchor.parentElement;
+      if (parent && typeof parent.insertBefore === "function") {
+        if (host.parentElement !== parent || host.nextElementSibling !== anchor) {
+          parent.insertBefore(host, anchor);
+        }
+        placed = true;
+      }
+    }
+    if (!placed) return;
+    // Usage is NOT ordered here: repositionUsage owns it and may legitimately
+    // anchor it next to the native context gauge (outside the host) — pulling
+    // it back would fight that placement on every reconcile.
+    const ordered = [control.harnessCommands?.root, modelRoot, agentRoot].filter(
+      (element): element is HTMLElement => !!element,
+    );
+    const hostChildren = [...host.children];
+    const positions = ordered.map((element) =>
+      element.parentElement === host ? hostChildren.indexOf(element) : -1,
+    );
+    const inOrder =
+      positions.every((position) => position >= 0) &&
+      positions.every((position, index) => index === 0 || (positions[index - 1] ?? -1) < position);
+    if (!inOrder) host.append(...ordered);
+    return;
+  }
+  // Legacy layout (pre-26.1002 composers): inject directly before the anchor.
   const anchor = trailingActionAnchor(sendButton);
   const parent = anchor.parentElement;
   if (!parent || typeof parent.insertBefore !== "function") return;
@@ -644,12 +784,14 @@ export function mountComposerAgentControl(
   );
   const credits = mountRendererCreditsControl(composerId);
 
-  const toolbar = sendButton.parentElement;
+  const ownerDocument = composer.ownerDocument ?? document;
+  const trailingHost = createTrailingHost(ownerDocument);
   const harnessCommands = mountRendererHarnessCommandControl(
-    toolbar ?? composer,
-    trailingActionAnchor(sendButton),
+    trailingHost,
+    null,
     onSelectCommand,
   );
+  trailingHost.append(modelPicker.root, picker.root);
   const harnessHandoff = mountRendererHarnessHandoff(composerId, onConfirmHandoff);
 
   const permissionParent = nativePermissionModeControl?.element.parentElement;
@@ -659,7 +801,6 @@ export function mountComposerAgentControl(
     composer.append(permissionModePicker.root);
   }
 
-  if (!toolbar) composer.append(modelPicker.root, picker.root);
   const control = {
     composer,
     composerId,
@@ -675,6 +816,7 @@ export function mountComposerAgentControl(
     usage: null,
     harnessCommands,
     harnessHandoff,
+    trailingHost,
     sendButton,
     sendDisabledBeforeSwitch: null,
   } satisfies ComposerAgentControl;
@@ -735,7 +877,13 @@ export function renderComposerAgentControl(
     // The native composer reuses its send slot for Stop while a turn runs;
     // renderer gating must never disable the native interrupt.
     control.sendButton.disabled = false;
-  } else if (submissionBlocked && control.sendDisabledBeforeSwitch === null) {
+  } else if (
+    submissionBlocked &&
+    isComposerSubmitButton(control.sendButton) &&
+    control.sendDisabledBeforeSwitch === null
+  ) {
+    // Gate only a recognized submit control: an unrecognized send slot must
+    // stay clickable whatever the renderer thinks about model readiness.
     control.sendDisabledBeforeSwitch = control.sendButton.disabled;
     control.sendButton.disabled = true;
   } else if (!submissionBlocked && control.sendDisabledBeforeSwitch !== null) {
@@ -803,4 +951,5 @@ export function disposeComposerAgentControl(control: ComposerAgentControl): void
   control.permissionModePicker.dispose();
   control.modelPicker.dispose();
   control.picker.dispose();
+  control.trailingHost?.remove();
 }

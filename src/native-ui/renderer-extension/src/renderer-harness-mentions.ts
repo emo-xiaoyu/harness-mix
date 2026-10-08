@@ -1,4 +1,5 @@
 import { collaborationIcon } from "./collaboration-icon.js";
+import { collaborationTeamIcon } from "./collaboration-team-icon.js";
 
 export interface CollaborationAgent {
   id: string;
@@ -57,6 +58,12 @@ type MentionEntry =
   | ({ kind: 'codex' } & NativeCodexOption);
 
 type MentionKind = MentionEntry["kind"];
+type MentionTabKind = 'agent' | 'session' | 'template';
+const MENTION_TABS: ReadonlyArray<{ kind: MentionTabKind; label: string }> = [
+  { kind: 'agent', label: 'Agents' },
+  { kind: 'session', label: '会话' },
+  { kind: 'template', label: '团队' },
+];
 
 const entryKey = (entry: MentionEntry): string => `${entry.kind}:${entry.id}`;
 
@@ -165,12 +172,15 @@ function getCodexNativeOptions(): NativeCodexOption[] {
 }
 
 /** Installs the # mention picker on top of the stock composer editor. */
-export function installHarnessMentions(load: (editor: Element, query: string) => Promise<CollaborationMentionCatalog>) {
+export function installHarnessMentions(
+  load: (editor: Element, query: string) => Promise<CollaborationMentionCatalog>,
+  options: { getComposerIdentity?(composer: Element): string | null } = {},
+) {
   const menu = document.createElement('div');
   menu.dataset.harnessMixMentions = 'true';
   menu.setAttribute('role', 'dialog');
   menu.setAttribute('aria-label', '协作 Harness');
-  menu.style.cssText = 'position:fixed;z-index:2147483647;box-sizing:border-box;max-height:320px;overflow:auto;width:340px;max-width:calc(100vw - 16px);padding:6px;border:1px solid #8884;border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 8px 30px #0002;font:13px system-ui';
+  menu.style.cssText = 'position:fixed;z-index:2147483647;display:flex;flex-direction:column;box-sizing:border-box;max-height:320px;overflow:hidden;max-width:calc(100vw - 16px);padding:4px;border:1px solid var(--border-token-border,#8882);border-radius:16px;background:var(--color-background-surface,Canvas);color:var(--color-text-primary,CanvasText);box-shadow:0 4px 16px #0001;font:13px/20px system-ui';
   menu.hidden = true;
   document.body.append(menu);
 
@@ -179,6 +189,17 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   // Harness Mix is keyed off #.
   const style = document.createElement('style');
   style.textContent = `
+    [data-harness-mix-mentions][hidden] { display: none !important; }
+    [data-harness-mix-mentions] [role="option"] { background: transparent; }
+    [data-harness-mix-mentions] [role="option"][aria-selected="true"],
+    [data-harness-mix-mentions] [role="option"]:hover:not(:disabled) {
+      background: var(--color-background-surface-hover, rgba(127,127,127,.1));
+    }
+    [data-harness-mix-mentions] [role="option"]:focus-visible,
+    [data-harness-mix-mentions] [role="tab"]:focus-visible {
+      outline: 2px solid currentColor;
+      outline-offset: -2px;
+    }
     [data-harness-mix-has-mentions="true"] {
       display: flex !important;
       flex-wrap: wrap !important;
@@ -211,12 +232,27 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   document.head.append(style);
 
   let activeComposer: Element | null = null;
+  const positionMenu = () => {
+    if (menu.hidden || !editor) return;
+    if (!editor.isConnected || !activeComposer?.isConnected) { close(); return; }
+    const rect = activeComposer.getBoundingClientRect();
+    const width = Math.min(rect.width, Math.max(0, window.innerWidth - 16));
+    menu.style.width = `${width}px`;
+    menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    const above = rect.top - 14;
+    const below = window.innerHeight - rect.bottom - 14;
+    const placeAbove = above >= 160 || above >= below;
+    menu.style.maxHeight = `${Math.max(0, Math.min(320, placeAbove ? above : below))}px`;
+    menu.style.bottom = placeAbove ? `${window.innerHeight - rect.top + 6}px` : 'auto';
+    menu.style.top = placeAbove ? 'auto' : `${rect.bottom + 6}px`;
+  };
+  const resizeObserver = new ResizeObserver(positionMenu);
   let generation = 0, disposed = false, selected = 0;
   let editor: HTMLTextAreaElement | HTMLElement | null = null;
   let selStart = 0, selEnd = 0;
   let entries: MentionEntry[] = [];
   let matches: MentionEntry[] = [];
-  let activeKind: 'agent' | 'codex' | 'session' | 'template' = 'agent';
+  let activeKind: MentionTabKind = 'agent';
   let canDelegate = true;
   const catalogs = new Map<HTMLElement, CollaborationMentionCatalog>();
   const badges = new Map<HTMLElement, HTMLElement>();
@@ -224,10 +260,22 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   // Mention selections are keyed per conversation, so they survive switching
   // to another conversation and back.
   const sessionSelections = new Map<string, Map<string, MentionEntry>>();
+  const anonymousKeys = new WeakMap<Element, string>();
+  let nextAnonymousKey = 0;
+  const anonymousKeyFor = (target: Element): string => {
+    let key = anonymousKeys.get(target);
+    if (!key) {
+      key = `anonymous:${++nextAnonymousKey}`;
+      anonymousKeys.set(target, key);
+    }
+    return key;
+  };
 
   const conversationKeyFor = (target: HTMLElement): string => {
     const composer = target.closest('[data-codex-composer-root]');
-    if (!composer) return (target as unknown as { __harnessMixEditorKey?: string }).__harnessMixEditorKey || 'default';
+    if (!composer) return anonymousKeyFor(target);
+    const nativeIdentity = options.getComposerIdentity?.(composer);
+    if (nativeIdentity) return `native:${nativeIdentity}`;
     const portal = composer.querySelector('[data-above-composer-portal]');
     const portalId = portal?.getAttribute('data-above-composer-conversation-id');
     if (portalId) return `conversation:${portalId}`;
@@ -236,12 +284,9 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     if (convId) return `conversation:${convId}`;
     const draftId = composer.getAttribute('data-composer-draft-id');
     if (draftId) return `draft:${draftId}`;
-    const all = composer.querySelectorAll('textarea, [contenteditable="true"]');
-    if (all.length > 1) {
-      const index = Array.from(all).indexOf(target);
-      return `editor:${index >= 0 ? index : 'default'}`;
-    }
-    return 'default';
+    // Unknown drafts must never share authorizations. A verified native
+    // identity above preserves chips across navigation and DOM replacement.
+    return anonymousKeyFor(target);
   };
 
   const selectionsFor = (target: HTMLElement): Map<string, MentionEntry> => {
@@ -370,9 +415,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
           document.createTextNode(entry.kind === 'agent' ? entry.name : entry.title),
         );
       } else if (entry.kind === 'template') {
-        const teamIcon = document.createElement('span');
-        teamIcon.textContent = '👥';
-        teamIcon.style.cssText = 'font-size:13px;line-height:1;';
+        const teamIcon = collaborationTeamIcon(entry.id, 14);
         iconWrap.append(teamIcon, document.createTextNode(entry.name));
       } else {
         const optionIcon = document.createElement('span');
@@ -388,6 +431,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
 
   const close = () => {
     generation++;
+    resizeObserver.disconnect();
     menu.hidden = true;
     activeComposer?.removeAttribute('data-harness-mix-mention-active');
     activeComposer?.removeAttribute('data-harness-mix-show-native');
@@ -432,15 +476,9 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     menu.replaceChildren();
     const tabs = document.createElement('div');
     tabs.setAttribute('role', 'tablist');
-    tabs.style.cssText = 'display:flex;gap:4px;padding:2px 2px 6px;border-bottom:1px solid #8882;margin-bottom:4px';
+    tabs.style.cssText = 'display:flex;flex:none;gap:4px;padding:0 4px 4px;border-bottom:1px solid var(--border-token-border,#8882);margin-bottom:2px';
 
-    const tabDefinitions: Array<{ kind: 'agent' | 'session' | 'template'; label: string }> = [
-      { kind: 'agent', label: 'Agents' },
-      { kind: 'session', label: '会话' },
-      { kind: 'template', label: '团队' },
-    ];
-
-    for (const tabInfo of tabDefinitions) {
+    for (const tabInfo of MENTION_TABS) {
       const tab = document.createElement('button');
       tab.type = 'button';
       tab.setAttribute('role', 'tab');
@@ -474,6 +512,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
 
     const list = document.createElement('div');
     list.setAttribute('role', 'listbox');
+    list.style.cssText = 'min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin';
     list.setAttribute('aria-label', activeKind === 'agent' ? '协作 Agents' : activeKind === 'template' ? '团队模板' : '历史会话');
     menu.append(list);
 
@@ -485,13 +524,13 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       row.setAttribute('aria-selected', String(index === selected));
       row.disabled = !selectable;
       row.id = `harness-mention-option-${index}`;
-      row.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:7px;padding:7px 8px;color:inherit;font:inherit;cursor:pointer;background:${index === selected ? '#8882' : 'transparent'};opacity:${selectable ? 1 : .45}`;
+      row.style.cssText = `display:flex;align-items:center;gap:8px;width:100%;min-height:29px;box-sizing:border-box;text-align:left;border:0;border-radius:9px;padding:4px 8px;color:inherit;font:inherit;cursor:${selectable ? 'pointer' : 'default'};opacity:${selectable ? 1 : .45}`;
 
       const copy = document.createElement('span');
-      copy.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex:1;min-width:0';
+      copy.style.cssText = 'display:flex;align-items:baseline;gap:8px;flex:1;min-width:0';
       const name = document.createElement('span');
       name.textContent = entry.kind === 'agent' || entry.kind === 'template' ? entry.name : entry.title;
-      name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
+      name.style.cssText = 'flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;';
 
       if (entry.kind === 'template' && entry.source === 'project') {
         const projectBadge = document.createElement('span');
@@ -507,7 +546,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       else if (entry.kind === 'session') detail.textContent = entry.cwd;
       else if (entry.kind === 'template') detail.textContent = entry.description || entry.members.map(member => member.name).join(' · ');
       else detail.textContent = entry.description || entry.category;
-      detail.style.cssText = 'font-size:11px;opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      detail.style.cssText = 'flex:1;min-width:0;font-size:13px;opacity:.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
       copy.append(name, detail);
 
       const status = document.createElement('span');
@@ -518,15 +557,13 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
           ? '待指定 Harness'
           : `拉起团队 · ${entry.members.length} 成员`;
       } else status.textContent = entry.category || '原生';
-      status.style.cssText = 'font-size:11px;opacity:.6';
+      status.style.cssText = 'flex:none;font-size:11px;opacity:.5;white-space:nowrap';
 
       let iconEl: HTMLElement;
       if (entry.kind === 'agent' || entry.kind === 'session') {
         iconEl = collaborationIcon(entry.kind === 'agent' ? entry.id : entry.harnessId, name.textContent || '', 18);
       } else if (entry.kind === 'template') {
-        const teamIcon = document.createElement('span');
-        teamIcon.textContent = '👥';
-        teamIcon.style.cssText = 'font-size:16px;line-height:1;width:18px;text-align:center;';
+        const teamIcon = collaborationTeamIcon(entry.id, 18);
         teamIcon.title = entry.members.map(member => `${member.name} · ${member.agent || '待指定 Harness'}${member.agent && !member.available ? '（不可用）' : ''}`).join('\n');
         iconEl = teamIcon;
       } else {
@@ -537,6 +574,14 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       }
 
       row.append(iconEl, copy, status);
+      iconEl.style.flex = 'none';
+      row.addEventListener('pointermove', () => {
+        if (!selectable || selected === index) return;
+        selected = index;
+        for (const option of list.querySelectorAll('[role="option"]')) {
+          option.setAttribute('aria-selected', String(option === row));
+        }
+      });
       row.addEventListener('mousedown', event => event.preventDefault());
       row.addEventListener('click', () => choose(entry));
       list.append(row);
@@ -614,15 +659,13 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       activeComposer = !menu.hidden ? editable.closest('[data-codex-composer-root]') : null;
       activeComposer?.setAttribute('data-harness-mix-mention-active', 'true');
 
-      // Flip above the caret when there is room, else drop below.
-      menu.scrollTop = 0;
-      const rect = editable.getBoundingClientRect();
-      menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 348))}px`;
-      const above = rect.top - 16;
-      menu.style.maxHeight = `${Math.max(80, Math.min(320, above >= 160 ? above : window.innerHeight - rect.bottom - 16))}px`;
-      menu.style.bottom = above >= 160 ? `${window.innerHeight - rect.top + 8}px` : 'auto';
-      menu.style.top = above >= 160 ? 'auto' : `${rect.bottom + 8}px`;
-    } catch { close(); }
+      resizeObserver.disconnect();
+      if (activeComposer) resizeObserver.observe(activeComposer);
+      positionMenu();
+    } catch {
+      // An older failed catalog load must not close a newer successful menu.
+      if (!disposed && current === generation) close();
+    }
   };
 
   const keydown = (event: KeyboardEvent) => {
@@ -660,10 +703,9 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
     event.preventDefault(); event.stopImmediatePropagation();
 
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      const kinds: Array<'agent' | 'session'> = ['agent', 'session'];
-      const curIdx = kinds.indexOf(activeKind as 'agent' | 'session');
-      const nextIdx = (curIdx + (event.key === 'ArrowRight' ? 1 : -1) + kinds.length) % kinds.length;
-      const next = kinds[nextIdx];
+      const curIdx = MENTION_TABS.findIndex(tab => tab.kind === activeKind);
+      const nextIdx = (curIdx + (event.key === 'ArrowRight' ? 1 : -1) + MENTION_TABS.length) % MENTION_TABS.length;
+      const next = MENTION_TABS[nextIdx]?.kind;
       if (next) activeKind = next;
       selected = 0;
       render();
@@ -747,6 +789,7 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       break;
     }
     if (!shouldSync) return;
+    if (!menu.hidden && !activeComposer?.isConnected) close();
     for (const composer of document.querySelectorAll('[data-codex-composer-root]')) {
       const el = findEditorIn(composer);
       if (el) syncBadges(el);
@@ -768,6 +811,8 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
   document.addEventListener('submit', onSubmitCapture, true);
   document.addEventListener('focusin', onFocusIn, true);
   window.addEventListener('blur', close);
+  window.addEventListener('resize', positionMenu);
+  document.addEventListener('scroll', positionMenu, true);
 
   return {
     sync(target: HTMLElement) {
@@ -795,6 +840,8 @@ export function installHarnessMentions(load: (editor: Element, query: string) =>
       document.removeEventListener('submit', onSubmitCapture, true);
       document.removeEventListener('focusin', onFocusIn, true);
       window.removeEventListener('blur', close);
+      window.removeEventListener('resize', positionMenu);
+      document.removeEventListener('scroll', positionMenu, true);
     },
   };
 }

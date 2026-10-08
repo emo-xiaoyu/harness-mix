@@ -178,6 +178,23 @@ app.whenReady().then(async () => {
   assert.equal(skinResult.style, true);
     assert.equal(skinResult.cardCount, 31);
     assert.equal(skinResult.bundledPreviewCount, 17);
+  for (const size of [[900,650],[680,600]]) {
+    win.setSize(...size);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const chrome = await win.webContents.executeJavaScript(`(() => {
+      const shadow=globalThis.__harnessmixSettingsShellV1.root.shadowRoot;
+      const dialog=shadow.querySelector('dialog'),header=shadow.querySelector('.settings-header'),close=shadow.querySelector('.settings-header-actions button');
+      const r=dialog.getBoundingClientRect(),b=close.getBoundingClientRect();
+      return {top:r.top,bottom:r.bottom,viewport:innerHeight,background:getComputedStyle(header).backgroundColor,
+        reachable:close.contains(shadow.elementFromPoint(b.left+b.width/2,b.top+b.height/2)),inside:b.top>=r.top&&b.bottom<=header.getBoundingClientRect().bottom};
+    })()`);
+    assert.ok(chrome.top>=48&&chrome.bottom<=chrome.viewport-16, 'Settings clears native window/menu chrome at desktop and narrow widths');
+    assert.match(chrome.background, /^rgb\(/, 'Skin settings header is opaque, without native controls showing through');
+    assert.equal(chrome.reachable, true);
+    assert.equal(chrome.inside, true);
+  }
+  win.setSize(900,650);
+  await new Promise(resolve => setTimeout(resolve, 100));
     fs.writeFileSync(path.join(out, 'settings-skins.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`(() => {
       const shadow = globalThis.__harnessmixSettingsShellV1.root.shadowRoot;
@@ -236,7 +253,7 @@ app.whenReady().then(async () => {
   assert.equal(responsiveHome.headerActionBackground, 'rgba(0, 0, 0, 0)');
   assert.equal(responsiveHome.titleBackground, 'rgba(0, 0, 0, 0)');
   assert.equal(responsiveHome.topFadeImage, 'none');
-  assert.equal(responsiveHome.topFadeOpacity, '0');
+  assert.equal(responsiveHome.topFadeOpacity, '1');
   assert.notEqual(responsiveHome.tableBackground, 'rgba(0, 0, 0, 0)');
   fs.writeFileSync(path.join(out, 'skin-responsive-home.png'), (await win.webContents.capturePage()).toPNG());
   await win.setSize(1920, 1000);
