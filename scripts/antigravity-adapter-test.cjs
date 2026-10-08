@@ -662,7 +662,27 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
   assert.deepEqual(fillProxyEnvGaps({ http_proxy: 'x' }, { HTTP_PROXY: 'a', http_proxy: 'a' }), {});
   assert.deepEqual(fillProxyEnvGaps(null, { HTTP_PROXY: 'a' }), { HTTP_PROXY: 'a' });
 
-  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, turn pruning, system proxy passthrough and PAC/env-gap fill passed');
+  // 22. Quota failure cooldown: when agy has no usable keyring token every
+  // spawn re-runs OAuth and opens a browser login page, and background paths
+  // (startup probe, health refresh, accounts list) probe quota repeatedly.
+  // After one failure the cooldown suppresses further spawns entirely.
+  antigravity.resetAntigravityQuotaCooldown();
+  let quotaRuns = 0;
+  const quotaFail = (bin, args, opts, cb) => { quotaRuns += 1; cb(null, ''); };
+  assert.equal(await antigravity.fetchAntigravityQuota('agy-fake', { execRunner: quotaFail, now: () => 1000 }), null);
+  assert.equal(quotaRuns, 1);
+  // 冷却期内：后台路径再查配额也不再拉起 agy（不再弹登录页）。
+  assert.equal(await antigravity.fetchAntigravityQuota('agy-fake', { execRunner: quotaFail, now: () => 2000 }), null);
+  assert.equal(quotaRuns, 1);
+  const quotaUsageLine = JSON.stringify({ event: 'command_result', command: mockUsageCommand }) + '\n';
+  // 冷却过期后可重试，成功清除冷却。
+  assert.ok(await antigravity.fetchAntigravityQuota('agy-fake', { execRunner: (bin, args, opts, cb) => { quotaRuns += 1; cb(null, quotaUsageLine); }, now: () => 2000 + 5 * 60 * 1000 }));
+  assert.equal(quotaRuns, 2);
+  assert.equal(await antigravity.fetchAntigravityQuota('agy-fake', { execRunner: quotaFail, now: () => 2000 + 5 * 60 * 1000 + 1 }), null);
+  assert.equal(quotaRuns, 3);
+  antigravity.resetAntigravityQuotaCooldown();
+
+  console.log('antigravity adapter: manifest, models catalog, usage projection, quota/credits, prompt formatting, image attachments, session lifecycle, model switching, describe, fork, step merging, turn pruning, system proxy passthrough, PAC/env-gap fill, and quota failure cooldown passed');
 })().catch((err) => {
   console.error(err);
   process.exitCode = 1;

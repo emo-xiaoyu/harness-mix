@@ -184,21 +184,33 @@ function parseAntigravityUsageCommand(command, fetchedAt = new Date().toISOStrin
   };
 }
 
-async function fetchAntigravityQuota(executable = resolveExecutable()) {
+// 未登录或网络黑洞时，每次拉起 agy 都会重新走 OAuth 并弹浏览器登录页，而 Host
+// 的启动探测、健康刷新、账号列表等后台路径都会反复查配额。探测失败后冷却一段
+// 时间再重试（HARNESSMIX_ANTIGRAVITY_QUOTA_RETRY_MS 可覆盖，0 = 禁用冷却），
+// 成功后立即恢复，避免登录页被后台路径反复触发。
+let quotaFailedAt = 0;
+function quotaRetryMs() {
+  const raw = Number(process.env.HARNESSMIX_ANTIGRAVITY_QUOTA_RETRY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5 * 60 * 1000;
+}
+
+async function fetchAntigravityQuota(executable = resolveExecutable(), { execRunner = execFile, now = Date.now } = {}) {
+  if (quotaFailedAt && now() - quotaFailedAt < quotaRetryMs()) return null;
   const env = await agyChildEnv();
   return new Promise((resolve) => {
-    execFile(executable, ['--print=/usage', '--output-format', 'stream-json'], { env, windowsHide: true, timeout: 15000 }, (err, stdout) => {
-      if (err || !stdout) return resolve(null);
+    execRunner(executable, ['--print=/usage', '--output-format', 'stream-json'], { env, windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      if (err || !stdout) { quotaFailedAt = now(); return resolve(null); }
       for (const line of stdout.split(/\r?\n/)) {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
           if (event?.event === 'command_result') {
             const snapshot = parseAntigravityUsageCommand(event.command);
-            if (snapshot) return resolve(snapshot);
+            if (snapshot) { quotaFailedAt = 0; return resolve(snapshot); }
           }
         } catch {}
       }
+      quotaFailedAt = now();
       resolve(null);
     });
   });
@@ -1437,6 +1449,8 @@ module.exports = {
   mergePendingStep,
   cloneDatabase,
   parseAntigravityUsageCommand,
+  fetchAntigravityQuota,
+  resetAntigravityQuotaCooldown: () => { quotaFailedAt = 0; },
   ANTIGRAVITY_PERMISSION_MODES,
 };
 
