@@ -53,7 +53,12 @@ class SessionHistory {
     return { harnessId, nativeSessionId, sessionRef, row };
   }
 
-  #managed(row) { return row.threadId ? this.runtime.threads.find(thread => thread.id === row.threadId) : undefined; }
+  #managed(row, hydrate = false) {
+    const thread = row.threadId ? this.runtime.threads.find(thread => thread.id === row.threadId) : undefined;
+    // getThread restores the persisted Core projection without opening a
+    // native process. Cold index stubs intentionally contain no transcript.
+    return hydrate && thread?._storageStub ? this.runtime.getThread(thread.id) : thread;
+  }
 
   #metadata(harnessId, row, messageCount) {
     const managed = this.#managed(row);
@@ -73,7 +78,8 @@ class SessionHistory {
   /** 引用会话元数据：保持廉价，不为统计拉取原生全文（无内嵌消息的行 messageCount 为 null） */
   async info(identity) {
     const { harnessId, sessionRef, row } = await this.#locate(identity);
-    const messages = this.#managed(row)?.messages ?? row.messages ?? null;
+    const managed = this.#managed(row);
+    const messages = managed?._storageStub ? null : managed?.messages ?? row.messages ?? null;
     const count = messages ? messages.filter(m => ['user', 'assistant'].includes(m.role) && m.text).length : null;
     return { sessionRef, ...this.#metadata(harnessId, row, count) };
   }
@@ -82,7 +88,7 @@ class SessionHistory {
   async context({ offset = 0, limit = 12, ...identity }) {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE) throw new Error('Invalid history paging');
     const { harnessId, sessionRef, row } = await this.#locate(identity);
-    const managed = this.#managed(row);
+    const managed = this.#managed(row, true);
     const messages = managed ? managed.messages : await this.providers.readNative(harnessId, row);
     const all = messages.filter(message => ['user', 'assistant'].includes(message.role) && message.text);
     const end = Math.max(0, all.length - offset);

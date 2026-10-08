@@ -23,7 +23,7 @@ function recordName(id) { return `${encodeURIComponent(id)}.json`; }
 
 function summarize(thread) {
   const firstUser = (thread.messages ?? []).find(message => message.role === 'user');
-  const fields = ['id', 'harnessId', 'title', 'titleLocked', 'cwd', 'originalCwd', 'nativeSessionId', 'nativeReadOnly', 'status', 'connectionStatus', 'createdAt', 'updatedAt', 'archived', 'section', 'sectionEnteredAt', 'projectId', 'parentThreadId', 'ephemeral', 'gitInfo', 'workspace', 'isolation', 'harnessChain', 'pendingHandoff', 'options', 'model'];
+  const fields = ['id', 'harnessId', 'title', 'titleLocked', 'cwd', 'originalCwd', 'nativeSessionId', 'nativeReadOnly', 'status', 'connectionStatus', 'createdAt', 'updatedAt', 'archived', 'section', 'sectionEnteredAt', 'sectionPosition', 'projectId', 'parentThreadId', 'ephemeral', 'gitInfo', 'workspace', 'isolation', 'harnessChain', 'pendingHandoff', 'options', 'model'];
   const summary = Object.fromEntries(fields.filter(key => thread[key] !== undefined).map(key => [key, thread[key]]));
   summary.preview = firstUser?.text || thread.preview || thread.title || '';
   summary.messageCount = thread.messages?.length ?? thread.messageCount ?? 0;
@@ -111,6 +111,9 @@ class ThreadStore {
   hydrateInto(thread) {
     if (!thread?._storageStub) return thread;
     const record = hydrateThread(JSON.parse(fsSync.readFileSync(path.join(this.recordsDirectory, recordName(thread.id)), 'utf8')));
+    // Reordering changes positions of cold peers in the index without loading
+    // their records. The index position must win over an older record value.
+    if (Object.hasOwn(thread, 'sectionPosition')) record.sectionPosition = thread.sectionPosition;
     for (const key of Object.keys(thread)) delete thread[key];
     Object.assign(thread, record);
     return thread;

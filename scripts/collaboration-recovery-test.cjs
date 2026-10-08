@@ -123,6 +123,24 @@ async function main() {
   const imported = rt.threads.find(t => t.id === one.threadId);
   assert.equal(imported.nativeSessionId, 'native-id'); assert.equal(imported.restore, true);
   assert.match(JSON.stringify(rt.core.getItemsForTurn(rt.execution.lastTurn(imported.id).id)), /old answer/);
+  const cold = new HostRuntime({ dataDirectory: path.join(root, 'history-cold') });
+  await cold.store.save([{ ...imported, coreState: rt.execution.checkpoint(imported) }]);
+  cold.threads = await cold.store.loadIndex();
+  cold.adapters.set('pi', rt.adapters.get('pi'));
+  cold.history = new SessionHistory(cold, {
+    async listNative() { return []; },
+    async readNative() { throw new Error('Managed history must use its persisted record'); },
+  });
+  const coldIdentity = { harnessId: 'pi', nativeSessionId: imported.nativeSessionId };
+  const coldInfo = await cold.history.info(coldIdentity);
+  assert.equal(coldInfo.messageCount, null, 'Cold metadata must not report an empty stub as zero messages');
+  assert.equal(cold.threads[0]._storageStub, true, 'Metadata lookup remains lazy');
+  const coldContext = await cold.history.context(coldIdentity);
+  assert.equal(coldContext.returned, 2, 'Cold managed history loads both saved messages');
+  assert.match(coldContext.transcript, /User: old question[\s\S]*Assistant: old answer/);
+  assert.equal(cold.sessions.size, 0, 'Reading cold history never launches a native process');
+  assert.equal((await cold.history.info(coldIdentity)).messageCount, 2);
+  await cold.close();
   await assert.rejects(rt.history.import({ harnessId: 'pi', nativeSessionId: '../outside' }), /no longer exists/);
   protocol.close(); await restarted.close(); await rt.close();
   console.log('PASS: dirty worktree isolation, source index preservation, digest/conflict-safe apply, durable recovery identity, unified history search/import/dedup and lazy native resume');

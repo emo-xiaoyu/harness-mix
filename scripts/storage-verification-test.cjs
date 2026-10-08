@@ -6,6 +6,8 @@ const { Store } = require('../src/main/host/store');
 const { compactThread, hydrateThread, storageProjection } = require('../src/main/host/thread-storage');
 const { VerificationGates, normalizePolicy } = require('../src/main/host/verification-gates');
 const { ThreadStore } = require('../src/main/host/thread-store');
+const { HostRuntime } = require('../src/main/host/runtime');
+const { mergeThreadPage } = require('../src/main/native/thread-list');
 
 (async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'harness-mix-storage-'));
@@ -65,6 +67,26 @@ const { ThreadStore } = require('../src/main/host/thread-store');
     assert.ok(!afterDelete.some(item => item.id === 'deleted-old'),
       'A durable deletion marker prevents resurrection after an interrupted delete');
     await fs.rm(shardedRoot, { recursive: true, force: true });
+    const sectionRoot = path.join(root, 'section-order');
+    const sectionRuntime = new HostRuntime({ dataDirectory: sectionRoot });
+    const section = { id: 'review', name: 'Review' };
+    await sectionRuntime.store.save(['a', 'b', 'c'].map((id, sectionPosition) => ({
+      id, harnessId: 'fixture', cwd: sectionRoot, title: id, status: 'ready', messages: [], section, sectionPosition,
+    })));
+    sectionRuntime.threads = await sectionRuntime.store.loadIndex();
+    await sectionRuntime.setThreadSection('c', section, 'a');
+    assert.equal(sectionRuntime.threads.find(t => t.id === 'a')._storageStub, true, 'Reordering does not load peer transcripts');
+    await sectionRuntime.close();
+    const coldSection = new HostRuntime({ dataDirectory: sectionRoot });
+    coldSection.threads = await coldSection.store.loadIndex();
+    const ordered = () => mergeThreadPage({ data: [] }, coldSection.threads, { sectionId: section.id, sortKey: 'section_position' }, t => t).data.map(t => t.id);
+    assert.deepEqual(ordered(), ['c', 'a', 'b'], 'Native section query preserves order across restart');
+    assert.equal(coldSection.getThread('a').sectionPosition, 1, 'Hydrating a cold peer retains its newer index position');
+    assert.deepEqual(ordered(), ['c', 'a', 'b'], 'Opening a peer must not undo the saved order');
+    assert.equal(coldSection.sessions.size, 0);
+    await coldSection.close();
+    const savedSection = await coldSection.store.loadIndex();
+    assert.equal(savedSection.find(t => t.id === 'a').sectionPosition, 1, 'Order survives a second save and restart');
     const unsupportedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'harness-mix-storage-schema-'));
     await fs.writeFile(path.join(unsupportedRoot, 'threads.json'), JSON.stringify({ schemaVersion: 99, threads: [] }));
     await assert.rejects(new Store(unsupportedRoot, 'threads.json', { schemaVersion: 2 }).load(), /Unsupported thread store schema/);
