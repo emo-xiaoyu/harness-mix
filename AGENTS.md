@@ -56,7 +56,9 @@ Release checklist, in order:
 4. Commit as `Release <version>`, tag `v<version>`, push branch + tag.
 5. **Wait for the `CI` and `Installers` workflows to pass on the release commit before publishing anything.** npm publish happens only from a green release commit.
 6. Publish: `npm publish --access public --registry=https://registry.npmjs.org` for `@harness-mix/cli`, then `npm run publish:native -- win32 x64 --publish` (real binaries) and `npm run publish:native -- <platform> <arch> --source-only --publish` for the other five platform packages.
-7. Verify each version is visible on the registry (propagation can lag a few minutes for the large main package) before announcing the release.
+7. **Write the GitHub Release notes for `v<version>` and publish them — a bare tag with no description is an incomplete release.** The notes must be structured markdown covering, in this order: 新增 (new features), 更新 (updates/changes), 修复 (fixes), 优化 (performance/quality improvements), and a final 下载与 npm 安装说明 section with the exact `npm install --global @harness-mix/cli@<version>` / `npm update` commands and where to get the platform installers. Follow the house style of the v0.4.0/v0.4.1 releases (emoji-headed sections, Chinese body, technical names inline). Update the release via `gh api -X PATCH repos/emo-xiaoyu/harness-mix/releases/<id> -f body="$(cat notes.md)"` (or the web UI).
+8. Attach the installers built by the `Installers` run on the tag as Release assets: `gh run download <run-id> -D output/installer-artifacts`, extract the exe/dmg from each zip, then `gh release upload v<version> <files>`. The release's Assets section is the download entry point referenced by the notes.
+9. Verify each version is visible on the registry (propagation can lag a few minutes for the large main package) before announcing the release.
 
 ## Security & Configuration Tips
 
