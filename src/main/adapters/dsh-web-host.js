@@ -1,9 +1,38 @@
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { terminateTree } = require("../native/process-utils");
 
-const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || (process.platform === 'win32' ? "E:\\dsh\\deepseek-harness" : null);
+const DSH_ROOT = process.env.HARNESS_MIX_DSH_ROOT || null;
+
+let cachedRuntime;
+/** 解析 DSH 运行时：monorepo 源码 checkout（scripts.dsh → npm run dsh）或 npm 包（bin.dsh → node bin.js）。
+ *  候选顺序：HARNESS_MIX_DSH_ROOT 显式指定（两种布局都接受）> Harness Mix 自带依赖（版本冻结、经过测试）
+ *  > 全局 npm 安装（npm root -g 下的 @deepseek-ai/dsh）。 */
+function resolveDshRuntime(diagnostic = () => {}) {
+  if (cachedRuntime) return cachedRuntime;
+  const candidates = [];
+  if (DSH_ROOT) candidates.push(DSH_ROOT);
+  try {
+    candidates.push(path.dirname(require.resolve("@deepseek-ai/dsh/package.json")));
+  } catch { /* 自带依赖缺失，继续尝试全局安装 */ }
+  try {
+    const cmd = process.platform === "win32"
+      ? ["cmd.exe", ["/d", "/s", "/c", "npm.cmd root -g"]]
+      : ["npm", ["root", "-g"]];
+    const globalRoot = execFileSync(cmd[0], cmd[1], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 }).trim();
+    if (globalRoot) candidates.push(path.join(globalRoot, "@deepseek-ai", "dsh"));
+  } catch (error) { diagnostic(`[dsh-web] npm root -g 探测失败：${error.message}`); }
+  for (const root of candidates) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      if (typeof pkg.bin?.dsh === "string") { cachedRuntime = { mode: "package", root, bin: path.join(root, pkg.bin.dsh) }; return cachedRuntime; }
+      if (typeof pkg.scripts?.dsh === "string") { cachedRuntime = { mode: "checkout", root }; return cachedRuntime; }
+    } catch { /* 候选不可用，试下一个 */ }
+  }
+  throw new Error("未找到 DSH 运行时；可设置 HARNESS_MIX_DSH_ROOT 指向源码仓库或 npm 包目录，或 npm install -g @deepseek-ai/dsh");
+}
 
 /**
  * DSH Web Remote 宿主管理器（协议见 packages/api/gateway + client/connection）：
@@ -60,15 +89,56 @@ class DshWebHost {
   }
 
   async #start() {
-    if (!DSH_ROOT) throw new Error('Set HARNESS_MIX_DSH_ROOT to the DeepSeek Harness checkout for web mode');
-    const child = spawn(process.platform === 'win32' ? 'cmd.exe' : 'npm', process.platform === 'win32'
-      ? ["/d", "/s", "/c", "npm.cmd run dsh -- web --no-open --port 0"] : ['run', 'dsh', '--', 'web', '--no-open', '--port', '0'], {
-      cwd: DSH_ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-    });
+    const runtime = resolveDshRuntime(this.diagnostic);
+    let stderrTail = "";
+    const tap = (line) => { stderrTail = `${stderrTail}\n${line}`.slice(-2000); this.diagnostic(line); };
+    try {
+      await this.#bootOnce(runtime, tap);
+    } catch (error) {
+      // npm 包布局的已知上游问题：web profile 默认 patchReload=live，但 profile 目录里
+      // 没有 Cordis HMR 服务，宿主打印 URL 后即崩溃。官方覆盖点是 profile manifest，
+      // 改为 startup 后重试一次（仅动 dsh.profile.patchReload 一个字段）。
+      const healed = runtime.mode === "package"
+        && /requires the Cordis HMR service/.test(stderrTail)
+        && this.#healWebProfilePatchReload();
+      if (!healed) throw error;
+      this.diagnostic("[dsh-web] web profile 缺 HMR 服务导致宿主崩溃，已将 patchReload 改为 startup 并重试");
+      if (this.child && !this.child.killed) void terminateTree(this.child.pid);
+      this.child = null;
+      await this.#bootOnce(runtime, tap);
+    }
+  }
+
+  /** 上游 @deepseek-ai/dsh npm 包的 web profile manifest 把 patchReload 固化为 live；
+   *  HMR 服务不可用时 dsh web 必崩。改为 startup（下次启动生效，语义等价：无热重载）。 */
+  #healWebProfilePatchReload() {
+    try {
+      const home = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+      const manifestPath = path.join(home, "profiles", "web", "package.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      if (manifest?.dsh?.profile?.patchReload === "startup") return false;
+      manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, patchReload: "startup" } };
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+      return true;
+    } catch (error) {
+      this.diagnostic(`[dsh-web] patchReload 自愈失败：${error.message}`);
+      return false;
+    }
+  }
+
+  async #bootOnce(runtime, tap) {
+    const child = runtime.mode === "checkout"
+      ? spawn(process.platform === 'win32' ? 'cmd.exe' : 'npm', process.platform === 'win32'
+        ? ["/d", "/s", "/c", "npm.cmd run dsh -- web --no-open --port 0"] : ['run', 'dsh', '--', 'web', '--no-open', '--port', '0'], {
+        cwd: runtime.root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+      })
+      : spawn(process.execPath, [runtime.bin, 'web', '--no-open', '--port', '0'], {
+        cwd: runtime.root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+      });
     this.child = child;
     child.stderr.on("data", (chunk) => {
       const line = String(chunk).trim();
-      if (line) this.diagnostic(`[dsh-web] ${line.slice(0, 240)}`);
+      if (line) tap(line.slice(0, 240));
     });
     const url = await new Promise((resolve, reject) => {
       let buf = "";
@@ -199,4 +269,4 @@ class DshWebHost {
   }
 }
 
-module.exports = { DshWebHost, DSH_ROOT };
+module.exports = { DshWebHost, DSH_ROOT, resolveDshRuntime };

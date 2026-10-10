@@ -28,7 +28,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Partial<Record<ExternalRendererA
   codex: { command: "npm install -g @openai/codex" },
   pi: { command: "npm install -g @mariozechner/pi-coding-agent" },
   "claude-code": { command: "npm install -g @anthropic-ai/claude-code" },
-  "deepseek-harness": { command: "pip install deepseek-harness" },
+  "deepseek-harness": { command: "npm install -g @deepseek-ai/dsh" },
   opencode: { command: "npm install -g opencode-ai" },
   grok: { command: "powershell -NoProfile -ExecutionPolicy Bypass -Command iex (irm https://x.ai/cli/install.ps1)" },
   omp: { command: "npm install -g @oh-my-pi/pi-coding-agent" },

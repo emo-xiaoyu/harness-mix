@@ -1,7 +1,5 @@
 const { randomUUID } = require("node:crypto");
-const { promises: fs } = require("node:fs");
-const path = require("node:path");
-const { DshWebHost, DSH_ROOT } = require("./dsh-web-host");
+const { DshWebHost, resolveDshRuntime } = require("./dsh-web-host");
 const { createDshSubagentBridge } = require('./dsh-subagents');
 const { recordNative } = require("../harness-adapter/fixture-recorder");
 const { nativeAcp } = require('./native-acp');
@@ -211,12 +209,13 @@ function create() {
 
     async inspect() {
       try {
-        const pkg = JSON.parse(await fs.readFile(path.join(DSH_ROOT, "package.json"), "utf8"));
-        if (typeof pkg.scripts?.dsh !== "string") throw new Error("根 package.json 未声明 dsh 脚本");
-        await fs.stat(path.join(DSH_ROOT, "node_modules"));
-        return { available: true, detail: `原生 Web Remote · ${DSH_ROOT}` };
+        const runtime = resolveDshRuntime();
+        const where = runtime.mode === "package"
+          ? `npm 包 · ${runtime.root}（bin: ${runtime.bin}）`
+          : `源码 checkout · ${runtime.root}`;
+        return { available: true, detail: `原生 Web Remote · ${where}` };
       } catch (error) {
-        return { available: false, detail: `DSH 原生运行时不可用（${DSH_ROOT}）：${error.message}；可用 HARNESS_MIX_DSH_ROOT 指定` };
+        return { available: false, detail: `DSH 原生运行时不可用：${error.message}；可用 HARNESS_MIX_DSH_ROOT 指定` };
       }
     },
 
@@ -442,7 +441,12 @@ function create() {
   // MCP declarations. Worker/direct sessions retain the richer Web Remote surface.
   const acp = nativeAcp({
     id: 'dsh', name: 'DeepSeek Harness', args: [],
-    command: argv => cliSpawn('npm', ['--prefix', DSH_ROOT, 'run', 'dsh', '--', '--profile', 'acp', ...argv]),
+    command: argv => {
+      const runtime = resolveDshRuntime();
+      return runtime.mode === 'package'
+        ? { command: process.execPath, args: [runtime.bin, '--profile', 'acp', ...argv] }
+        : cliSpawn('npm', ['--prefix', runtime.root, 'run', 'dsh', '--', '--profile', 'acp', ...argv]);
+    },
     capabilities: { attachments: true, fork: false, compaction: false, permissionModes: false },
   }).create();
   const openWeb = web.open.bind(web);
