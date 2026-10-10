@@ -142,7 +142,7 @@ function providerConfigPaths() {
   const desktopDir = bundledCli() ? path.dirname(path.dirname(bundledCli())) : null;
   const builtin = process.env.HARNESS_MIX_ZCODE_BUILTIN_CONFIG
     || (desktopDir && path.join(desktopDir, 'config', 'provider', 'zcode-builtin.json'));
-  const personal = process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.zcode', 'v2', 'provider_config.json') : null;
+  const personal = path.join(os.homedir(), '.zcode', 'v2', 'provider_config.json');
   return {
     builtin: builtin && fs.existsSync(builtin) ? builtin : null,
     personal: personal && fs.existsSync(personal) ? personal : null,
@@ -193,7 +193,7 @@ function accountProviders(builtinPath) {
     const declared = rules
       .filter(rule => /^account:/.test(rule?.providerId) && rule?.config?.access?.type === 'zhipu-account')
       .map(rule => ({ providerId: rule.providerId, modelIds: rule.config.builtinModelIds ?? [] }));
-    const credPath = process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.zcode', 'v2', 'credentials.json') : null;
+    const credPath = path.join(os.homedir(), '.zcode', 'v2', 'credentials.json');
     let credentialKeys = [];
     try {
       // Key NAMES only; values are never read or retained.
@@ -555,7 +555,7 @@ function credentialValueFor(providerId) {
   const account = accountProviders(paths.builtin).find(entry => entry.providerId === providerId);
   if (!account) return null;
   const file = process.env.HARNESS_MIX_ZCODE_CREDENTIALS
-    || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.zcode', 'v2', 'credentials.json') : null);
+    || path.join(os.homedir(), '.zcode', 'v2', 'credentials.json');
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'))?.[account.connectionKey];
     if (typeof raw !== 'string') return null;
