@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: "使用咨询 / 交流"
+  - name: "💬 使用咨询 / 交流"
     url: "https://github.com/emo-xiaoyu/harness-mix/discussions"
     about: "使用问题、配置咨询请到 Discussions；issue 仅用于 bug 报告和功能建议"
+  - name: "🔐 安全漏洞披露"
+    url: "https://github.com/emo-xiaoyu/harness-mix/security/advisories/new"
+    about: "安全问题请走私密披露（Security Advisory），不要开公开 issue"

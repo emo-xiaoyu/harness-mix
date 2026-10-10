@@ -1,19 +1,19 @@
-name: "Bug report / 问题报告"
+name: "🐞 Bug report / 问题报告"
 description: "报告一个可复现的问题 / Report a reproducible problem"
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        感谢反馈！提交前请先搜索已有的 issue，避免重复提交。
+        🙏 感谢反馈！提交前请先搜索已有的 issue，避免重复提交。
 
-        提示：设置 → 健康中心可以查看宿主运行时状态、各 Harness 握手结果与崩溃报告；
+        💡 提示：设置 → 健康中心可以查看宿主运行时状态、各 Harness 握手结果与崩溃报告；
         Host 日志已自动脱敏，可以放心粘贴。填写越完整，我们越容易复现和定位。
 
   - type: textarea
     id: what-happened
     attributes:
-      label: "发生了什么？"
+      label: "🧭 发生了什么？"
       description: "描述问题现象和完整复现步骤，越具体越好"
       placeholder: "例如：在 Pi 会话中通过 # 菜单接力到 Claude Code 后……"
     validations:
@@ -22,76 +22,143 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: "期望的行为是什么？"
+      label: "🎯 期望的行为是什么？"
       description: "描述你原本预期的正常结果"
     validations:
       required: false
 
   - type: dropdown
-    id: harness
+    id: severity
     attributes:
-      label: "涉及的 Harness"
-      description: "问题出现在哪个原生 Coding Harness 上？"
+      label: "🔥 严重程度"
+      description: "问题对你使用的影响有多大？"
       options:
-        - "不涉及特定 Harness（通用问题）"
-        - "Codex（官方原生线程）"
-        - "Codex（协作）"
-        - "Pi"
-        - "Oh My Pi (OMP)"
-        - "Claude Code"
-        - "DeepSeek Harness (DSH)"
-        - "Antigravity"
-        - "OpenCode"
-        - "Grok"
-        - "OpenClaw"
-        - "Hermes"
-        - "Qoder"
-        - "CodeBuddy"
-        - "Kiro CLI"
-        - "Cursor CLI"
-        - "ZCode"
-        - "Trae"
-        - "Cline"
-        - "其他（请在上方描述中说明）"
+        - "🧯 轻微 — 界面瑕疵、日志噪音，不影响使用"
+        - "⚠️ 一般 — 某个功能异常，但有办法绕过"
+        - "🚧 严重 — 某个 Harness 无法正常使用"
+        - "🛑 致命 — 崩溃 / 数据丢失 / 官方 Codex 线程被影响"
     validations:
       required: true
 
   - type: dropdown
+    id: frequency
+    attributes:
+      label: "🔁 复现频率"
+      options:
+        - "💯 总是复现（100%）"
+        - "🎮 经常复现（>50%）"
+        - "🎲 偶尔复现"
+        - "🕳️ 只出现过一次"
+        - "❓ 未尝试再次复现"
+    validations:
+      required: false
+
+  - type: dropdowns
+    id: harness
+    attributes:
+      label: "🔌 涉及的 Harness（可多选）"
+      description: "问题出现在哪个原生 Coding Harness 上？"
+      multiple: true
+      options:
+        - "🧩 不涉及特定 Harness（通用问题）"
+        - "🤖 Codex（官方原生线程）"
+        - "🤝 Codex（协作）"
+        - "🥧 Pi"
+        - "🍩 Oh My Pi (OMP)"
+        - "🎨 Claude Code"
+        - "🐳 DeepSeek Harness (DSH)"
+        - "🪐 Antigravity"
+        - "🔓 OpenCode"
+        - "✖️ Grok"
+        - "🦀 OpenClaw"
+        - "🪽 Hermes"
+        - "📦 Qoder"
+        - "🐧 CodeBuddy"
+        - "🪁 Kiro CLI"
+        - "🖱️ Cursor CLI"
+        - "⚡ ZCode"
+        - "🛩️ Trae"
+        - "🧲 Cline"
+        - "🌟 其他（请在上方描述中说明）"
+    validations:
+      required: true
+
+  - type: dropdowns
+    id: area
+    attributes:
+      label: "🧱 涉及的层面（可多选）"
+      description: "可选：帮助我们把 issue 路由给熟悉对应模块的维护者"
+      multiple: true
+      options:
+        - "🔌 适配层（某个 Harness 的 Adapter）"
+        - "🖥️ Host Runtime / 协作编排"
+        - "🪟 原生 UI（Renderer 扩展 / Desktop 控制）"
+        - "🧬 协作 CLI（collaboration-cli / 注册表）"
+        - "📦 安装与发布（安装包 / 更新 / npm）"
+        - "🔒 安全与权限"
+        - "📖 文档"
+        - "❓ 不确定"
+    validations:
+      required: false
+
+  - type: dropdowns
     id: platform
     attributes:
-      label: "操作系统"
+      label: "💻 操作系统（可多选）"
+      multiple: true
       options:
-        - "Windows"
-        - "macOS"
-        - "Linux"
+        - "🪟 Windows 10"
+        - "🪟 Windows 11"
+        - "🍎 macOS (Apple Silicon)"
+        - "🍎 macOS (Intel)"
+        - "🐧 Linux"
     validations:
       required: true
 
   - type: dropdown
     id: install
     attributes:
-      label: "安装方式"
+      label: "📦 安装方式"
       options:
-        - "npm 全局安装（@harness-mix/cli）"
-        - "安装包（Inno Setup / dmg）"
-        - "源码运行（npm start / npm run build:native）"
+        - "⚙️ npm 全局安装（@harness-mix/cli）"
+        - "💿 安装包（Inno Setup / dmg）"
+        - "🔨 源码运行（npm start / npm run build:native）"
     validations:
       required: false
 
   - type: input
     id: version
     attributes:
-      label: "Harness Mix 版本"
+      label: "🏷️ Harness Mix 版本"
       description: "package.json 中的 version，或安装包文件名里的版本号"
-      placeholder: "0.3.3"
+      placeholder: "0.4.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "🌍 环境信息"
+      description: "可选：Node 版本、Harness 自身版本（如 claude --version）、网络/代理环境等"
+      render: shell
     validations:
       required: false
 
   - type: textarea
     id: logs
     attributes:
-      label: "日志与截图"
+      label: "📋 日志与截图"
       description: "健康中心的崩溃报告、脱敏后的 Host 日志、界面截图等。日志虽已脱敏，提交前请再自行确认一次。"
       render: shell
     validations:
       required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "✅ 提交前确认"
+      options:
+        - label: "我已经搜索过已有的 issue，没有重复提交"
+          required: true
+        - label: "我粘贴的日志/截图中不含密钥、token 等敏感信息"
+          required: true

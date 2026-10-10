@@ -1,17 +1,17 @@
-name: "Feature request / 功能建议"
+name: "✨ Feature request / 功能建议"
 description: "提出新功能或改进建议 / Suggest a new feature or improvement"
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        感谢建议！提交前请先搜索已有 issue，并对照 README 的「原生 Harness 功能支持矩阵」，
+        🙏 感谢建议！提交前请先搜索已有 issue，并对照 README 的「原生 Harness 功能支持矩阵」，
         确认这不是已支持或已提出的能力。
 
   - type: textarea
     id: problem
     attributes:
-      label: "要解决什么问题？"
+      label: "🧭 要解决什么问题？"
       description: "描述你遇到的使用场景或痛点——功能建议请先讲清楚「为什么」"
     validations:
       required: true
@@ -19,7 +19,7 @@ body:
   - type: textarea
     id: solution
     attributes:
-      label: "期望的解决方案"
+      label: "🎯 期望的解决方案"
       description: "你希望它如何工作？在 Codex Desktop 原生界面上大概是什么交互？"
     validations:
       required: true
@@ -27,20 +27,48 @@ body:
   - type: textarea
     id: alternatives
     attributes:
-      label: "考虑过的替代方案"
+      label: "🔀 考虑过的替代方案"
       description: "可选：其他你能接受的做法，或目前用来绕过的办法"
     validations:
       required: false
 
-  - type: checkboxes
+  - type: dropdown
+    id: kind
+    attributes:
+      label: "🧩 建议类型"
+      options:
+        - "🔌 新 Harness 适配（接入一个新的原生 Coding Harness）"
+        - "🚀 已有 Harness 能力增强（模型 / 工具 / 权限 / 会话管理）"
+        - "🤝 协作与编排（接力、多 Harness 会话）"
+        - "🪟 原生 UI / 交互体验"
+        - "📦 安装、更新与发布"
+        - "📖 文档与示例"
+        - "⚙️ 其他"
+    validations:
+      required: true
+
+  - type: dropdowns
     id: area
     attributes:
-      label: "主要影响的层面"
+      label: "🧱 主要影响的层面（可多选）"
       description: "可选：帮助我们把 issue 路由给熟悉对应模块的维护者"
+      multiple: true
       options:
-        - label: "适配层（某个 Harness 的 Adapter）"
-        - label: "Host Runtime / 协作编排"
-        - label: "原生 UI（Renderer 扩展 / Desktop 控制）"
-        - label: "安装与发布（安装包 / 更新）"
-        - label: "文档"
-        - label: "不确定"
+        - "🔌 适配层（某个 Harness 的 Adapter）"
+        - "🖥️ Host Runtime / 协作编排"
+        - "🪟 原生 UI（Renderer 扩展 / Desktop 控制）"
+        - "🧬 协作 CLI（collaboration-cli / 注册表）"
+        - "📦 安装与发布（安装包 / 更新 / npm）"
+        - "🔒 安全与权限"
+        - "📖 文档"
+        - "❓ 不确定"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "✅ 提交前确认"
+      options:
+        - label: "我已经搜索过已有 issue，并查看过 README 的功能支持矩阵"
+          required: true
