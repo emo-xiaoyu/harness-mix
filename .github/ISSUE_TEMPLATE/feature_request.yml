@@ -47,7 +47,7 @@ body:
     validations:
       required: true
 
-  - type: dropdowns
+  - type: dropdown
     id: area
     attributes:
       label: "🧱 主要影响的层面（可多选）"

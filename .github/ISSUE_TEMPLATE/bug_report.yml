@@ -53,7 +53,7 @@ body:
     validations:
       required: false
 
-  - type: dropdowns
+  - type: dropdown
     id: harness
     attributes:
       label: "🔌 涉及的 Harness（可多选）"
@@ -83,7 +83,7 @@ body:
     validations:
       required: true
 
-  - type: dropdowns
+  - type: dropdown
     id: area
     attributes:
       label: "🧱 涉及的层面（可多选）"
@@ -101,7 +101,7 @@ body:
     validations:
       required: false
 
-  - type: dropdowns
+  - type: dropdown
     id: platform
     attributes:
       label: "💻 操作系统（可多选）"

@@ -40,7 +40,7 @@ body:
     validations:
       required: true
 
-  - type: dropdowns
+  - type: dropdown
     id: capabilities
     attributes:
       label: "🚀 它提供哪些能力（可多选）"
