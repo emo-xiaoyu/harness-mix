@@ -1,0 +1,43 @@
+name: "📖 文档问题"
+description: "文档错误、缺失或看不懂的地方 / Report a docs issue"
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: "🧩 问题类型"
+      options:
+        - "❌ 文档内容有错（与实际行为不符）"
+        - "🕳️ 内容缺失（某个功能/流程没写）"
+        - "🕰️ 内容过时（旧版本的行为）"
+        - "🧱 描述不清 / 看不懂"
+        - "🔗 链接失效"
+        - "🌐 翻译 / 中英文不一致"
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: "📍 出问题的位置"
+      description: "文件名 + 小节标题，或 docs 页面链接"
+      placeholder: "README.md →「安装」→ Windows 一节"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "🧭 问题描述"
+      description: "错在哪里 / 缺了什么 / 哪里没看懂？如果知道正确内容，请直接给出"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "🏷️ 相关版本"
+      description: "可选：文档对应或你正在使用的版本"
+      placeholder: "0.4.1"
+    validations:
+      required: false

@@ -1,0 +1,83 @@
+name: "🔌 新 Harness 适配请求"
+description: "希望接入一个新的原生 Coding Harness / Request support for a new harness"
+labels: ["enhancement", "new-harness"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🙏 感谢推荐！提交前请先搜索已有 issue，确认这个 Harness 还没有人提过。
+
+        💡 Harness Mix 的原则是「会话、模型调用、工具、权限都归原生程序所有」，
+        我们只做接入与编排，不会代理或存储任何凭证。请尽量提供下面这些信息，
+        评估和实现都会快很多。
+
+  - type: input
+    id: harness-name
+    attributes:
+      label: "🏷️ Harness 名称"
+      description: "官方名称，如有中文名请一并列出"
+      placeholder: "例如：Trae CLI"
+    validations:
+      required: true
+
+  - type: input
+    id: homepage
+    attributes:
+      label: "🔗 官网 / 仓库地址"
+      placeholder: "https://..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: harness-type
+    attributes:
+      label: "🧬 Harness 类型"
+      options:
+        - "💻 CLI 工具（stdio 协议，类似 Claude Code / Pi）"
+        - "🖥️ 自带本地服务（HTTP/SSE，类似 OpenCode）"
+        - "☁️ 桌面应用 / 需要外部网关"
+        - "❓ 不确定"
+    validations:
+      required: true
+
+  - type: dropdowns
+    id: capabilities
+    attributes:
+      label: "🚀 它提供哪些能力（可多选）"
+      description: "帮助评估接入后能映射出多少功能矩阵里的能力"
+      multiple: true
+      options:
+        - "🔁 会话管理（创建 / 恢复 / 列出历史）"
+        - "🤖 模型列表与切换"
+        - "🛠️ 工具调用与审批流"
+        - "🤝 多会话 / 子代理"
+        - "📸 上下文压缩或接力机制"
+        - "❓ 不确定"
+    validations:
+      required: false
+
+  - type: textarea
+    id: protocol
+    attributes:
+      label: "📜 协议 / API 文档"
+      description: "它的进程间协议（JSON-RPC / HTTP / SSE 等）有没有公开文档或开源实现？"
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: "💡 为什么希望接入它？"
+      description: "你的使用场景，以及目前用什么替代"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "✅ 提交前确认"
+      options:
+        - label: "我已经搜索过已有 issue，确认没有重复的适配请求"
+          required: true
+        - label: "我了解 Harness Mix 不会存储该 Harness 的凭证，只做接入编排"
+          required: false

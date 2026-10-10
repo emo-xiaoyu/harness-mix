@@ -1,0 +1,89 @@
+name: "📦 安装 / 更新问题"
+description: "安装包、npm 安装或更新流程出问题 / Trouble installing or updating"
+labels: ["bug", "installation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🙏 感谢反馈！安装类问题请尽量提供完整命令与报错输出，方便我们定位。
+
+        💡 常见自救：npm 用户可先尝试 `npm update -g @harness-mix/cli`；
+        安装包用户可在「设置 → 关于」检查更新。官方 Codex 线程不受 Harness Mix 影响，
+        若官方线程也异常，大概率是 Desktop 本身的问题。
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: "🧭 卡在哪一步？"
+      options:
+        - "⚙️ npm 安装失败（npm install -g @harness-mix/cli）"
+        - "🚀 CLI 启动失败（harness-mix 命令报错）"
+        - "💿 安装包安装失败（Inno Setup / dmg）"
+        - "🔄 应用内更新失败（git 快进 / npm 通道）"
+        - "↩️ 更新后回滚 / 版本异常"
+        - "🧹 卸载 / 残留清理问题"
+        - "🪟 Codex Desktop 没有出现 Harness Mix 入口"
+    validations:
+      required: true
+
+  - type: dropdowns
+    id: platform
+    attributes:
+      label: "💻 操作系统（可多选）"
+      multiple: true
+      options:
+        - "🪟 Windows 10"
+        - "🪟 Windows 11"
+        - "🍎 macOS (Apple Silicon)"
+        - "🍎 macOS (Intel)"
+        - "🐧 Linux"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: "📦 安装方式"
+      options:
+        - "⚙️ npm 全局安装（@harness-mix/cli）"
+        - "💿 安装包（Inno Setup / dmg）"
+        - "🔨 源码运行（npm start / npm run build:native）"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "🏷️ 相关版本"
+      description: "Harness Mix 版本（升级前后的都写上更好）"
+      placeholder: "0.4.1 → 0.4.2"
+    validations:
+      required: false
+
+  - type: textarea
+    id: error
+    attributes:
+      label: "🧾 完整报错输出"
+      description: "请直接粘贴终端 / 安装器的完整报错文本，不要截图代替（可搜索、可复制）"
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "🌍 环境信息"
+      description: "可选：node -v、npm -v、npm registry 源（npm config get registry）、网络/代理环境"
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "✅ 提交前确认"
+      options:
+        - label: "我已经搜索过已有 issue，没有重复提交"
+          required: true
+        - label: "我粘贴的输出中不含密钥、token 等敏感信息"
+          required: true
