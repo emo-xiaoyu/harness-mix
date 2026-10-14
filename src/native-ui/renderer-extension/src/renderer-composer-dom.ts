@@ -284,8 +284,31 @@ export function nativeTrailingClusterPlacement(
   // Walk the chain downward: cell → mid container → cluster wrapper.
   const mid = chain.length >= 2 ? chain[chain.length - 2] : undefined;
   const wrapper = chain.length >= 3 ? chain[chain.length - 3] : undefined;
-  if (wrapper && mid && mid.parentElement === cell) {
+  const isFlexRow = (element: HTMLElement | undefined): boolean => {
+    if (!element) return false;
+    const display = getComputedStyle(element).display;
+    return (
+      (display === "flex" || display === "inline-flex") &&
+      getComputedStyle(element).flexDirection.startsWith("row")
+    );
+  };
+  // Classic variant: mid lays its children out on one row, so anchoring just
+  // outside the cluster wrapper keeps [model][our host][voice/stop] inline.
+  if (wrapper && mid && mid.parentElement === cell && isFlexRow(mid)) {
     return { parent: mid, before: wrapper };
+  }
+  // Nested-footer variant (26.1007+): mid is display:contents (or a block), so
+  // it produces no row and the anchor above stacks our host on its own line
+  // above the native controls. The wrapper itself is then the flex row holding
+  // the model control and the voice/stop cluster — slot the host inside it,
+  // before that cluster, so the picker stays inline next to the model name.
+  if (wrapper && isFlexRow(wrapper) && chain.length >= 4) {
+    const cluster = chain[chain.length - 4];
+    const before =
+      cluster && cluster.parentElement === wrapper
+        ? cluster
+        : (wrapper.firstElementChild as HTMLElement | null);
+    if (before) return { parent: wrapper, before };
   }
   if (mid && mid.parentElement === cell) {
     return { parent: cell, before: mid };
