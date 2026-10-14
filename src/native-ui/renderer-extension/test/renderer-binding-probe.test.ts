@@ -1097,10 +1097,52 @@ describe("Renderer Composer DOM behavior", () => {
       closest: (selector: string) =>
         selector === "[data-composer-footer-responsive]" ? footer : null,
     };
+    vi.stubGlobal(
+      "getComputedStyle",
+      (element: unknown) =>
+        element === mid
+          ? { display: "flex", flexDirection: "row" }
+          : { display: "block", flexDirection: "row" },
+    );
+    try {
+      const placement = nativeTrailingClusterPlacement(stop as unknown as HTMLButtonElement);
+      expect(placement).toEqual({ parent: mid, before: wrapper });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
-    const placement = nativeTrailingClusterPlacement(stop as unknown as HTMLButtonElement);
-
-    expect(placement).toEqual({ parent: mid, before: wrapper });
+  it("slots the trailing host inside the flex row when the mid layer is display:contents", () => {
+    // Desktop 26.1007 nested footer: cell → mid(contents) → wrapper(flex row:
+    // [model control][voice cluster]) → cluster → send/stop. The host must land
+    // INSIDE the wrapper before the cluster, not beside it in the contents layer.
+    const footer = { children: [] };
+    const cell = { children: [], parentElement: footer };
+    const mid = { children: [], parentElement: cell };
+    const wrapper = { children: [], parentElement: mid };
+    const cluster = { children: [], parentElement: wrapper };
+    const sendStopWrapper = { children: [], parentElement: cluster };
+    const stop = {
+      type: "button",
+      hasAttribute: () => false,
+      getAttribute: (name: string) => (name === "aria-label" ? "停止" : null),
+      parentElement: sendStopWrapper,
+      closest: (selector: string) =>
+        selector === "[data-composer-footer-responsive]" ? footer : null,
+    };
+    vi.stubGlobal(
+      "getComputedStyle",
+      (element: unknown) =>
+        element === wrapper
+          ? { display: "flex", flexDirection: "row" }
+          : { display: "contents", flexDirection: "row" },
+    );
+    try {
+      const placement = nativeTrailingClusterPlacement(stop as unknown as HTMLButtonElement);
+      expect(placement).toEqual({ parent: wrapper, before: cluster });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("places the trailing host before the native cluster and orders its children", () => {
@@ -1146,9 +1188,20 @@ describe("Renderer Composer DOM behavior", () => {
       },
     } as unknown as ComposerAgentControl;
 
-    reconcileComposerNativeControls(control, true, false);
+    vi.stubGlobal(
+      "getComputedStyle",
+      (element: unknown) =>
+        element === mid
+          ? { display: "flex", flexDirection: "row" }
+          : { display: "block", flexDirection: "row" },
+    );
+    try {
+      reconcileComposerNativeControls(control, true, false);
 
-    expect(insertBefore).toHaveBeenCalledWith(host, wrapper);
+      expect(insertBefore).toHaveBeenCalledWith(host, wrapper);
+    } finally {
+      vi.unstubAllGlobals();
+    }
     // Usage is owned by repositionUsage; the host only orders commands/model/agent.
     expect(append).toHaveBeenCalledWith(commandsRoot, modelRoot, agentRoot);
   });

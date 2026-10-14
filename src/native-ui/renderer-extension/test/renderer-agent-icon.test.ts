@@ -43,8 +43,9 @@ describe("Renderer Agent icons", () => {
     expect(image.src).toMatch(/^data:image\/svg\+xml,/);
     expect(image.alt).toBe("");
     expect(image.draggable).toBe(false);
-    expect(image.style.width).toBe("16px");
-    expect(image.style.height).toBe("16px");
+    // Thin line-art marks get a +3px optical boost.
+    expect(image.style.width).toBe("19px");
+    expect(image.style.height).toBe("19px");
     expect(image.style.borderRadius).toBe("22.37%");
   });
 
@@ -92,8 +93,9 @@ describe("Renderer Agent icons", () => {
       if (agent === 'kimi-code') expect(decodeURIComponent(image.src)).toContain('MoonshotAI');
       expect(image.alt).toBe("");
       expect(image.draggable).toBe(false);
-      expect(image.style.width).toBe("16px");
-      expect(image.style.height).toBe("16px");
+      const expected = agent === "antigravity" ? "19px" : "16px";
+      expect(image.style.width).toBe(expected);
+      expect(image.style.height).toBe(expected);
     },
   );
 });
