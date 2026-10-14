@@ -75,7 +75,12 @@ One-shot delegation:
 - Iterate: followup (completed tasks, reuses the session), cancel, resume
   (interrupted tasks only; never replay completed side effects).
 - Isolated worktree results: \`review <task_id>\`, then \`apply\` only with the
-  returned digest and explicit user authorization.
+  returned digest and explicit user authorization. When the straight patch
+  conflicts with the shared workspace, review returns an auto three-way merge
+  candidate (\`autoMerged\`) with its own digest — review that merged patch and
+  use its digest. \`apply --cleanup\` removes the isolated worktree after a
+  successful apply; \`worktrees\` lists isolated worktrees and \`worktrees
+  --prune\` deletes unreferenced ones.
 
 Agent Teams:
 

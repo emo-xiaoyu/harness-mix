@@ -85,11 +85,13 @@ async function main() {
     const init = await transport.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     assert.ok(init.capabilities.tools);
     const catalog = await transport.request('tools/list', {});
-    assert.equal(catalog.tools.length, 18);
+    assert.equal(catalog.tools.length, 20);
     assert.ok(catalog.tools.some(tool => tool.name === 'list_team_templates'), '模板清单工具进入 MCP 目录');
     assert.ok(catalog.tools.some(tool => tool.name === 'session_info'), 'CLI 身份自检工具进入目录');
     assert.ok(catalog.tools.some(tool => tool.name === 'review_delegation_changes'));
     assert.ok(catalog.tools.some(tool => tool.name === 'apply_delegation_changes'));
+    assert.ok(catalog.tools.some(tool => tool.name === 'list_worktrees'), 'worktree 卫生工具进入 MCP 目录');
+    assert.ok(catalog.tools.some(tool => tool.name === 'prune_worktrees'));
     assert.ok(catalog.tools.some(tool => tool.name === 'create_agent_team'));
     assert.ok(catalog.tools.some(tool => tool.name === 'run_team_script'), '编排脚本工具进入 MCP 目录');
     assert.equal(catalog.tools.find(tool => tool.name === 'create_agent_team').inputSchema.properties.members.maxItems, 6, 'A Team supports six specialist members plus its Lead');

@@ -5,7 +5,7 @@ const path = require('node:path');
 const { tools } = require('./collaboration-tools');
 const { z } = require('zod');
 const { Store } = require('./store');
-const { createWorkspace, reviewWorkspace, applyWorkspace, discardWorkspace, pushWorkspace } = require('./collaboration-worktree');
+const { createWorkspace, reviewWorkspace, applyWorkspace, discardWorkspace, pushWorkspace, removeWorkspace, listWorktrees, pruneWorktrees } = require('./collaboration-worktree');
 const { CollabRegistry, registryDirectoryFor } = require('./collab-registry');
 const { loadProjectTeamTemplates, validateTemplateMembers: validateMembers } = require('./team-template-files');
 const { parseScript, validateScript, executeScript, settledTaskHandle, ScriptInterrupted } = require('./team-script');
@@ -747,7 +747,7 @@ ${instruction}`;
     return reviewWorkspace(job.workspace);
   }
 
-  async apply(id, digest) {
+  async apply(id, digest, { cleanup = false } = {}) {
     const job = this.jobs.get(id);
     if (!job || job.status !== 'completed') throw new Error('仅可应用已完成子任务的改动');
     if (job.applying) throw new Error('正在应用改动');
@@ -770,6 +770,12 @@ ${instruction}`;
       if (childForVerify) {
         const report = await this.runtime.verificationGates.advisory(childForVerify).catch(() => null);
         if (report) { job.verification = { mode: 'advisory', status: report.status, checks: report.checks }; result.verification = job.verification; }
+      }
+      // 显式 cleanup：应用成功后回收隔离工作区与分支（共享目录模式为 no-op）
+      if (cleanup) {
+        await removeWorkspace(job.workspace).catch(() => {});
+        delete job.workspace;
+        result.cleanedUp = true;
       }
       await this.save();
       return result;
@@ -1157,6 +1163,17 @@ ${instruction}`;
       if (!thread) throw new Error('Unknown session');
       return { templates: await this.listTeamTemplates(thread.cwd) };
     }
+    // worktree 卫生类操作：任意时刻可用（不要求 lead turn 存活），只读列表与显式清理
+    if (name === 'list_worktrees' || name === 'prune_worktrees') {
+      const thread = rt.threads.find(t => t.id === principal);
+      if (!thread) throw new Error('Unknown session');
+      const keepRoots = new Set([...this.jobs.values()]
+        .filter(j => j.workspace?.root)
+        .map(j => String(j.workspace.root).toLowerCase()));
+      return name === 'list_worktrees'
+        ? listWorktrees(thread.cwd, keepRoots)
+        : pruneWorktrees(thread.cwd, keepRoots);
+    }
     const teamTools = TEAM_TOOL_NAMES;
     const participant = this.participant(principal, args.team_id);
     const owner = participant?.team.owner ?? principal;
@@ -1238,7 +1255,7 @@ ${instruction}`;
     const job = this.owned(owner, args.task_id);
     if (name === 'cancel_delegation') { await this.cancel(job); return this.view(job); }
     if (name === 'review_delegation_changes') return this.review(job.id);
-    if (name === 'apply_delegation_changes') return this.apply(job.id, args.digest);
+    if (name === 'apply_delegation_changes') return this.apply(job.id, args.digest, { cleanup: !!args.cleanup });
     if (name === 'resume_delegation' && job.status !== 'interrupted') throw new Error('Only interrupted tasks can be resumed');
     if (job.handshaking) throw new Error('成员正在生成中断收尾交接，请稍候再恢复');
     if (job.status === 'running' || job.cancelling || job.followupPending || job.applying) throw new Error('Subtask still running; wait before sending a follow-up');

@@ -50,6 +50,30 @@ async function tree(cwd) {
   } finally { await fs.rm(index, { force: true }); await fs.rm(`${index}.lock`, { force: true }); }
 }
 
+// Ignored build/dependency directories worth sharing with a fresh worktree, so
+// isolated workers can actually run builds and tests instead of failing on a
+// missing node_modules. Comma-separated override via HARNESS_MIX_WORKTREE_LINKS.
+const DEFAULT_LINKED_DIRS = ['node_modules'];
+
+// A directory junction on Windows needs no privileges; a dir symlink elsewhere.
+// Failures are non-fatal: isolation must not break because a link could not be made.
+async function linkWorkspaceDependencies(source, root) {
+  const names = (process.env.HARNESS_MIX_WORKTREE_LINKS ? process.env.HARNESS_MIX_WORKTREE_LINKS : DEFAULT_LINKED_DIRS.join(','))
+    .split(',').map(name => name.trim()).filter(Boolean);
+  const linked = [];
+  for (const name of names) {
+    const target = path.join(source, name);
+    if (!(await fs.stat(target).catch(() => null))?.isDirectory()) continue;
+    const link = path.join(root, name);
+    if (await fs.lstat(link).catch(() => null)) continue;
+    try {
+      await fs.symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+      linked.push(name);
+    } catch {}
+  }
+  return linked;
+}
+
 async function createWorkspace(cwd, id, mode = 'auto') {
   if (mode === 'shared') return { mode: 'shared', cwd };
   let source;
@@ -81,7 +105,31 @@ async function createWorkspace(cwd, id, mode = 'auto') {
     throw new Error(`无法建立隔离工作区：工作目录不在 Git 根目录内 (${cwd})`);
   }
   const worktreeCwd = relative ? path.join(root, relative) : root;
-  return { mode: 'worktree', root, cwd: worktreeCwd, source, branch, baseCommit, baseTree };
+  const linked = await linkWorkspaceDependencies(source, root);
+  return { mode: 'worktree', root, cwd: worktreeCwd, source, branch, baseCommit, baseTree, ...(linked.length ? { linked } : {}) };
+}
+
+// Three-way merge candidate when the straight worker patch no longer applies to
+// the source directory: fork both sides from baseCommit and merge them without a
+// worktree via `git merge-tree --write-tree` (needs Git 2.38+). On success the
+// review patch becomes diff(source current, merged) — exactly the worker's
+// surviving changes — so the digest gate still authorizes what gets applied.
+async function autoMergeCandidate(workspace, workerTree) {
+  const sourceTree = await tree(workspace.source);
+  const commitOf = async (treeOid) => (await git(workspace.source, [
+    '-c', 'user.name=Harness Mix', '-c', 'user.email=harness-mix@localhost',
+    'commit-tree', treeOid, '-p', workspace.baseCommit, '-m', 'Harness Mix merge candidate',
+  ])).trim();
+  let mergedTree;
+  try {
+    const [sourceCommit, workerCommit] = [await commitOf(sourceTree), await commitOf(workerTree)];    // merge-tree exits 1 on conflicts, which promisified execFile turns into a throw
+    const out = await git(workspace.source, ['merge-tree', '--write-tree', sourceCommit, workerCommit]);
+    mergedTree = out.split(/\r?\n/)[0].trim();
+    if (!/^[0-9a-f]{40,64}$/u.test(mergedTree)) return null;
+  } catch { return null; }
+  const patch = await git(workspace.source, ['diff', '--binary', '--no-ext-diff', '--no-textconv', sourceTree, mergedTree, '--']);
+  if (!patch) return null;
+  return { patch, digest: createHash('sha256').update(patch).digest('hex'), autoMerged: true };
 }
 
 async function reviewWorkspace(workspace) {
@@ -101,6 +149,13 @@ async function reviewWorkspace(workspace) {
       const files = [...stderr.matchAll(/error:\s*patch failed:\s*([^:\r\n]+)/g)].map(m => m[1].trim());
       result.conflictingFiles = files.length ? [...new Set(files)] : [];
       result.conflictReason = stderr.slice(0, 500);
+      // Straight patch is stale; offer a three-way merge candidate as the reviewed
+      // patch instead. Digest gates the merged result the reviewer actually sees.
+      const candidate = await autoMergeCandidate(workspace, currentTree).catch(() => null);
+      if (candidate) {
+        Object.assign(result, candidate, { hadConflict: true, conflictingFiles: result.conflictingFiles });
+        result.hasConflict = false;
+      }
     } finally {
       await fs.rm(file, { force: true }).catch(() => {});
     }
@@ -115,7 +170,7 @@ async function applyWorkspace(workspace, expectedDigest) {
   if (review.hasConflict) {
     const fileList = review.conflictingFiles.length
       ? review.conflictingFiles.map(f => `  - ${f}`).join('\n')
-      : '  (主工作区当前状态与补丁不兼容)';
+      : '  (主工作区当前状态与补丁不兼容，且自动三方合并不可用或仍有冲突)';
     throw new Error(
       `无法应用工作区改动：检测到文件合并冲突。\n冲突文件：\n${fileList}\n` +
       `建议操作：\n1. 可在子任务独立工作区 (${workspace.cwd}) 中手动合并或解决冲突；\n` +
@@ -174,4 +229,38 @@ async function pushWorkspace(workspace, remote = 'origin', remoteBranch = worksp
   return { remote, branch: remoteBranch, commit: newCommit, pushed: true };
 }
 
-module.exports = { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace, git, tree };
+// Inventory of isolated worktrees beside the caller's repository. keepRoots is a
+// set of lowercase absolute roots still referenced by live jobs; anything else
+// under <repo>-harness-worktrees/ is a cleanup candidate (e.g. left behind after
+// a Host crash). Pruning only touches unreferenced entries.
+async function listWorktrees(cwd, keepRoots = new Set()) {
+  let source;
+  try { source = await fs.realpath((await git(cwd, ['rev-parse', '--show-toplevel'])).trim()); }
+  catch { return { git: false, worktrees: [] }; }
+  const dir = path.join(path.dirname(source), `${path.basename(source)}-harness-worktrees`);
+  let ids = [];
+  try { ids = await fs.readdir(dir); } catch { return { git: true, source, dir, worktrees: [] }; }
+  const worktrees = [];
+  for (const id of ids) {
+    const root = path.join(dir, id);
+    if (!(await fs.stat(root).catch(() => null))?.isDirectory()) continue;
+    worktrees.push({ id, root, branch: `codex/collab-${id}`, referenced: keepRoots.has(root.toLowerCase()) });
+  }
+  return { git: true, dir, worktrees };
+}
+
+async function pruneWorktrees(cwd, keepRoots = new Set()) {
+  const inventory = await listWorktrees(cwd, keepRoots);
+  if (!inventory.git) throw new Error('当前目录不在 Git 仓库内，无法清理隔离工作区');
+  const pruned = [];
+  const kept = [];
+  for (const entry of inventory.worktrees) {
+    if (entry.referenced) { kept.push(entry.id); continue; }
+    await removeWorkspace({ mode: 'worktree', root: entry.root, source: inventory.source, branch: entry.branch });
+    try { await git(inventory.source, ['update-ref', '-d', `refs/harness-mix/collaboration/${entry.id}`]); } catch {}
+    pruned.push(entry.id);
+  }
+  return { pruned, kept, dir: inventory.dir };
+}
+
+module.exports = { createWorkspace, inspectWorkspace, reviewWorkspace, applyWorkspace, removeWorkspace, discardWorkspace, pushWorkspace, listWorktrees, pruneWorktrees, git, tree };

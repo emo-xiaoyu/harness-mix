@@ -144,7 +144,13 @@ function compactValue(item) {
         + `${item.team ? ` team=${item.team.name}` : ''}${item.activeMentions?.length ? ` mentions=${item.activeMentions.join(',')}` : ''}`;
     }
     if ('digest' in item && 'patch' in item) {
-      return `digest ${item.digest}\n${item.patch}`;
+      return `digest ${item.digest}${item.autoMerged ? ' (autoMerged)' : ''}\n${item.patch}`;
+    }
+    if ('worktrees' in item) {
+      return (item.worktrees.length ? item.worktrees.map(w => `${w.id} ${w.branch}${w.referenced ? '' : ' unreferenced'} ${w.root}`) : ['(no isolated worktrees)']).join('\n');
+    }
+    if ('pruned' in item) {
+      return `pruned: ${item.pruned.join(', ') || '(none)'} · kept: ${item.kept.join(', ') || '(none)'}`;
     }
     if ('script_id' in item) {
       return `[script ${String(item.script_id).slice(0, 8)}] ${item.status}${item.phase ? ` phase=${item.phase}` : ''} — ${snippet(item.note ?? '')}`;
@@ -194,7 +200,12 @@ commands:
   followup <task_id> [message]      send a follow-up to a completed subtask, reusing its session
   cancel <task_id>                  cancel one running subtask
   review <task_id>                  read an isolated subtask patch and its digest
-  apply <task_id> --digest <d>      apply the reviewed patch (explicit user authorization only)
+                                    (on conflict, an auto three-way merge candidate
+                                    is returned with autoMerged=true and its own digest)
+  apply <task_id> --digest <d>      apply the reviewed patch (explicit user authorization
+       [--cleanup]                  only); --cleanup removes the isolated worktree after
+  worktrees [--prune]               list isolated worktrees (and their reference state);
+                                    --prune deletes unreferenced ones
   resume <task_id>                  continue an interrupted subtask without replaying side effects
   plan [file|-]                     publish the lead plan: JSON array [{text,status}]
   team create --name <n> --goal <g> [--members file|-]   members JSON: [{name,role,agent_type}]
@@ -250,8 +261,12 @@ async function buildRequest(command, opts, positionals) {
     }
     case 'apply': {
       const [taskId] = positionals;
-      if (!taskId || !opts.digest) fail(3, 'usage: apply <task_id> --digest <d>');
-      return ['apply_delegation_changes', { task_id: taskId, digest: opts.digest }];
+      if (!taskId || !opts.digest) fail(3, 'usage: apply <task_id> --digest <d> [--cleanup]');
+      return ['apply_delegation_changes', { task_id: taskId, digest: opts.digest, ...(opts.cleanup ? { cleanup: true } : {}) }];
+    }
+    case 'worktrees': {
+      if (opts.prune) return ['prune_worktrees', {}];
+      return ['list_worktrees', {}];
     }
     case 'resume': {
       const [taskId] = positionals;
