@@ -100,34 +100,39 @@ export function createRendererAgentIcon(
   size = 20,
   ownerDocument: Document = document,
 ): Element {
-  const embedded = projectIcon("harnesses", agent, size, ownerDocument);
+  // Thin brand marks (the Oh My Pi π bars, the Antigravity arch) read undersized
+  // next to dense logos at the same box size; give them a slightly larger
+  // optical box so menu rows feel evenly weighted.
+  const opticalBoost: Partial<Record<RendererAgent, number>> = { omp: 3, antigravity: 3 };
+  const iconSize = size + (opticalBoost[agent] ?? 0);
+  const embedded = projectIcon("harnesses", agent, iconSize, ownerDocument);
   if (embedded) return embedded;
   switch (agent) {
     case "codex":
-      return buildImageMark(codexAgentIconUrl, size, ownerDocument);
+      return buildImageMark(codexAgentIconUrl, iconSize, ownerDocument);
     case "pi":
-      return buildSvgMark(PI_PATHS, "currentColor", size, ownerDocument);
+      return buildSvgMark(PI_PATHS, "currentColor", iconSize, ownerDocument);
     case "claude-code":
-      return buildSvgMark([{ d: CLAUDE_PATH }], "#d97757", size, ownerDocument);
+      return buildSvgMark([{ d: CLAUDE_PATH }], "#d97757", iconSize, ownerDocument);
     case "deepseek-harness":
       return buildSvgMark(
         [{ d: DEEPSEEK_HARNESS_WHALE_PATH }],
         "#4D6BFE",
-        size,
+        iconSize,
         ownerDocument,
         "0 0 23.16 17.04",
       );
     case "opencode":
-      return buildImageMark(openCodeAgentIconUrl, size, ownerDocument);
+      return buildImageMark(openCodeAgentIconUrl, iconSize, ownerDocument);
     case "omp":
-      return buildImageMark(ompAgentIconUrl, size, ownerDocument, true);
+      return buildImageMark(ompAgentIconUrl, iconSize, ownerDocument, true);
     case "antigravity":
-      return buildImageMark(antigravityAgentIconUrl, size, ownerDocument);
+      return buildImageMark(antigravityAgentIconUrl, iconSize, ownerDocument);
     case "kiro-cli":
-      return buildImageMark(kiroAgentIconUrl, size, ownerDocument);
+      return buildImageMark(kiroAgentIconUrl, iconSize, ownerDocument);
     case "kimi-code":
-      return buildImageMark(kimiCodeAgentIconUrl, size, ownerDocument);
+      return buildImageMark(kimiCodeAgentIconUrl, iconSize, ownerDocument);
     default:
-      return buildImageMark(grokAgentIconUrl, size, ownerDocument, true);
+      return buildImageMark(grokAgentIconUrl, iconSize, ownerDocument, true);
   }
 }
