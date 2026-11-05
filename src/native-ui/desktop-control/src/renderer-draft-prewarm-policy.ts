@@ -19,6 +19,20 @@ export interface RendererDraftPrewarmPolicyStatus {
   reason: "owned-request-bridge";
 }
 
+/**
+ * 26.1027 moved the request manager out of the renderer's React tree
+ * entirely (verified: 9.5k fibers walked, zero manager-shaped objects, both
+ * landing and open-thread states). The draft prewarm policy — which wraps
+ * manager handles — cannot install there. Instead the controller exposes a
+ * synthetic control transport on the window built over the manager-free
+ * sidecar binding pipe (page → Runtime binding → controller → Host stdio →
+ * back), which the renderer adapter already accepts as a fallback channel.
+ */
+export interface RendererSyntheticTransportStatus {
+  state: "deferred";
+  reason: "synthetic-sidecar-transport";
+}
+
 export interface RendererRequestManagerCandidate<Manager = object, RequestClient = object> {
   manager: Manager;
   requestClient: RequestClient;
@@ -250,4 +264,85 @@ export async function installRendererDraftPrewarmPolicy(
     (expression) => inspector.evaluate<unknown>(expression),
     `(${installer})()`,
   );
+}
+
+/** Failures that mean "no request manager exists to wrap" (26.1027+). */
+export function isManagerUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Renderer request manager is ambiguous") ||
+    message.includes("Renderer prewarmed Thread manager is unavailable") ||
+    message.includes("Owned Renderer is unavailable")
+  );
+}
+
+const SYNTHETIC_TRANSPORT_EXPRESSION = `(() => {
+  if (typeof window.__harnessmixSidecarSendV1 !== 'function') {
+    throw new Error('sidecar binding is unavailable');
+  }
+  const pending = new Map();
+  let seq = Date.now() % 1_000_000_000;
+  const receive = (frameText) => {
+    let frame = null;
+    try { frame = JSON.parse(frameText); } catch { return; }
+    if (frame == null || typeof frame !== 'object' || frame.id == null) return;
+    const entry = pending.get(frame.id);
+    if (entry == null) return;
+    pending.delete(frame.id);
+    clearTimeout(entry.timer);
+    if (frame.error) entry.reject(new Error(frame.error.message ?? 'sidecar request failed'));
+    else entry.resolve(frame.result);
+  };
+  window.__harnessmixSidecarRequestV1 = {
+    hostId: 'local',
+    send(method, params) {
+      return new Promise((resolve, reject) => {
+        if (typeof method !== 'string' || !method.startsWith('harnessmix/')) {
+          reject(new Error('synthetic sidecar transport carries harnessmix/* requests only'));
+          return;
+        }
+        const id = (seq += 1);
+        const timer = setTimeout(() => {
+          if (pending.delete(id)) reject(new Error('sidecar control request timed out: ' + method));
+        }, 20_000);
+        pending.set(id, { resolve, reject, timer });
+        try {
+          window.__harnessmixSidecarSendV1(JSON.stringify({ id, method, params: params ?? {} }));
+        } catch (error) {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    },
+  };
+  window.__harnessmixSidecarReceiveV1 = receive;
+  // The renderer bundle gates its binding install in sidecar mode on a ready
+  // draft prewarm policy plus the harnessmix:draft-prewarm-policy-changed
+  // event; provide a minimal policy riding the synthetic transport so the
+  // gate opens on manager-less Desktop builds (26.1027+).
+  let selectedCarrier = null;
+  window.__harnessmixDraftPrewarmPolicyV1 = {
+    state: 'ready',
+    hostId: 'local',
+    select(carrier) { selectedCarrier = carrier ?? null; return true; },
+    clear() { selectedCarrier = null; },
+  };
+  window.dispatchEvent(new CustomEvent('harnessmix:draft-prewarm-policy-changed'));
+  const buffered = window.__harnessmixPendingSidecarFramesV1;
+  if (Array.isArray(buffered)) {
+    for (const frame of buffered.splice(0, buffered.length)) receive(frame);
+  }
+  return { state: 'deferred', reason: 'synthetic-sidecar-transport' };
+})()`;
+
+/**
+ * Manager-free control transport: rides the sidecar binding pipe that the
+ * controller registers before bundle injection, so it works on Desktop
+ * builds where no request manager is reachable from the renderer at all.
+ */
+export function installSyntheticSidecarTransport(
+  renderer: { evaluate<T = unknown>(expression: string): Promise<T> },
+): Promise<RendererDraftPrewarmPolicyStatus> {
+  return renderer.evaluate<RendererDraftPrewarmPolicyStatus>(SYNTHETIC_TRANSPORT_EXPRESSION);
 }

@@ -542,6 +542,8 @@ interface PrewarmTarget {
   requestClient?: PrewarmTarget;
   hostId?: unknown;
   getHostId?: () => unknown;
+  /** Marks the controller-exposed control transport (harnessmix/* only). */
+  syntheticControlTransport?: true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -601,6 +603,7 @@ function windowFallbackTargets(): PrewarmTarget[] {
       controlTransportSource = control;
       controlTransportTarget = {
         hostId: control.hostId,
+        syntheticControlTransport: true,
         sendRequest: (method: string, params: unknown) =>
           (control.send as (method: string, params: unknown) => Promise<unknown>)(method, params),
       };
@@ -947,8 +950,16 @@ export function activeRendererDraftPrewarmPolicy(
   return activePrewarmTargetsForPolicy(policy, targets) ? policy : null;
 }
 
+/** 26.1027+ keeps no request manager in the renderer at all, so there is no
+ * Desktop routing policy to steer. The controller-exposed control transport
+ * (harnessmix/* straight to the Host) is its own carrier-free route. */
+export interface RendererSyntheticRoutePolicy {
+  readonly synthetic: true;
+  readonly hostId: string;
+}
+
 export interface RendererRequestRoute {
-  readonly policy: RendererDraftPrewarmPolicy;
+  readonly policy: RendererDraftPrewarmPolicy | RendererSyntheticRoutePolicy;
   readonly targets: readonly PrewarmTarget[];
 }
 
@@ -964,6 +975,18 @@ export function resolveRendererRequestRoute(
 
   // A policy that owns its exact target never falls back to discovery.
   if (isDraftPrewarmPolicyReady(policy) && declaresRequestTarget(policy)) return null;
+
+  // No Desktop policy exists (26.1027+): when discovery yields exactly the
+  // controller-exposed control transport, that transport is the route. It
+  // carries harnessmix/* control requests straight to the Host and never
+  // touches the official Codex request path, so there is no carrier to steer.
+  if (discoveredTargets.length === 1 && discoveredTargets[0]?.syntheticControlTransport === true) {
+    const hostId = discoveredTargets[0].hostId;
+    return {
+      policy: { synthetic: true, hostId: typeof hostId === "string" && hostId ? hostId : "local" },
+      targets: discoveredTargets,
+    };
+  }
 
   // Composer swaps and overlay portals can briefly hide the only fiber path to
   // the request manager. Keep the previously confirmed route only while
@@ -1170,14 +1193,14 @@ export function installCurrentRendererAdapter(): {
     PrewarmTarget,
     {
       client: RendererModelClient;
-      policy: RendererDraftPrewarmPolicy | null;
+      policy: RendererRequestRoute["policy"] | null;
       requestClient: PrewarmTarget["requestClient"];
     }
   >();
   const steeringTeardowns = new Set<() => void>();
   const clientForTargets = (
     targets: readonly PrewarmTarget[],
-    policy: RendererDraftPrewarmPolicy | null = null,
+    policy: RendererRequestRoute["policy"] | null = null,
   ): RendererModelClient | null => {
     const target = targets[0];
     if (targets.length !== 1 || !target) return null;
@@ -1197,7 +1220,7 @@ export function installCurrentRendererAdapter(): {
     }
     return client;
   };
-  let routePolicy: RendererDraftPrewarmPolicy | null = null;
+  let routePolicy: RendererRequestRoute["policy"] | null = null;
   let routeClient: RendererModelClient | null = null;
   const syncActiveRoute = (route: RendererRequestRoute | null): RendererModelClient | null => {
     const policy = route?.policy ?? null;
@@ -1312,11 +1335,11 @@ export function installCurrentRendererAdapter(): {
   // Routing-policy capture: hold the composer's draft carrier on the policy
   // object exposed by the Desktop integration, re-capturing whenever Desktop
   // swaps its request manager out from under us.
-  let routingPolicy: RendererDraftPrewarmPolicy | null = null;
+  let routingPolicy: RendererRequestRoute["policy"] | null = null;
   let captureTimer: number | null = null;
   let recaptureObserver: MutationObserver | null = null;
   let hasCapturedRoutingPolicy = false;
-  let appliedPolicy: RendererDraftPrewarmPolicy | null = null;
+  let appliedPolicy: RendererRequestRoute["policy"] | null = null;
   let appliedCarrier: string | null = null;
   let desiredCarrier: string | null = null;
   const stopCaptureTimer = (): void => {
@@ -1334,14 +1357,21 @@ export function installCurrentRendererAdapter(): {
     routingPolicy = route.policy;
     stopRecaptureObserver();
     if (appliedPolicy !== routingPolicy || appliedCarrier !== desiredCarrier) {
-      try {
-        routingPolicy.select(desiredCarrier);
-      } catch {
-        publishStatus("installing", "draft-routing-policy-unavailable", null);
-        return false;
+      if (routingPolicy !== null && "synthetic" in routingPolicy && routingPolicy.synthetic === true) {
+        // Synthetic transport route (26.1027+): no Desktop routing policy to
+        // steer — the transport already targets the Host directly.
+        appliedPolicy = routingPolicy;
+        appliedCarrier = desiredCarrier;
+      } else {
+        try {
+          (routingPolicy as RendererDraftPrewarmPolicy).select(desiredCarrier);
+        } catch {
+          publishStatus("installing", "draft-routing-policy-unavailable", null);
+          return false;
+        }
+        appliedPolicy = routingPolicy;
+        appliedCarrier = desiredCarrier;
       }
-      appliedPolicy = routingPolicy;
-      appliedCarrier = desiredCarrier;
     }
     hasCapturedRoutingPolicy = true;
     stopCaptureTimer();
@@ -1408,8 +1438,14 @@ export function installCurrentRendererAdapter(): {
     const route = resolveRoute();
     if (!route) return false;
     routingPolicy = route.policy;
+    if ("synthetic" in route.policy && route.policy.synthetic === true) {
+      // Synthetic transport route (26.1027+): nothing to steer on the Host.
+      appliedPolicy = route.policy;
+      appliedCarrier = desiredCarrier;
+      return true;
+    }
     try {
-      if (route.policy.select(desiredCarrier)) {
+      if ((route.policy as RendererDraftPrewarmPolicy).select(desiredCarrier)) {
         modelUpdates += 1;
         adapterStatus.modelUpdates = modelUpdates;
       }
@@ -1438,7 +1474,11 @@ export function installCurrentRendererAdapter(): {
       routingPolicy = null;
       routeResolver.clear();
       const cleanups = [
-        () => activeRoutingPolicy?.select(null),
+        () => {
+          if (activeRoutingPolicy !== null && !("synthetic" in activeRoutingPolicy)) {
+            activeRoutingPolicy.select(null);
+          }
+        },
         () => syncActiveRoute(null),
         () => forkControl.dispose(),
         ...steeringTeardowns,

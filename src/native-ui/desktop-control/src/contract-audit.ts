@@ -65,7 +65,7 @@ export interface RendererContractAuditInspection {
     adapterState: "installing" | "ready" | "unsupported" | "absent";
     adapterReason: string;
     titlePolicyState: "ready" | "absent" | "unknown";
-    draftPrewarmPolicyState: "ready" | "absent" | "unknown";
+    draftPrewarmPolicyState: "ready" | "deferred" | "absent" | "unknown";
   };
 }
 
@@ -123,7 +123,7 @@ function countGroup<T extends readonly string[]>(
 }
 
 const PRODUCTION_ADAPTER_STATES = ["installing", "ready", "unsupported", "absent"] as const;
-const POLICY_STATES = ["ready", "absent", "unknown"] as const;
+const POLICY_STATES = ["ready", "deferred", "absent", "unknown"] as const;
 
 export function validateRendererContractAuditInspection(
   value: unknown,

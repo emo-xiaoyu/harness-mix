@@ -14,6 +14,8 @@ import {
 } from "./cdp-client.js";
 import {
   installRendererDraftPrewarmPolicyDirect,
+  installSyntheticSidecarTransport,
+  isManagerUnavailableError,
   type RendererDraftPrewarmPolicyStatus,
 } from "./renderer-draft-prewarm-policy.js";
 import type { LocalSidecar } from "./local-sidecar.js";
@@ -183,6 +185,21 @@ async function waitForPrimaryTarget(
  * 26.1027: the same evaluate settles in well under 60s once granted room. */
 const RENDERER_SOURCE_EVALUATE_TIMEOUT_MS = 60_000;
 
+/** Policy with a 26.1027+ fallback: when no request manager exists to wrap,
+ * expose the manager-free synthetic sidecar transport instead of failing the
+ * whole renderer install (which took down every injected surface with it). */
+async function installDraftPrewarmPolicyWithFallback(
+  renderer: RendererConnection,
+  operations: CdpOperations,
+): Promise<RendererDraftPrewarmPolicyStatus> {
+  try {
+    return await operations.installDraftPrewarmPolicy(renderer);
+  } catch (error) {
+    if (!isManagerUnavailableError(error)) throw error;
+    return await installSyntheticSidecarTransport(renderer);
+  }
+}
+
 async function evaluateSource(renderer: RendererConnection, source: string): Promise<void> {
   const response = await renderer.command(
     "Runtime.evaluate",
@@ -291,7 +308,7 @@ async function installTarget(
     }
     await renderer.command("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
     await evaluateSource(renderer, rendererSource);
-    const draftPrewarmPolicy = await operations.installDraftPrewarmPolicy(renderer);
+    const draftPrewarmPolicy = await installDraftPrewarmPolicyWithFallback(renderer, operations);
     const binding = await waitForBinding(renderer, enabledAgents, timeoutMs, pollIntervalMs);
     return {
       renderer,
@@ -356,7 +373,10 @@ class ActiveRendererCdpControlSession implements RendererCdpControlSession {
       const existing = await readBinding(this.#renderer);
       if (existing === null) await evaluateSource(this.#renderer, this.rendererSource);
       else validateBindingStatus(existing, this.enabledAgents);
-      const draftPrewarmPolicy = await this.operations.installDraftPrewarmPolicy(this.#renderer);
+      const draftPrewarmPolicy = await installDraftPrewarmPolicyWithFallback(
+        this.#renderer,
+        this.operations,
+      );
       const binding = await waitForBinding(
         this.#renderer,
         this.enabledAgents,
