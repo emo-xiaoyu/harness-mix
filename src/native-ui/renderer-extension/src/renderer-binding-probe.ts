@@ -81,10 +81,15 @@ import {
   writeNewThreadAgentPreference,
   writeNewThreadExternalConfigurationPreference,
 } from "./renderer-new-thread-preference.js";
-import { installRendererSidebarAgentIcons } from "./renderer-sidebar-agent-icons.js";
+import {
+  installRendererSidebarAgentIcons,
+  SIDEBAR_THREAD_ROW_SELECTOR,
+  threadIdFromSidebarRowElement,
+} from "./renderer-sidebar-agent-icons.js";
 import { installHarnessMentions } from "./renderer-harness-mentions.js";
 import { installCollabCards } from "./renderer-collab-cards.js";
 import { installTeamCards } from "./renderer-team-cards.js";
+import { installGittreePanel } from "./gittree/panel.js";
 import {
   rendererHarnessCommandExecutesDirectly,
   routeRendererHarnessCommandSelection,
@@ -959,6 +964,18 @@ export function installRendererBindingProbe(
       return (client as any)?.collaborationUserAction?.({ action: 'continue', threadId, ...(taskId ? { taskId } : {}) });
     },
   });
+  const activeThreadInfo = () => {
+    const mounted = [...composerEntries.values()].find(candidate => {
+      if (!candidate.composer.isConnected || !candidate.control.root.isConnected) return false;
+      if (!threadIdFromComposerModelTarget(candidate.modelTarget)) return false;
+      const style = window.getComputedStyle(candidate.composer);
+      return style.display !== 'none' && style.visibility !== 'hidden' && candidate.composer.getClientRects().length > 0;
+    });
+    const threadId = mounted ? threadIdFromComposerModelTarget(mounted.modelTarget) : null;
+    const scroll = mounted?.composer.closest('.thread-scroll-container');
+    const content = scroll?.parentElement?.parentElement;
+    return mounted && threadId ? { threadId, anchor: content ?? mounted.composer } : null;
+  };
   const teamCards = installTeamCards({
     inspectTeam: async (threadId, teamId) => {
       const client = modelClientForHost('local');
@@ -969,18 +986,55 @@ export function installRendererBindingProbe(
       return client?.collaborationUserAction?.(input) ?? null;
     },
     openThread: (threadId) => openRendererThread(hostThreadIdSchema.parse(threadId), { hostId: 'local' }),
-    activeThread: () => {
-      const mounted = [...composerEntries.values()].find(candidate => {
-        if (!candidate.composer.isConnected || !candidate.control.root.isConnected) return false;
-        if (!threadIdFromComposerModelTarget(candidate.modelTarget)) return false;
-        const style = window.getComputedStyle(candidate.composer);
-        return style.display !== 'none' && style.visibility !== 'hidden' && candidate.composer.getClientRects().length > 0;
-      });
-      const threadId = mounted ? threadIdFromComposerModelTarget(mounted.modelTarget) : null;
-      const scroll = mounted?.composer.closest('.thread-scroll-container');
-      const content = scroll?.parentElement?.parentElement;
-      return mounted && threadId ? { threadId, anchor: content ?? mounted.composer } : null;
+    activeThread: activeThreadInfo,
+  });
+  const gittreePanel = installGittreePanel({
+    listManagedThreads: async () => {
+      const client = modelClientForHost('local');
+      return client?.listManagedThreads?.() ?? [];
     },
+    // Passive sidebar enumeration: official Codex threads join the tree as
+    // parentless lanes; managed threads dedupe against the RPC list by id.
+    listSidebarThreads: async () => {
+      const rows = [...window.document.querySelectorAll<HTMLElement>(SIDEBAR_THREAD_ROW_SELECTOR)];
+      const entries: { threadId: string; title: string }[] = [];
+      for (const element of rows) {
+        const threadId = threadIdFromSidebarRowElement(element);
+        if (!threadId) continue;
+        const title =
+          element.querySelector('[data-thread-title-trigger] [data-thread-title]')?.textContent?.trim() ?? '';
+        entries.push({ threadId, title });
+      }
+      if (entries.length === 0) return [];
+      const client = modelClientForHost('local');
+      const threadIds = entries
+        .flatMap(entry => {
+          const parsed = hostThreadIdSchema.safeParse(entry.threadId);
+          return parsed.success ? [parsed.data] : [];
+        })
+        .slice(0, 100);
+      if (threadIds.length === 0) return entries.map(({ threadId, title }) => ({ threadId, title, owner: 'external' as const, harnessId: null }));
+      const ownership = await client?.listThreadOwnership?.({ threadIds });
+      const ownerById = new Map((ownership?.threads ?? []).map(thread => [thread.threadId as string, thread]));
+      return entries.map(({ threadId, title }) => {
+        const owner = ownerById.get(threadId);
+        return {
+          threadId,
+          title,
+          owner: owner?.owner === 'codex' ? ('codex' as const) : ('external' as const),
+          harnessId: owner && 'harnessId' in owner ? String(owner.harnessId) : null,
+        };
+      });
+    },
+    inspectActiveTeam: async threadId => {
+      if (!threadId) return null;
+      const client = modelClientForHost('local');
+      const result = await client?.inspectThreadTeam?.({ threadId });
+      return (result as { snapshots?: unknown[] } | null | undefined) ?? null;
+    },
+    activeThreadId: () => activeThreadInfo()?.threadId ?? null,
+    openThread: threadId => openRendererThread(hostThreadIdSchema.parse(threadId), { hostId: 'local' }),
+    ownerWindow: window,
   });
   let connectionDiagnostics: RendererConnectionDiagnostics | null = null;
   const settingsLifecycle = installRendererSettingsLifecycle(window, {
@@ -3694,6 +3748,7 @@ export function installRendererBindingProbe(
       mentionsBridge.dispose();
       collaborationCards.dispose();
       teamCards.dispose();
+      gittreePanel.dispose();
       settingsLifecycle.dispose();
       document.removeEventListener("beforeinput", handleBeforeInput, true);
       document.removeEventListener("submit", handleSubmit, true);

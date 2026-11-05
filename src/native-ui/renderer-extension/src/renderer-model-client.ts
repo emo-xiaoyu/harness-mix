@@ -118,6 +118,7 @@ export const THREAD_MODEL_SELECT_METHOD = "harnessmix/thread/model/select";
 export const THREAD_THINKING_SELECT_METHOD = "harnessmix/thread/thinking/select";
 export const THREAD_PERMISSION_MODE_SELECT_METHOD = "harnessmix/thread/permission-mode/select";
 export const THREAD_OWNERSHIP_LIST_METHOD = "harnessmix/thread/ownership/list";
+export const THREAD_LIST_METHOD = "harnessmix/thread/list";
 export const THREAD_USAGE_INSPECT_METHOD = "harnessmix/thread/usage/inspect";
 export const THREAD_TEAM_INSPECT_METHOD = "harnessmix/thread/team/inspect";
 export const THREAD_TEAM_TASK_CANCEL_METHOD = "harnessmix/thread/team/task/cancel";
@@ -223,6 +224,8 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   inspectThreadCommands(input: ThreadCommandsInspectParams): Promise<HarnessCommandCatalog>;
   executeThreadCommand(input: ThreadCommandExecuteParams): Promise<ThreadCommandExecuteResult>;
   listThreadOwnership(input: ThreadOwnershipListParams): Promise<ThreadOwnershipListResult>;
+  /** `harnessmix/thread/list` — managed threads incl. parentThreadId edges. */
+  listManagedThreads?(): Promise<readonly unknown[]>;
   inspectThreadUsage(input: ThreadUsageInspectionParams): Promise<ThreadUsageInspection>;
   inspectThreadTeam?(input: { threadId: string; teamId?: string }): Promise<unknown>;
   collaborationUserAction?(input: CollaborationUserActionInput): Promise<unknown>;
@@ -495,6 +498,13 @@ export function createRendererModelClient(
       return result;
     },
     inspectThreadUsage,
+    async listManagedThreads(): Promise<readonly unknown[]> {
+      // Loose by design: projectThread fields evolve with the Host; GitTree
+      // parses defensively (parseThreadListEntries) instead of pinning a schema.
+      const value = await manager.sendRequest(THREAD_LIST_METHOD, {});
+      const result = value as { data?: unknown } | null;
+      return Array.isArray(result?.data) ? (result?.data as readonly unknown[]) : [];
+    },
     async inspectThreadTeam(input: { threadId: string; teamId?: string }): Promise<unknown> {
       const threadId = hostThreadIdSchema.parse(input.threadId);
       return manager.sendRequest(THREAD_TEAM_INSPECT_METHOD, { threadId, ...(input.teamId ? { teamId: input.teamId } : {}) });

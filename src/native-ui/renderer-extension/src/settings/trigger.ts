@@ -46,7 +46,7 @@ export interface RendererSettingsHeaderTriggerControl {
   dispose(): void;
 }
 
-interface RendererSettingsHeaderInsertionPoint {
+export interface RendererSettingsHeaderInsertionPoint {
   parent: HTMLElement;
   before: ChildNode | null;
   /**
@@ -131,7 +131,7 @@ export function inspectRendererSettingsContract(
 
 // Prefer the visible page toolbar, retaining the application header end slot
 // for older Desktop versions and pages without a chat toolbar.
-function findRendererSettingsHeaderInsertionPoint(
+export function findRendererSettingsHeaderInsertionPoint(
   ownerDocument: Document,
 ): RendererSettingsHeaderInsertionPoint | null {
   // Recent Desktop versions put chat actions in the page toolbar instead of
