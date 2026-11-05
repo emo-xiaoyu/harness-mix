@@ -319,6 +319,7 @@ describe("Renderer fixed Model request client", () => {
       "listHarnessPlugins",
       "listHarnessSessions",
       "listIntegrations",
+      "listManagedThreads",
       "listSessionImportSources",
       "listTeamTemplates",
       "listThreadOwnership",
