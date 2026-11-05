@@ -89,30 +89,42 @@ const FIND_REQUEST_MANAGER_EXPRESSION = `(() => {
   const editors = [...document.querySelectorAll(
     '[data-codex-composer], [contenteditable="true"][role="textbox"]',
   )];
-  let element = editors.length === 1 ? editors[0] : null;
-  let fiber = null;
-  while (element != null && fiber == null) {
-    const key = Object.getOwnPropertyNames(element).find((name) =>
-      name.startsWith('__reactFiber$'),
-    );
-    if (key != null) fiber = element[key];
-    element = element.parentElement;
+  // 26.1027 keeps more than one editor mounted in common states (a thread
+  // composer plus a background draft composer), so anchoring on "exactly one
+  // editor" never fires. Walk EVERY editor's fiber chain and let the manager
+  // Set dedupe shared ancestors; the active-host filter below disambiguates
+  // when separate chains really do expose different managers.
+  const editorFibers = [];
+  for (const editor of editors) {
+    let element = editor;
+    let fiber = null;
+    while (element != null && fiber == null) {
+      const key = Object.getOwnPropertyNames(element).find((name) =>
+        name.startsWith('__reactFiber$'),
+      );
+      if (key != null) fiber = element[key];
+      element = element.parentElement;
+    }
+    if (fiber != null) editorFibers.push(fiber);
   }
   const managers = new Set();
   const activeHostIds = new Set();
-  for (let depth = 0; fiber != null && depth < 200; depth += 1, fiber = fiber.return) {
-    const props = fiber.memoizedProps;
-    if (props != null && typeof props === 'object') {
-      for (const name of ['executionTargetHostId', 'permissionsHostId']) {
-        const value = props[name];
-        if (typeof value === 'string' && value.length > 0) activeHostIds.add(value);
+  for (const rootFiber of editorFibers) {
+    let fiber = rootFiber;
+    for (let depth = 0; fiber != null && depth < 200; depth += 1, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (props != null && typeof props === 'object') {
+        for (const name of ['executionTargetHostId', 'permissionsHostId']) {
+          const value = props[name];
+          if (typeof value === 'string' && value.length > 0) activeHostIds.add(value);
+        }
       }
-    }
-    let hook = fiber.memoizedState;
-    for (let index = 0; hook != null && index < 120; index += 1, hook = hook.next) {
-      const value = (${rendererRequestManagerFromHook.toString()})(hook.memoizedState);
-      if (value != null) {
-        managers.add(value);
+      let hook = fiber.memoizedState;
+      for (let index = 0; hook != null && index < 120; index += 1, hook = hook.next) {
+        const value = (${rendererRequestManagerFromHook.toString()})(hook.memoizedState);
+        if (value != null) {
+          managers.add(value);
+        }
       }
     }
   }
