@@ -34,7 +34,11 @@ export interface RendererCdpControlSnapshot {
 }
 
 interface RendererConnection {
-  command(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  command(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number },
+  ): Promise<unknown>;
   evaluate<T>(expression: string): Promise<T>;
   on?(method: string, listener: (params: unknown) => void): () => void;
   close(): void;
@@ -173,11 +177,21 @@ async function waitForPrimaryTarget(
   throw new Error(`Primary Codex Renderer CDP target did not become ready${detail}`);
 }
 
+/** The 8MB renderer bundle can easily outrun the 10s default CDP command
+ * timeout while the Desktop is still hydrating on a cold boot — the install
+ * then flap-fails and every recovery retry repeats the race. Verified live on
+ * 26.1027: the same evaluate settles in well under 60s once granted room. */
+const RENDERER_SOURCE_EVALUATE_TIMEOUT_MS = 60_000;
+
 async function evaluateSource(renderer: RendererConnection, source: string): Promise<void> {
-  const response = await renderer.command("Runtime.evaluate", {
-    expression: source,
-    awaitPromise: true,
-  });
+  const response = await renderer.command(
+    "Runtime.evaluate",
+    {
+      expression: source,
+      awaitPromise: true,
+    },
+    { timeoutMs: RENDERER_SOURCE_EVALUATE_TIMEOUT_MS },
+  );
   if (!isRecord(response)) {
     throw new Error("Renderer source evaluation returned an invalid result");
   }

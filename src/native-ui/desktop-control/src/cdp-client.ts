@@ -239,17 +239,22 @@ export class CdpClient {
     return new CdpClient(socket, options.commandTimeoutMs ?? 10_000);
   }
 
-  command(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    return this.#request(method, params);
+  command(
+    method: string,
+    params: Record<string, unknown> = {},
+    options: { timeoutMs?: number } = {},
+  ): Promise<unknown> {
+    return this.#request(method, params, undefined, options.timeoutMs);
   }
 
   sessionCommand(
     sessionId: string,
     method: string,
     params: Record<string, unknown> = {},
+    options: { timeoutMs?: number } = {},
   ): Promise<unknown> {
     if (sessionId.length === 0) return Promise.reject(new Error("CDP session ID is required"));
-    return this.#request(method, params, sessionId);
+    return this.#request(method, params, sessionId, options.timeoutMs);
   }
 
   /** Subscribes to a CDP event; returns an unsubscribe function. */
@@ -263,12 +268,16 @@ export class CdpClient {
     };
   }
 
-  async evaluate<T>(expression: string): Promise<T> {
-    const response = await this.command("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
+  async evaluate<T>(expression: string, options: { timeoutMs?: number } = {}): Promise<T> {
+    const response = await this.command(
+      "Runtime.evaluate",
+      {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+      options,
+    );
     if (!isRecord(response)) throw new Error("Runtime.evaluate returned an invalid result");
     if (isRecord(response.exceptionDetails)) {
       throw new Error(
@@ -295,6 +304,7 @@ export class CdpClient {
     method: string,
     params: Record<string, unknown>,
     sessionId?: string,
+    timeoutMs?: number,
   ): Promise<unknown> {
     if (this.#closed) return Promise.reject(new Error("CDP client is closed"));
     const id = ++this.#ids;
@@ -304,7 +314,7 @@ export class CdpClient {
         this.#awaiting.delete(id);
         settled = true;
         reject(new Error(`CDP command '${method}' timed out`));
-      }, this.#commandTimeoutMs);
+      }, timeoutMs ?? this.#commandTimeoutMs);
       this.#awaiting.set(id, {
         timer,
         settle(pending: unknown) {
