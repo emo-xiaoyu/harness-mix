@@ -82,6 +82,54 @@ describe("Controller attachment server", () => {
     }
   });
 
+  // Regression: the idle-reap timer used to destroy the socket while a slow
+  // attach() was still in flight, so the Desktop main process saw the
+  // connection close without ever receiving ready/rejected/failed.
+  it("delivers the verdict even when attach outlasts the idle window", async () => {
+    const port = await availablePort();
+    const settle = new Promise<void>((resolve) => setTimeout(resolve, 200));
+    const server = await startControllerAttachmentServer({
+      port,
+      nonce,
+      attach: () => settle,
+      idleTimeoutMs: 50,
+    });
+    try {
+      await expect(request(port, `ATTACH ${nonce}\n`)).resolves.toBe("ready\n");
+    } finally {
+      await server.close();
+    }
+  });
+
+  // Regression: a client that RSTs mid-conversation used to raise an unhandled
+  // 'error' on the server-side socket and crash the whole controller.
+  it("survives an abrupt client reset and keeps serving", async () => {
+    const port = await availablePort();
+    const server = await startControllerAttachmentServer({
+      port,
+      nonce,
+      attach: async () => {},
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = createConnection({ host: "127.0.0.1", port });
+        const done = () => { socket.removeAllListeners(); resolve(); };
+        socket.once("error", done);
+        socket.once("connect", () => {
+          socket.write(`ATTACH ${nonce}\n`, () => {
+            // Real RST, not a graceful FIN — the shape that triggers ECONNRESET.
+            socket.resetAndDestroy?.() ?? socket.destroy();
+            setTimeout(done, 150);
+          });
+        });
+        setTimeout(() => reject(new Error("reset probe never connected")), 3000);
+      });
+      await expect(request(port, `ATTACH ${nonce}\n`)).resolves.toBe("ready\n");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects the retired Desktop quit command", async () => {
     const port = await availablePort();
     const server = await startControllerAttachmentServer({

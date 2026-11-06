@@ -4,6 +4,14 @@
  */
 import { parseDesktopControllerArguments, runDesktopController } from "./production-controller.js";
 
+// The launcher does not stay alive; when its (inherited or piped) stdio goes
+// away, any later console write must degrade to a no-op instead of raising an
+// unhandled EPIPE that kills the controller — recovery logging is exactly the
+// kind of write that arrives after the parent is gone.
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on?.("error", () => undefined);
+}
+
 const abort = new AbortController();
 const stop = (): void => abort.abort();
 process.once("SIGINT", stop);

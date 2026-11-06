@@ -17,6 +17,8 @@ export interface StartControllerAttachmentServerOptions {
   port: number;
   nonce: string;
   attach(): Promise<void>;
+  /** Test hook: shrink the idle-reap window (default 5s). */
+  idleTimeoutMs?: number;
 }
 
 const isPort = (value: number): boolean =>
@@ -42,11 +44,16 @@ export async function startControllerAttachmentServer(
   }
 
   const live = new Set<Socket>();
+  const idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   const server = createServer((socket) => {
     live.add(socket);
     socket.once("close", () => live.delete(socket));
+    // A client that RSTs (e.g. exits before its FIN flushes) must not take the
+    // controller down: without this handler the socket's 'error' event is
+    // unhandled and Node tears down the whole process.
+    socket.on("error", () => socket.destroy());
     socket.setEncoding("utf8");
-    socket.setTimeout(IDLE_TIMEOUT_MS, () => socket.destroy());
+    socket.setTimeout(idleTimeoutMs, () => socket.destroy());
     let buffer = "";
     let answered = false;
     socket.on("data", (chunk: string) => {
@@ -60,6 +67,12 @@ export async function startControllerAttachmentServer(
       const terminator = buffer.indexOf("\n");
       if (terminator < 0) return;
       answered = true;
+      // The idle timer only reaps clients that connect and never send. Once a
+      // full request line arrived, it must not fire mid-attach: a CDP install
+      // can legitimately run longer than the idle window, and destroying the
+      // socket then swallows the verdict entirely — the Desktop main process
+      // would see the connection close with neither ready, rejected nor failed.
+      socket.setTimeout(0);
       const request = buffer.slice(0, terminator).replace(/\r$/, "");
       if (request === `ATTACH ${options.nonce}`) {
         void options.attach().then(

@@ -221,10 +221,19 @@ async function launch(args = []) {
     pid = desktop.pid;
   }
   console.log(`[Harness Mix] Desktop PID ${pid}, CDP ${port}`);
+  // Controller 日志落文件而非继承 launcher 的 stdio：launcher 刻意不驻留（见下），
+  // 一旦其管道关闭，controller 任何 console 输出都会 EPIPE 崩溃 —— 恢复失败的
+  // console.error 恰好是最常触发的写入口。文件日志同时保留了诊断能力。
+  const controllerLogPath = path.join(dataDir, 'logs', 'controller.log');
+  fs.mkdirSync(path.dirname(controllerLogPath), { recursive: true });
+  const controllerLogFd = fs.openSync(controllerLogPath, 'a');
+  // detached：controller 脱离 launcher 的控制台/进程组 —— 终端关闭或任务树回收
+  // 都不得连带杀掉它（launcher 刻意不驻留，controller 必须以守护进程方式存活）
   const controller = spawn(process.execPath, [paths.controller, '--renderer-cdp-endpoint', `http://127.0.0.1:${port}`,
     '--renderer', paths.renderer, '--default-agent', 'codex', '--attachment-port', String(attachmentPort), '--attachment-nonce', nonce],
   { env: { ...env, HARNESSMIX_STOCK_CODEX_PATH: installation.stock, HARNESSMIX_SIDECAR_SCRIPT: paths.wrapper },
-    stdio: 'inherit', windowsHide: true });
+    stdio: ['ignore', controllerLogFd, controllerLogFd], windowsHide: true, detached: true });
+  controller.unref();
   controller.on('error', error => { console.error(error.message); process.exitCode = 1; });
   controller.on('exit', code => { process.exitCode = code || 0; });
   if (desktop) {
