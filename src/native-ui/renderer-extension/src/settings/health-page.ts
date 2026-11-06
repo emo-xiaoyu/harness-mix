@@ -20,7 +20,7 @@ export interface RendererHealthSnapshot {
   threads: { total: number; working: number; interrupted: number; ready: number };
   sessions: number;
   storage: unknown;
-  collaboration: { collaboration: boolean; agentTeam: boolean };
+  collaboration: import('./collaboration-page.js').RendererCollaborationPreferences;
   crashReports: Array<{ file: string; kind: string; at: number | null; version: string | null; message: string; stack: string }>;
   generatedAt: number;
 }

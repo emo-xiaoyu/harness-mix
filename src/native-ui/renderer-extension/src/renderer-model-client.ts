@@ -208,8 +208,8 @@ export interface RendererModelClient extends Partial<RendererSessionImportClient
   inspectStorage?(): Promise<import('./settings/storage-page.js').RendererStorageInspection>;
   optimizeStorage?(): Promise<{ before: import('./settings/storage-page.js').RendererStorageInspection; after: import('./settings/storage-page.js').RendererStorageInspection }>;
   listCollaborationAgents?(): Promise<Array<{ id: string; name: string; available: boolean; lead: boolean; teamReady?: boolean }>>;
-  getCollaborationPreferences?(): Promise<{ collaboration: boolean; agentTeam: boolean }>;
-  saveCollaborationPreferences?(input: { collaboration?: boolean; agentTeam?: boolean }): Promise<{ collaboration: boolean; agentTeam: boolean }>;
+  getCollaborationPreferences?(): Promise<import('./settings/collaboration-page.js').RendererCollaborationPreferences>;
+  saveCollaborationPreferences?(input: Partial<import('./settings/collaboration-page.js').RendererCollaborationPreferences>): Promise<import('./settings/collaboration-page.js').RendererCollaborationPreferences>;
   currentHostId?(): string | null;
   listHarnessPlugins?(): Promise<HarnessPluginListResult>;
   clientForHost?(hostId: string): RendererModelClient | null;
@@ -399,17 +399,22 @@ export function createRendererModelClient(
       if (!Array.isArray(result) || !result.every(a => a && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.available === 'boolean' && typeof a.lead === 'boolean')) throw new Error('Invalid collaboration catalog');
       return result;
     },
-    async getCollaborationPreferences(): Promise<{ collaboration: boolean; agentTeam: boolean }> {
+    async getCollaborationPreferences(): Promise<import('./settings/collaboration-page.js').RendererCollaborationPreferences> {
       const result = await manager.sendRequest('harnessmix/collaboration/preferences', {});
-      const value = result as { collaboration?: unknown; agentTeam?: unknown } | null;
+      const value = result as { collaboration?: unknown; agentTeam?: unknown; maxConcurrentSubtasks?: unknown; maxSubtasksPerTurn?: unknown } | null;
       if (!value || typeof value.collaboration !== 'boolean' || typeof value.agentTeam !== 'boolean') throw new Error('Invalid collaboration preferences');
-      return { collaboration: value.collaboration, agentTeam: value.agentTeam };
+      // 数字上限是后加字段：旧 Host 缺省时按内置默认兜底，不因缺字段拒绝整个开关页
+      const maxConcurrentSubtasks = typeof value.maxConcurrentSubtasks === 'number' ? value.maxConcurrentSubtasks : 6;
+      const maxSubtasksPerTurn = typeof value.maxSubtasksPerTurn === 'number' ? value.maxSubtasksPerTurn : 16;
+      return { collaboration: value.collaboration, agentTeam: value.agentTeam, maxConcurrentSubtasks, maxSubtasksPerTurn };
     },
-    async saveCollaborationPreferences(input: { collaboration?: boolean; agentTeam?: boolean }): Promise<{ collaboration: boolean; agentTeam: boolean }> {
+    async saveCollaborationPreferences(input: Partial<import('./settings/collaboration-page.js').RendererCollaborationPreferences>): Promise<import('./settings/collaboration-page.js').RendererCollaborationPreferences> {
       const result = await manager.sendRequest('harnessmix/collaboration/preferences/save', input);
-      const value = result as { collaboration?: unknown; agentTeam?: unknown } | null;
+      const value = result as { collaboration?: unknown; agentTeam?: unknown; maxConcurrentSubtasks?: unknown; maxSubtasksPerTurn?: unknown } | null;
       if (!value || typeof value.collaboration !== 'boolean' || typeof value.agentTeam !== 'boolean') throw new Error('Invalid collaboration preferences');
-      return { collaboration: value.collaboration, agentTeam: value.agentTeam };
+      const maxConcurrentSubtasks = typeof value.maxConcurrentSubtasks === 'number' ? value.maxConcurrentSubtasks : 6;
+      const maxSubtasksPerTurn = typeof value.maxSubtasksPerTurn === 'number' ? value.maxSubtasksPerTurn : 16;
+      return { collaboration: value.collaboration, agentTeam: value.agentTeam, maxConcurrentSubtasks, maxSubtasksPerTurn };
     },
     ...createRendererIntegrationsClient((method, params) => manager.sendRequest(method, params)),
     ...createRendererSessionImportClient(async (method, params) =>

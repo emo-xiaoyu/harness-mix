@@ -9,7 +9,17 @@ import type { HarnessInspection } from "@harnessmix/shared-contracts";
 export interface RendererCollaborationPreferences {
   collaboration: boolean;
   agentTeam: boolean;
+  /** 并发子任务上限（默认 6）；旧 Host 可能缺省，客户端按默认值兜底 */
+  maxConcurrentSubtasks: number;
+  /** 单个 lead 回合的子任务上限（默认 16） */
+  maxSubtasksPerTurn: number;
 }
+
+/** 旧 Host 缺省数字字段时的兜底，须与 host 侧 DEFAULT_* 保持一致 */
+const PREFERENCE_LIMIT_FALLBACKS: Readonly<{ [K in "maxConcurrentSubtasks" | "maxSubtasksPerTurn"]: number }> = {
+  maxConcurrentSubtasks: 6,
+  maxSubtasksPerTurn: 16,
+};
 
 export interface RendererTeamTemplateMember {
   name: string;
@@ -43,9 +53,17 @@ export interface RendererCollaborationClient {
 }
 
 interface PreferenceToggleSpec {
-  readonly key: keyof RendererCollaborationPreferences;
+  readonly key: "collaboration" | "agentTeam";
   readonly title: string;
   readonly description: string;
+}
+
+interface PreferenceNumberSpec {
+  readonly key: "maxConcurrentSubtasks" | "maxSubtasksPerTurn";
+  readonly title: string;
+  readonly description: string;
+  readonly min: number;
+  readonly max: number;
 }
 
 interface MemberDraft {
@@ -140,7 +158,25 @@ export function createCollaborationSettingsPage(
         },
       ];
 
-      const inputs = new Map<keyof RendererCollaborationPreferences, HTMLInputElement>();
+      // 并发/单回合子任务上限：保存于 preferences.json；环境变量在 Host 侧仍优先
+      const numberSpecs: readonly PreferenceNumberSpec[] = [
+        {
+          key: "maxConcurrentSubtasks",
+          title: zh ? "并发子任务上限" : "Concurrent subtask limit",
+          description: zh ? "同时运行的委派子任务数量上限。" : "How many delegated subtasks may run at once.",
+          min: 1,
+          max: 24,
+        },
+        {
+          key: "maxSubtasksPerTurn",
+          title: zh ? "单回合子任务上限" : "Subtasks per turn limit",
+          description: zh ? "单个 lead 回合内可派发的子任务总数上限。" : "How many subtasks a single lead turn may delegate in total.",
+          min: 1,
+          max: 128,
+        },
+      ];
+
+      const inputs = new Map<PreferenceToggleSpec["key"], HTMLInputElement>();
       for (const spec of specs) {
         const row = document.createElement("label");
         row.className = "settings-collab-toggle";
@@ -160,14 +196,39 @@ export function createCollaborationSettingsPage(
         panel.append(row);
       }
 
+      const numbers = new Map<PreferenceNumberSpec["key"], HTMLInputElement>();
+      for (const spec of numberSpecs) {
+        const row = document.createElement("label");
+        row.className = "settings-collab-toggle";
+        const text = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = spec.title;
+        const description = document.createElement("small");
+        description.textContent = `${spec.description}（${spec.min}-${spec.max}）`;
+        text.append(title, description);
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = String(spec.min);
+        input.max = String(spec.max);
+        input.step = "1";
+        input.disabled = true;
+        input.style.cssText = `width:74px;flex:none;height:28px;padding:0 8px;border:1px solid color-mix(in srgb, CanvasText 20%, transparent);border-radius:6px;background:Canvas;color:CanvasText;`;
+        input.setAttribute("aria-label", spec.title);
+        numbers.set(spec.key, input);
+        row.append(text, input);
+        panel.append(row);
+      }
+
       const status = document.createElement("p");
       status.className = "settings-update-summary";
       panel.append(status);
       context.content.append(heading, panel);
 
-      let current: RendererCollaborationPreferences = { collaboration: true, agentTeam: true };
+      let current: RendererCollaborationPreferences = { collaboration: true, agentTeam: true, ...PREFERENCE_LIMIT_FALLBACKS };
+      const clampNumber = (spec: PreferenceNumberSpec, value: number): number => Math.min(spec.max, Math.max(spec.min, Math.round(value)));
       const syncInputs = () => {
         for (const [key, input] of inputs) input.checked = current[key];
+        for (const [key, input] of numbers) input.value = String(current[key]);
         // Agent Team rides on the collaboration runtime: with collaboration
         // off, the team switch is disabled as well.
         const team = inputs.get("agentTeam");
@@ -180,7 +241,7 @@ export function createCollaborationSettingsPage(
         return undefined;
       }
 
-      const saving = new Set<keyof RendererCollaborationPreferences>();
+      const saving = new Set<PreferenceToggleSpec["key"] | PreferenceNumberSpec["key"]>();
       for (const spec of specs) {
         const input = inputs.get(spec.key)!;
         input.addEventListener("change", () => {
@@ -189,9 +250,34 @@ export function createCollaborationSettingsPage(
           input.disabled = true;
           const patch = { [spec.key]: input.checked };
           void context.runLatest(() => client.saveCollaborationPreferences(patch), {
-            success(value) {
+            success(saved) {
               saving.delete(spec.key);
-              current = value;
+              current = { ...PREFERENCE_LIMIT_FALLBACKS, ...saved };
+              syncInputs();
+              status.textContent = "";
+            },
+            failure(error) {
+              saving.delete(spec.key);
+              syncInputs();
+              status.textContent = error instanceof Error ? error.message : String(error);
+            },
+          });
+        });
+      }
+      for (const spec of numberSpecs) {
+        const input = numbers.get(spec.key)!;
+        // number 输入的 change 在失焦/步进时提交；非法输入钳回范围内整数
+        input.addEventListener("change", () => {
+          if (saving.has(spec.key)) return;
+          const parsed = Number.parseFloat(input.value);
+          const limit = Number.isFinite(parsed) ? clampNumber(spec, parsed) : current[spec.key];
+          saving.add(spec.key);
+          input.disabled = true;
+          const patch = { [spec.key]: limit };
+          void context.runLatest(() => client.saveCollaborationPreferences(patch), {
+            success(saved) {
+              saving.delete(spec.key);
+              current = { ...PREFERENCE_LIMIT_FALLBACKS, ...saved };
               syncInputs();
               status.textContent = "";
             },
@@ -211,7 +297,7 @@ export function createCollaborationSettingsPage(
       // other, randomly blanking the template list or the Harness dropdown.
       void context.runLatest(() => client.getCollaborationPreferences(), {
         success(value) {
-          current = value;
+          current = { ...PREFERENCE_LIMIT_FALLBACKS, ...value };
           syncInputs();
         },
         failure(error) {
