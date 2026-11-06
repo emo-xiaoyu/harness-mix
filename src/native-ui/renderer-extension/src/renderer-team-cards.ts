@@ -355,8 +355,10 @@ const TEAM_STYLE = `
 @keyframes harness-mix-team-feed-enter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @keyframes harness-mix-team-workbench-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes harness-mix-team-drawer-in{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+.harness-mix-team-replay-hint{animation:harness-mix-team-hint-in .22s cubic-bezier(.22,.61,.36,1)}
+@keyframes harness-mix-team-hint-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){
-  .harness-mix-team-workbench,.harness-mix-team-drawer,.harness-mix-team-feed-enter,.harness-mix-team-avatar,.harness-mix-team-status-dot,.harness-mix-team-lane::before,.harness-mix-team-lane::after,.harness-mix-team-task[data-flash]{animation:none!important}
+  .harness-mix-team-workbench,.harness-mix-team-drawer,.harness-mix-team-feed-enter,.harness-mix-team-avatar,.harness-mix-team-status-dot,.harness-mix-team-lane::before,.harness-mix-team-lane::after,.harness-mix-team-task[data-flash],.harness-mix-team-replay-hint{animation:none!important}
   .harness-mix-team-bar>i,.harness-mix-team-task,.harness-mix-team-member,.harness-mix-team-chip,.harness-mix-team-clickable{transition:none!important}
 }
 @container (max-width:720px){
@@ -1125,6 +1127,10 @@ const DISPLAY_SENTINEL = "__empty__";
 const REFRESH_INTERVAL_MS = 1500;
 const PLAYBACK_STEP_MS = 800;
 const ELAPSED_TICK_MS = 10000;
+// scan() 每次都是全文档 querySelectorAll + 全文解析；流式输出期间 mutation 高频到达，
+// 合并去抖后一轮爆发只触发一次扫描（面板出现最多延迟 150ms，无感知）。
+const SCAN_DEBOUNCE_MS = 150;
+const REPLAY_HINT_DISMISS_MS = 8000;
 
 export function installTeamCards(options: TeamCardOptions = {}) {
   if (typeof document === "undefined") return { scan: () => {}, dispose: () => {} };
@@ -1211,7 +1217,7 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     const progressPct = labeledDom("strong", "0%", "font-size:11px;font-weight:750;color:#1f9d68;min-width:30px");
     progressWrap.append(headerBar, progressPct);
 
-    const timeline = dom("div", "harness-mix-team-timeline", "display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0");
+    const timeline = dom("div", "harness-mix-team-timeline", "display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0;position:relative");
     const event = labeledDom("span", "实时状态", "font-size:9px;opacity:.55;min-width:60px;text-align:right");
     event.title = "拖动滑杆回看团队历史；「实时」回到最新状态";
     const range = dom("input");
@@ -1228,11 +1234,14 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     play.type = "button";
     play.textContent = "回放";
     play.title = "自动回放团队历史快照";
+    // 可发现性提示：历史快照 ≥2 时在时间线下方浮出一次，首次操作或 8s 后自动消失
+    const replayHint = dom("div", "harness-mix-team-replay-hint", "display:none;position:absolute;top:calc(100% + 7px);right:0;max-width:230px;padding:7px 10px;border-radius:9px;border:1px solid color-mix(in srgb,#2878e3 36%,transparent);background:color-mix(in srgb,Canvas 95%,transparent);color:inherit;font:500 10px/1.5 system-ui;box-shadow:0 6px 18px rgba(0,0,0,.18);z-index:5;pointer-events:none;text-align:left");
+    replayHint.textContent = "这里有回放：拖动滑杆逐步回看团队历史，或点「回放」自动播放。";
     const collapse = dom("button", "harness-mix-team-back", "border:0;background:transparent;color:inherit;font:650 10px system-ui;cursor:pointer;padding:6px 7px;opacity:.68");
     collapse.type = "button";
     collapse.textContent = "收起详情";
     collapse.addEventListener("click", closeWorkbench);
-    timeline.append(event, range, live, play, collapse);
+    timeline.append(event, range, live, play, collapse, replayHint);
 
     // 操作按钮位随状态刷新；新增任务表单独立存在，轮询刷新不能清掉用户输入。
     const headerActions = dom("div", undefined, "display:flex;align-items:center;gap:6px;flex:none");
@@ -1364,9 +1373,25 @@ export function installTeamCards(options: TeamCardOptions = {}) {
       range.max = String(Math.max(0, snapshots.length - 1));
       range.value = String(index >= 0 ? index : Math.max(0, snapshots.length - 1));
       event.textContent = index >= 0 && snapshots[index] ? `${actionLabel(snapshots[index]!.action)} · ${new Date(snapshots[index]!.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "● 实时状态";
+      if (!replayHintShown && snapshots.length >= 2) {
+        replayHintShown = true;
+        replayHint.style.display = "block";
+        replayHintTimer = setTimeout(dismissReplayHint, REPLAY_HINT_DISMISS_MS);
+      }
     };
 
     if (!content.childElementCount) content.append(boardRefs.root);
+
+    // 回放提示每个 workbench 只出现一次；首次操作滑杆/回放/实时或 8s 后自动消失
+    let replayHintShown = false;
+    let replayHintTimer: number | null = null;
+    const dismissReplayHint = () => {
+      replayHint.style.display = "none";
+      if (replayHintTimer !== null) { clearTimeout(replayHintTimer); replayHintTimer = null; }
+    };
+    range.addEventListener("pointerdown", dismissReplayHint);
+    live.addEventListener("click", dismissReplayHint);
+    play.addEventListener("click", dismissReplayHint);
 
     range.addEventListener("input", () => {
       index = Number(range.value);
@@ -1440,6 +1465,14 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     }
   };
 
+  // 观察器仍需覆盖整个 body（团队 payload 可能出现在任意会话转录位置），
+  // 但 mutation 风暴合并为一次尾随扫描：流式输出不再是每 token 一次全量扫描。
+  let scanTimer: number | null = null;
+  const scheduleScan = () => {
+    if (disposed || scanTimer !== null) return;
+    scanTimer = setTimeout(() => { scanTimer = null; scan(); }, SCAN_DEBOUNCE_MS);
+  };
+
   const removeActivePanel = () => {
     if (workbench?.dataset.teamSource === "active-thread") closeWorkbench();
     activePanel?.remove();
@@ -1499,7 +1532,7 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     }
   };
 
-  const observer = new MutationObserver(scan);
+  const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body || document.documentElement, { childList: true, subtree: true, characterData: true });
   scan();
   void refreshActiveTeam();
@@ -1511,6 +1544,7 @@ export function installTeamCards(options: TeamCardOptions = {}) {
     dispose() {
       disposed = true;
       observer.disconnect();
+      if (scanTimer !== null) { clearTimeout(scanTimer); scanTimer = null; }
       if (activeTimer) clearInterval(activeTimer);
       activeTimer = null;
       if (elapsedTimer) clearInterval(elapsedTimer);
