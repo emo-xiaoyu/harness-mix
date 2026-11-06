@@ -30,6 +30,12 @@
       "level": "protocol-and-smoke",
       "checkedAt": "2026-09-23",
       "notes": "Install inspection, protocol suite and live Shim+Host e2e passed. Fixed four 26.917 regressions: ':'-prefixed permissionProfile ids failing the renderer permission-mode charset (base64url transport ids plus friendly labels); a first-submission routing leak from a recreated request manager dropping the Codex account route marker (sticky user-thread-scoped marker on the request bridge plus a fail-closed submission guard); registry accounts pointing at the official CODEX_HOME being treated as isolated and routing plain Codex conversations through the Host (now native passthrough); and the request bridge forcing ephemeral onto official draft prewarms — 26.917 runs the first turn on the prewarmed thread, so the conversation never persisted (no sidebar entry, lost on switch). Live user-flow verification: new chat, prewarm, send lands as a single persistent official session with exactly one sidebar row; harness-routed prewarms stay ephemeral and promote on first input."
+    },
+    {
+      "desktopVersion": "26.1027.3384.0",
+      "level": "protocol-and-smoke",
+      "checkedAt": "2026-11-04",
+      "notes": "Install inspection, renderer anchor scan of app.asar, native build, protocol suite and live Shim+Host e2e all passed with no code changes: every critical Codex-native data-* anchor still present (data-message-author-role returned; the four still-missing ones — data-composer-draft-id, data-chatgpt-quick-chat-panel, data-chat-title, data-permission-mode-id — remain the graceful-fallback/ChatGPT-web tier, same as the 26.1007 baseline). Desktop bundles codex CLI 0.165.0-alpha.1.2 and the managed codex.exe pool auto-synced to 0.166.0-alpha.5.1. check + test:core-all + test:native-ui (683) + test:native-protocol + test:native-compatibility green; no recurrence of the 26.917 regressions. Full restarted Desktop acceptance still pending (26.908 remains the latest desktop-e2e entry)."
     }
   ]
 }
