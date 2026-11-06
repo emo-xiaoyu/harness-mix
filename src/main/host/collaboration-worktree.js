@@ -114,8 +114,8 @@ async function createWorkspace(cwd, id, mode = 'auto') {
 // worktree via `git merge-tree --write-tree` (needs Git 2.38+). On success the
 // review patch becomes diff(source current, merged) — exactly the worker's
 // surviving changes — so the digest gate still authorizes what gets applied.
-async function autoMergeCandidate(workspace, workerTree) {
-  const sourceTree = await tree(workspace.source);
+async function autoMergeCandidate(workspace, workerTree, sourceTreeOverride = null) {
+  const sourceTree = sourceTreeOverride ?? await tree(workspace.source);
   const commitOf = async (treeOid) => (await git(workspace.source, [
     '-c', 'user.name=Harness Mix', '-c', 'user.email=harness-mix@localhost',
     'commit-tree', treeOid, '-p', workspace.baseCommit, '-m', 'Harness Mix merge candidate',
@@ -132,12 +132,48 @@ async function autoMergeCandidate(workspace, workerTree) {
   return { patch, digest: createHash('sha256').update(patch).digest('hex'), autoMerged: true };
 }
 
+// Last accepted review per workspace object — lets applyWorkspace show WHAT
+// changed since the reviewer approved, instead of a bare digest mismatch.
+// In-memory only (WeakMap): nothing persisted, nothing survives a Host restart.
+const lastReviews = new WeakMap();
+
+const DIFF_OF_DIFF_CAP = 4000;
+
+// Text-level diff between the patch the reviewer approved and the patch now on
+// disk. `git diff --no-index` exits 1 to signal differences — expected here.
+async function diffOfPatches(previousPatch, currentPatch) {
+  if (!previousPatch || previousPatch === currentPatch) return null;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'harness-mix-dod-'));
+  try {
+    const approved = path.join(dir, 'reviewed.patch');
+    const fresh = path.join(dir, 'current.patch');
+    await fs.writeFile(approved, previousPatch);
+    await fs.writeFile(fresh, currentPatch);
+    let out;
+    try {
+      out = await git(dir, ['diff', '--no-index', '--unified=1', '--', approved, fresh]);
+    } catch (error) {
+      if (error.code !== 1) throw error;
+      out = String(error.stdout || '');
+    }
+    out = out.trim();
+    if (!out) return null;
+    return out.length > DIFF_OF_DIFF_CAP ? `${out.slice(0, DIFF_OF_DIFF_CAP)}\n…（差异过长已截断）` : out;
+  } finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+
 async function reviewWorkspace(workspace) {
   if (workspace?.mode !== 'worktree') throw new Error('此任务使用共享目录，请在任务文件变更中审查');
   const currentTree = await tree(workspace.root);
   const patch = await git(workspace.root, ['diff', '--binary', '--no-ext-diff', '--no-textconv', workspace.baseTree, currentTree, '--']);
   const digest = createHash('sha256').update(patch).digest('hex');
   const result = { patch, digest, branch: workspace.branch, cwd: workspace.cwd, hasConflict: false, conflictingFiles: [] };
+  // baseStale: the lead's directory has drifted from the snapshot this worktree
+  // was seeded from (workspace.baseTree). Informational — a drifted base can
+  // still apply cleanly — but the reviewer should know the ground moved.
+  const sourceTree = await tree(workspace.source);
+  result.baseStale = sourceTree !== workspace.baseTree;
+  lastReviews.set(workspace, { digest, patch });
   if (patch) {
     const file = path.join(os.tmpdir(), `harness-mix-check-${randomUUID()}`);
     try {
@@ -151,10 +187,11 @@ async function reviewWorkspace(workspace) {
       result.conflictReason = stderr.slice(0, 500);
       // Straight patch is stale; offer a three-way merge candidate as the reviewed
       // patch instead. Digest gates the merged result the reviewer actually sees.
-      const candidate = await autoMergeCandidate(workspace, currentTree).catch(() => null);
+      const candidate = await autoMergeCandidate(workspace, currentTree, sourceTree).catch(() => null);
       if (candidate) {
         Object.assign(result, candidate, { hadConflict: true, conflictingFiles: result.conflictingFiles });
         result.hasConflict = false;
+        lastReviews.set(workspace, { digest: result.digest, patch: result.patch });
       }
     } finally {
       await fs.rm(file, { force: true }).catch(() => {});
@@ -164,8 +201,18 @@ async function reviewWorkspace(workspace) {
 }
 
 async function applyWorkspace(workspace, expectedDigest) {
+  // Grab the previously approved patch before reviewWorkspace() below replaces
+  // the stash with the fresh review — it is exactly what the digest was minted from.
+  const approved = lastReviews.get(workspace);
+  const approvedPatch = approved?.digest === expectedDigest ? approved.patch : null;
   const review = await reviewWorkspace(workspace);
-  if (!expectedDigest || review.digest !== expectedDigest) throw new Error('子任务改动已变化，请重新审查');
+  if (!expectedDigest || review.digest !== expectedDigest) {
+    const inter = await diffOfPatches(approvedPatch, review.patch).catch(() => null);
+    const detail = inter
+      ? `\n\n与上次审查内容的差异（审查版本 → 当前版本）：\n${inter}`
+      : '\n（无与该 digest 对应的审查记录可比对；请重新 review 获取最新改动与 digest）';
+    throw new Error(`子任务改动已变化，请重新审查${detail}`);
+  }
   if (!review.patch) return review;
   if (review.hasConflict) {
     const fileList = review.conflictingFiles.length

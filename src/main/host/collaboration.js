@@ -13,8 +13,22 @@ const { createHash } = require('node:crypto');
 const { pickFullAccessPermissionMode } = require('../adapters/permission-modes');
 const validators = new Map(tools.map(tool => [tool.name, z.fromJSONSchema(tool.inputSchema)]));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const MAX_CONCURRENT_SUBTASKS = 6;
-const MAX_SUBTASKS_PER_TURN = 16;
+
+// 并发/单回合子任务上限：默认 6/16，可在 设置 → 协作（preferences.json）调整，
+// 机器级覆盖用环境变量 HARNESS_MIX_MAX_CONCURRENT_SUBTASKS / HARNESS_MIX_MAX_SUBTASKS_PER_TURN
+// （环境变量优先于持久化偏好，供 CI 与无人值守场景抬高/压低额度）。
+const DEFAULT_MAX_CONCURRENT_SUBTASKS = 6;
+const DEFAULT_MAX_SUBTASKS_PER_TURN = 16;
+const SUBTASK_LIMITS = {
+  maxConcurrentSubtasks: { min: 1, max: 24, fallback: DEFAULT_MAX_CONCURRENT_SUBTASKS, env: 'HARNESS_MIX_MAX_CONCURRENT_SUBTASKS' },
+  maxSubtasksPerTurn: { min: 1, max: 128, fallback: DEFAULT_MAX_SUBTASKS_PER_TURN, env: 'HARNESS_MIX_MAX_SUBTASKS_PER_TURN' },
+};
+const clampSubtaskLimit = (value, spec) => {
+  const n = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(n)) return spec.fallback;
+  return Math.min(spec.max, Math.max(spec.min, n));
+};
+const envSubtaskLimit = spec => (process.env[spec.env] ? clampSubtaskLimit(process.env[spec.env], spec) : null);
 
 // Settings → Collaboration 开关：两者默认开启。collaboration 关闭时不再注入协作
 // MCP、不解析 # 提及、拒绝一切协作工具调用；agentTeam 关闭时保留一次性委派，
@@ -195,7 +209,10 @@ class Collaboration {
     this.removedBuiltinFile = path.join(runtime.store.directory, 'collaboration', 'team-templates-removed.json');
     this.removedBuiltinTemplateIds = new Set();
     this.prefFile = path.join(runtime.store.directory, 'collaboration', 'preferences.json');
-    this.prefs = { ...DEFAULT_PREFERENCES };
+    this.prefs = {
+      ...DEFAULT_PREFERENCES,
+      ...Object.fromEntries(Object.entries(SUBTASK_LIMITS).map(([key, spec]) => [key, spec.fallback])),
+    };
     // CLI 发现注册表：与 runtime 数据目录同级派生（测试自动隔离；生产=平台数据目录），
     // 实例文件随控制面启停，条目随线程增删（best-effort）
     this.registry = new CollabRegistry(process.env.HARNESS_MIX_COLLAB_REGISTRY_DIR || registryDirectoryFor(runtime.store.directory));
@@ -205,9 +222,12 @@ class Collaboration {
     try {
       const parsed = JSON.parse(await fs.promises.readFile(this.prefFile, 'utf8'));
       // 只认显式的 false：缺失字段/旧文件一律回落到默认开启
+      // 上限：环境变量（机器级覆盖）优先，其次持久化值（经范围钳制），否则默认
       this.prefs = {
         collaboration: parsed?.collaboration !== false,
         agentTeam: parsed?.agentTeam !== false,
+        ...Object.fromEntries(Object.entries(SUBTASK_LIMITS).map(([key, spec]) =>
+          [key, envSubtaskLimit(spec) ?? clampSubtaskLimit(parsed?.[key], spec)])),
       };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
@@ -222,6 +242,12 @@ class Collaboration {
     await this.initialize();
     if (typeof patch.collaboration === 'boolean') this.prefs.collaboration = patch.collaboration;
     if (typeof patch.agentTeam === 'boolean') this.prefs.agentTeam = patch.agentTeam;
+    // 上限：整数越界钳到边界；非整数（含字符串垃圾）静默忽略，保留现值
+    for (const [key, spec] of Object.entries(SUBTASK_LIMITS)) {
+      if (patch[key] === undefined) continue;
+      const n = typeof patch[key] === 'number' ? patch[key] : Number.parseInt(String(patch[key]), 10);
+      if (Number.isInteger(n)) this.prefs[key] = Math.min(spec.max, Math.max(spec.min, n));
+    }
     await fs.promises.mkdir(path.dirname(this.prefFile), { recursive: true });
     const tmp = `${this.prefFile}.${process.pid}.${randomUUID()}.tmp`;
     await fs.promises.writeFile(tmp, JSON.stringify(this.prefs, null, 2));
@@ -744,7 +770,12 @@ ${instruction}`;
   async review(id) {
     const job = this.jobs.get(id);
     if (!job || job.status === 'running') throw new Error('子任务尚未完成');
-    return reviewWorkspace(job.workspace);
+    const result = await reviewWorkspace(job.workspace);
+    // 与结算时的自动审查同口径：最新审查结果回落到作业视图（view 的 diff/digest/baseStale）
+    job.diff = result.patch;
+    job.digest = result.digest;
+    job.baseStale = result.baseStale ?? false;
+    return result;
   }
 
   async apply(id, digest, { cleanup = false } = {}) {
@@ -1142,7 +1173,7 @@ ${instruction}`;
       team_id: job.teamId, member_id: job.memberId, team_task_id: job.teamTaskId,
       display_status: pending ? 'waiting_approval' : job.status, attention: pending ? { type: pending.type, title: pending.title, message: pending.message } : undefined,
       task: job.task, workspace: job.workspace, applied: !!job.appliedDigest, result: job.result, error: job.error,
-      diff: job.diff, digest: job.digest, branch: job.workspace?.branch, verification: job.verification,
+      diff: job.diff, digest: job.digest, branch: job.workspace?.branch, baseStale: job.baseStale ?? null, verification: job.verification,
       script_id: job.scriptId, handoff: job.handoff };
   }
 
@@ -1221,8 +1252,8 @@ ${instruction}`;
         if ([...this.jobs.values()].some(job => job.teamId === team.id && job.memberId === member.id && job.status === 'running')) throw new Error('Team member is already working on another task');
       }
       const jobs = [...this.jobs.values()].filter(j => j.owner === owner);
-      if (jobs.filter(j => j.status === 'running').length >= MAX_CONCURRENT_SUBTASKS) throw new Error('At most six concurrent subtasks; collect existing results first');
-      if (jobs.filter(j => j.turnId === rt.execution.lastTurn(owner)?.id).length >= MAX_SUBTASKS_PER_TURN) throw new Error('At most sixteen subtasks per lead turn');
+      if (jobs.filter(j => j.status === 'running').length >= this.prefs.maxConcurrentSubtasks) throw new Error(`At most ${this.prefs.maxConcurrentSubtasks} concurrent subtasks; collect existing results first`);
+      if (jobs.filter(j => j.turnId === rt.execution.lastTurn(owner)?.id).length >= this.prefs.maxSubtasksPerTurn) throw new Error(`At most ${this.prefs.maxSubtasksPerTurn} subtasks per lead turn`);
       // Risk-aware default: while another session outside this collaboration group is
       // actively running in the lead directory, a shared workspace would let both sides
       // silently overwrite each other — start new workers isolated ('auto' isolates Git
@@ -1264,7 +1295,7 @@ ${instruction}`;
     job.followupPending = true;
     try { await job.done; } finally { job.followupPending = false; }
     if (this.closing || !rt.execution.isRunning(owner) || this.cancelling.has(owner)) throw new Error('Lead turn is no longer active');
-    if ([...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running').length >= MAX_CONCURRENT_SUBTASKS) throw new Error('At most six concurrent subtasks');
+    if ([...this.jobs.values()].filter(j => j.owner === owner && j.status === 'running').length >= this.prefs.maxConcurrentSubtasks) throw new Error(`At most ${this.prefs.maxConcurrentSubtasks} concurrent subtasks`);
     job.status = 'running'; job.result = undefined; job.error = undefined;
     job.turnId = rt.execution.lastTurn(owner).id;
     const task = name === 'resume_delegation'
@@ -1460,6 +1491,7 @@ ${instruction}`;
           const rev = await reviewWorkspace(job.workspace);
           job.diff = rev.patch;
           job.digest = rev.digest;
+          job.baseStale = rev.baseStale ?? false;
         } catch {}
       }
     } catch (error) {
@@ -1513,7 +1545,7 @@ ${instruction}`;
     const canRetry = !!budget && budget.used < budget.max && member
       && !this.closing && !this.cancelling.has(parent.id) && rt.execution.isRunning(parent.id)
       && rt.status[member.agent]?.available !== false
-      && [...this.jobs.values()].filter(j => j.owner === parent.id && j.status === 'running').length < MAX_CONCURRENT_SUBTASKS;
+      && [...this.jobs.values()].filter(j => j.owner === parent.id && j.status === 'running').length < this.prefs.maxConcurrentSubtasks;
     this.pushSystemNotice(team, `任务「${teamTask.title}」失败：${reason}${canRetry ? `；将自动重试（第 ${budget.used + 1}/${budget.max} 次）` : budget ? '；重试预算已耗尽' : ''}`, teamTask.id);
     if (!canRetry) return false;
     budget.used += 1;
@@ -1677,7 +1709,7 @@ ${instruction}`;
         try { this.resolveMember(team, label); } catch {
           throw new Error(`成员「${label}」不在团队中。可用成员：${team.members.map(member => member.name).join('、')}`);
         }
-      }, { maxTasks: MAX_SUBTASKS_PER_TURN }));
+      }, { maxTasks: this.prefs.maxSubtasksPerTurn }));
     } catch (error) {
       throw new Error(`编排脚本未通过验证门：${error.message}`);
     }
@@ -1842,7 +1874,7 @@ ${instruction}`;
         entry.status = entry.dependsOn.every(id => team.tasks.find(t => t.id === id)?.status === 'completed') ? 'pending' : 'blocked';
       }
       const memberBusy = [...this.jobs.values()].some(j => j.teamId === team.id && j.memberId === member.id && j.status === 'running');
-      if (entry.status !== 'blocked' && driver.inFlight < MAX_CONCURRENT_SUBTASKS && !memberBusy) break;
+      if (entry.status !== 'blocked' && driver.inFlight < this.prefs.maxConcurrentSubtasks && !memberBusy) break;
       await delay(100);
     }
     driver.inFlight += 1;

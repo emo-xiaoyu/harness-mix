@@ -231,7 +231,7 @@ async function main() {
     await rt.cancel(outsider.id); await wait(() => !pending.has(outsider.id));
     for (let i = 0; i < 6; i++) await call('delegate_to_agent', { agent_type: 'worker', task: 'cancel me', isolation: 'shared' });
     await wait(() => pending.size === 6);
-    await assert.rejects(call('delegate_to_agent', { agent_type: 'worker', task: 'too many' }), /six concurrent/);
+    await assert.rejects(call('delegate_to_agent', { agent_type: 'worker', task: 'too many' }), /6 concurrent/);
     await rt.cancel(parent.id);
     await wait(() => !pending.size);
     assert.equal(rt.execution.lastTurn(parent.id).status, 'cancelled');
@@ -242,7 +242,13 @@ async function main() {
     const prefsRt = new HostRuntime({ dataDirectory: path.join(prefsRoot, 'data') });
     try {
       await prefsRt.collaboration.initialize();
-      assert.deepEqual(prefsRt.collaboration.getPreferences(), { collaboration: true, agentTeam: true }, 'Both collaboration switches default to on');
+      assert.deepEqual(prefsRt.collaboration.getPreferences(), { collaboration: true, agentTeam: true, maxConcurrentSubtasks: 6, maxSubtasksPerTurn: 16 }, 'Both collaboration switches default to on, limits at 6/16');
+      // 上限可配置：合法值生效；越界/非整数钳回范围，不做破坏性拒绝
+      await prefsRt.collaboration.setPreferences({ maxConcurrentSubtasks: 9, maxSubtasksPerTurn: 32 });
+      assert.deepEqual(prefsRt.collaboration.getPreferences(), { collaboration: true, agentTeam: true, maxConcurrentSubtasks: 9, maxSubtasksPerTurn: 32 }, 'Numeric subtask limits are configurable');
+      await prefsRt.collaboration.setPreferences({ maxConcurrentSubtasks: 999, maxSubtasksPerTurn: 'not-a-number' });
+      assert.deepEqual(prefsRt.collaboration.getPreferences(), { collaboration: true, agentTeam: true, maxConcurrentSubtasks: 24, maxSubtasksPerTurn: 32 }, 'Out-of-range limits clamp to the valid range; junk input is ignored');
+      await prefsRt.collaboration.setPreferences({ maxConcurrentSubtasks: 6, maxSubtasksPerTurn: 16 });
       await prefsRt.collaboration.setPreferences({ collaboration: false });
       await assert.rejects(prefsRt.collaboration.call('any-thread', 'list_agents', {}), /停用.*disabled/, 'Collaboration tools are hard-rejected while the switch is off');
       await prefsRt.collaboration.setPreferences({ collaboration: true, agentTeam: false });
@@ -253,10 +259,10 @@ async function main() {
       );
       const reloaded = new HostRuntime({ dataDirectory: path.join(prefsRoot, 'data') });
       await reloaded.collaboration.initialize();
-      assert.deepEqual(reloaded.collaboration.getPreferences(), { collaboration: true, agentTeam: false }, 'Preferences survive a Host restart');
+      assert.deepEqual(reloaded.collaboration.getPreferences(), { collaboration: true, agentTeam: false, maxConcurrentSubtasks: 6, maxSubtasksPerTurn: 16 }, 'Preferences survive a Host restart');
       await reloaded.close();
       const onAgain = await prefsRt.collaboration.setPreferences({ agentTeam: true });
-      assert.deepEqual(onAgain, { collaboration: true, agentTeam: true });
+      assert.deepEqual(onAgain, { collaboration: true, agentTeam: true, maxConcurrentSubtasks: 6, maxSubtasksPerTurn: 16 });
     } finally { await prefsRt.close(); }
 
     // 上一段已取消 lead 回合：先开一个新的运行中回合再驱动后续回归
@@ -603,13 +609,27 @@ async function main() {
       const r4Ws = await createWorkspace(r4Repo, 'apply-advisory-job', 'worktree');
       await fs.writeFile(path.join(r4Ws.cwd, 'file.txt'), 'applied\n');
       const r4Rev = await reviewWorkspace(r4Ws);
+      assert.equal(r4Rev.baseStale, false, '刚建好的隔离工作区审查不标 baseStale');
       const r4Child = await r2Rt.createThread({ harnessId: 'worker', cwd: r4Ws.cwd, title: 'apply advisory child' });
       await r2Rt.send(r4Child.id, 'produce the change');
       await wait(() => r2Pending.has(r4Child.id) && r2Rt.execution.isRunning(r4Child.id));
       r2Ok(r4Child.id, 'done');
       await wait(() => !r2Rt.execution.isRunning(r4Child.id));
       r2Rt.collaboration.jobs.set('apply-advisory-job', { id: 'apply-advisory-job', owner: r2Parent.id, agent: 'worker', childId: r4Child.id, status: 'completed', task: 'apply advisory', workspace: r4Ws });
-      const r4Result = await r2Rt.collaboration.apply('apply-advisory-job', r4Rev.digest);
+      // baseStale：lead 目录自快照以来漂移（含未提交改动）时，审查结果显式标记
+      await fs.writeFile(path.join(r4Repo, 'file.txt'), 'base drifted\n');
+      const r4RevStale = await reviewWorkspace(r4Ws);
+      assert.equal(r4RevStale.baseStale, true, 'lead 目录漂移后审查标记 baseStale');
+      await fs.writeFile(path.join(r4Repo, 'file.txt'), 'base\n');
+      // digest 不匹配：审查后工作区又变了 → 报错携带「审查版本 → 当前版本」差异对比
+      await fs.writeFile(path.join(r4Ws.cwd, 'file.txt'), 'applied twice\n');
+      await assert.rejects(
+        r2Rt.collaboration.apply('apply-advisory-job', r4Rev.digest),
+        /子任务改动已变化[\s\S]*与上次审查内容的差异[\s\S]*applied twice/,
+        'digest mismatch error carries a diff-of-diff against the reviewed patch',
+      );
+      const r4RevFresh = await reviewWorkspace(r4Ws);
+      const r4Result = await r2Rt.collaboration.apply('apply-advisory-job', r4RevFresh.digest);
       assert.equal(r4Result.verification.mode, 'advisory', 'apply 结果附带 advisory 验证');
       assert.ok(r4Result.verification.checks.some(check => check.id === 'turnCompleted' && check.status === 'passed'));
       assert.equal(r2Rt.collaboration.jobs.get('apply-advisory-job').verification.status, r4Result.verification.status, 'advisory 结果持久化在作业上');
